@@ -12,6 +12,28 @@ class Constellation {
   double radius;
   double rotation;
   List<AppEntry> apps;
+  TextPainter? titlePainter;
+
+  void ensureTitlePainter() {
+    titlePainter ??= TextPainter(
+      text: TextSpan(
+        text: name.toUpperCase(),
+        style: TextStyle(
+          color: primaryColor.withValues(alpha: 0.8),
+          fontSize: 10.0,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 2.2,
+          shadows: [
+            Shadow(
+              color: primaryColor.withValues(alpha: 0.8),
+              blurRadius: 8.0,
+            ),
+          ],
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+  }
 
   Constellation({
     required this.id,

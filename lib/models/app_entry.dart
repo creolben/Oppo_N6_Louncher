@@ -30,6 +30,61 @@ class AppEntry {
   Color accentColor;
   int notificationCount;
 
+  // Cached TextPainters for butter-smooth 120 FPS rendering without layout thrashing
+  TextPainter? labelPainter;
+  TextPainter? iconPainter;
+  TextPainter? badgePainter;
+  int _lastBadgeCount = -1;
+
+  void ensurePainters(double nodeRadius) {
+    labelPainter ??= TextPainter(
+      text: TextSpan(
+        text: label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10.0,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.4,
+          shadows: [
+            Shadow(color: Colors.black, blurRadius: 4.0),
+          ],
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+
+    if (decodedIcon == null) {
+      iconPainter ??= TextPainter(
+        text: TextSpan(
+          text: String.fromCharCode(fallbackIcon.codePoint),
+          style: TextStyle(
+            fontSize: nodeRadius * 1.15,
+            fontFamily: fallbackIcon.fontFamily,
+            package: fallbackIcon.fontPackage,
+            color: accentColor,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+    }
+
+    if (notificationCount > 0 && (_lastBadgeCount != notificationCount || badgePainter == null)) {
+      _lastBadgeCount = notificationCount;
+      badgePainter = TextPainter(
+        text: TextSpan(
+          text: '$notificationCount',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 9.0,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+    }
+  }
+
   AppEntry({
     required this.packageName,
     this.activityName,

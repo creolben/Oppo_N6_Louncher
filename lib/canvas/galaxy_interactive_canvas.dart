@@ -34,12 +34,13 @@ class GalaxyInteractiveCanvas extends StatefulWidget {
 class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     with TickerProviderStateMixin {
   late Ticker _renderLoopTicker;
+  final ChangeNotifier _paintRepaintNotifier = ChangeNotifier();
   double _animationTime = 0.0;
   Duration _lastFrameTime = Duration.zero;
 
-  // Starfield particles
+  // Starfield particles in fixed world space
   final List<CosmicParticle> _starfield = [];
-  final math.Random _rng = math.Random(42);
+  final math.Random _rng = math.Random(1337);
 
   // Touch and Gesture State
   Offset? _magneticTouchWorld;
@@ -52,13 +53,22 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   void initState() {
     super.initState();
     widget.camera.init(this);
-    _generateStarfield(180);
+    _generateWorldStarfield(240);
+
+    // Repaint listener when camera moves
+    widget.camera.addListener(_onCameraChange);
 
     _renderLoopTicker = createTicker(_onRenderTick);
     _renderLoopTicker.start();
   }
 
-  void _generateStarfield(int count) {
+  void _onCameraChange() {
+    // Notify custom painter to repaint without rebuilding the widget tree
+    // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
+    _paintRepaintNotifier.notifyListeners();
+  }
+
+  void _generateWorldStarfield(int count) {
     _starfield.clear();
     const colors = [
       Color(0xFFFFFFFF),
@@ -69,15 +79,16 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     ];
 
     for (int i = 0; i < count; i++) {
-      final z = 0.3 + _rng.nextDouble() * 1.5; // depth
+      final z = 0.4 + _rng.nextDouble() * 1.4;
+      // Spread stars across world space
       _starfield.add(
         CosmicParticle(
-          x: _rng.nextDouble() * 2400 - 1200,
-          y: _rng.nextDouble() * 2400 - 1200,
+          x: _rng.nextDouble() * 4000 - 2000,
+          y: _rng.nextDouble() * 4000 - 2000,
           z: z,
-          radius: (0.7 + _rng.nextDouble() * 1.6),
-          brightness: 0.3 + _rng.nextDouble() * 0.7,
-          twinkleSpeed: 0.8 + _rng.nextDouble() * 2.2,
+          radius: (0.7 + _rng.nextDouble() * 1.4),
+          baseBrightness: 0.35 + _rng.nextDouble() * 0.55,
+          twinkleSpeed: 0.5 + _rng.nextDouble() * 1.2,
           color: colors[_rng.nextInt(colors.length)],
         ),
       );
@@ -94,7 +105,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     _lastFrameTime = elapsed;
     _animationTime += dt;
 
-    // Update galaxy physics, orbits & posture morphing
+    // Update galaxy layout physics, orbits & posture morphing
     widget.layoutEngine.updateGalaxyMorph(
       posture: widget.foldable.posture,
       hingeAngle: widget.foldable.hingeAngle,
@@ -108,9 +119,9 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
       _activeSupernova = null;
     }
 
-    if (mounted) {
-      setState(() {});
-    }
+    // Direct repaint signal to CustomPainter on the render layer - ZERO widget rebuilds!
+    // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
+    _paintRepaintNotifier.notifyListeners();
   }
 
   AppEntry? _hitTestApp(Offset screenPos) {
@@ -120,7 +131,6 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
     for (final app in widget.layoutEngine.allApps) {
       final d = (worldTap - app.worldPosition).distance;
-      // Hit radius scales slightly with zoom to remain comfortably touchable
       final hitRadius = (32.0 / widget.camera.zoom).clamp(28.0, 56.0);
       if (d < hitRadius && d < minDistance) {
         minDistance = d;
@@ -134,26 +144,21 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     final tappedApp = _hitTestApp(details.localPosition);
     if (tappedApp != null) {
       HapticFeedback.mediumImpact();
-      setState(() {
-        _focusedApp = tappedApp;
-        _activeSupernova = SupernovaAnimation(
-          worldPosition: tappedApp.worldPosition,
-          color: tappedApp.accentColor,
-          startTime: _animationTime,
-        );
-      });
+      _focusedApp = tappedApp;
+      _activeSupernova = SupernovaAnimation(
+        worldPosition: tappedApp.worldPosition,
+        color: tappedApp.accentColor,
+        startTime: _animationTime,
+      );
 
       widget.onAppSelected?.call(tappedApp);
 
       // Launch application after brief dramatic supernova expansion
-      Future.delayed(const Duration(milliseconds: 320), () {
+      Future.delayed(const Duration(milliseconds: 300), () {
         LauncherBridge.launchApp(tappedApp);
       });
     } else {
-      // Tapped space: reset focus
-      setState(() {
-        _focusedApp = null;
-      });
+      _focusedApp = null;
     }
   }
 
@@ -167,7 +172,9 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
   @override
   void dispose() {
+    widget.camera.removeListener(_onCameraChange);
     _renderLoopTicker.dispose();
+    _paintRepaintNotifier.dispose();
     super.dispose();
   }
 
@@ -207,17 +214,20 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
             _magneticTouchWorld = null;
             widget.camera.onDragEnd(details.velocity);
           },
-          child: CustomPaint(
-            size: Size.infinite,
-            painter: GalaxyCustomPainter(
-              camera: widget.camera,
-              constellations: widget.layoutEngine.constellations,
-              foldable: widget.foldable,
-              animationTime: _animationTime,
-              starfield: _starfield,
-              activeSupernova: _activeSupernova,
-              activeTouchScreenPoint: _lastFocalPoint,
-              focusedApp: _focusedApp,
+          child: RepaintBoundary(
+            child: CustomPaint(
+              size: Size.infinite,
+              painter: GalaxyCustomPainter(
+                repaint: _paintRepaintNotifier,
+                camera: widget.camera,
+                constellations: widget.layoutEngine.constellations,
+                foldable: widget.foldable,
+                animationTime: _animationTime,
+                starfield: _starfield,
+                activeSupernova: _activeSupernova,
+                activeTouchScreenPoint: _lastFocalPoint,
+                focusedApp: _focusedApp,
+              ),
             ),
           ),
         );

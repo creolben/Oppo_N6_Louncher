@@ -59,8 +59,6 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
   List<AppEntry> _apps = [];
   bool _isLoading = true;
   bool _isSearchOpen = false;
-  late Timer _clockTimer;
-  DateTime _currentTime = DateTime.now();
 
   @override
   void initState() {
@@ -70,12 +68,6 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
     _layoutEngine = GalaxyLayoutEngine();
 
     _loadApplications();
-
-    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      setState(() {
-        _currentTime = DateTime.now();
-      });
-    });
   }
 
   Future<void> _loadApplications() async {
@@ -115,7 +107,6 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
 
   @override
   void dispose() {
-    _clockTimer.cancel();
     _foldable.dispose();
     _camera.dispose();
     super.dispose();
@@ -124,11 +115,6 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
   @override
   Widget build(BuildContext context) {
     _foldable.updateFromMediaQuery(context);
-
-    final timeString =
-        '${_currentTime.hour.toString().padLeft(2, '0')}:${_currentTime.minute.toString().padLeft(2, '0')}';
-    final dateString =
-        '${_weekdayName(_currentTime.weekday)}, ${_monthName(_currentTime.month)} ${_currentTime.day}';
 
     return Scaffold(
       body: _isLoading
@@ -156,87 +142,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
                   top: 0,
                   left: 0,
                   right: 0,
-                  child: SafeArea(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Clock & Date
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                timeString,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 34,
-                                  fontWeight: FontWeight.w200,
-                                  letterSpacing: -0.5,
-                                  shadows: [
-                                    Shadow(color: Color(0x6600E5FF), blurRadius: 16),
-                                  ],
-                                ),
-                              ),
-                              Text(
-                                dateString.toUpperCase(),
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.6),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 2.0,
-                                ),
-                              ),
-                            ],
-                          ),
-
-                          // Galaxy Sector Status
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: const Color(0x33101424),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: const Color(0x3364B5F6),
-                                width: 0.8,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 6,
-                                  height: 6,
-                                  decoration: const BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Color(0xFF00E5FF),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Color(0xFF00E5FF),
-                                        blurRadius: 6,
-                                        spreadRadius: 1,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  _foldable.posture.name.toUpperCase(),
-                                  style: const TextStyle(
-                                    color: Color(0xFF00E5FF),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 1.2,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  child: CosmicHeaderHud(foldable: _foldable),
                 ),
 
                 // 3. Ergonomic Bottom Cockpit Bar
@@ -264,6 +170,133 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
                   ),
               ],
             ),
+    );
+  }
+}
+
+class CosmicHeaderHud extends StatefulWidget {
+  final FoldableController foldable;
+
+  const CosmicHeaderHud({super.key, required this.foldable});
+
+  @override
+  State<CosmicHeaderHud> createState() => _CosmicHeaderHudState();
+}
+
+class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
+  late Timer _timer;
+  DateTime _now = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        setState(() {
+          _now = DateTime.now();
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final timeString =
+        '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}';
+    final dateString =
+        '${_weekdayName(_now.weekday)}, ${_monthName(_now.month)} ${_now.day}';
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Clock & Date
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  timeString,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 34,
+                    fontWeight: FontWeight.w200,
+                    letterSpacing: -0.5,
+                    shadows: [
+                      Shadow(color: Color(0x6600E5FF), blurRadius: 16),
+                    ],
+                  ),
+                ),
+                Text(
+                  dateString.toUpperCase(),
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 2.0,
+                  ),
+                ),
+              ],
+            ),
+
+            // Galaxy Sector Posture Badge
+            ListenableBuilder(
+              listenable: widget.foldable,
+              builder: (context, _) {
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0x33101424),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: const Color(0x3364B5F6),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color(0xFF00E5FF),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Color(0xFF00E5FF),
+                              blurRadius: 6,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        widget.foldable.posture.name.toUpperCase(),
+                        style: const TextStyle(
+                          color: Color(0xFF00E5FF),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
