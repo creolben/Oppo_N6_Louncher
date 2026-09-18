@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import '../models/app_entry.dart';
+import '../models/constellation.dart';
 import '../core/launcher_bridge.dart';
 import '../core/foldable_controller.dart';
 import '../core/galaxy_layout_engine.dart';
@@ -55,15 +56,12 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     widget.camera.init(this);
     _generateWorldStarfield(240);
 
-    // Repaint listener when camera moves
     widget.camera.addListener(_onCameraChange);
-
     _renderLoopTicker = createTicker(_onRenderTick);
     _renderLoopTicker.start();
   }
 
   void _onCameraChange() {
-    // Notify custom painter to repaint without rebuilding the widget tree
     // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
     _paintRepaintNotifier.notifyListeners();
   }
@@ -80,7 +78,6 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
     for (int i = 0; i < count; i++) {
       final z = 0.4 + _rng.nextDouble() * 1.4;
-      // Spread stars across world space
       _starfield.add(
         CosmicParticle(
           x: _rng.nextDouble() * 4000 - 2000,
@@ -105,7 +102,6 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     _lastFrameTime = elapsed;
     _animationTime += dt;
 
-    // Update galaxy layout physics, orbits & posture morphing
     widget.layoutEngine.updateGalaxyMorph(
       posture: widget.foldable.posture,
       hingeAngle: widget.foldable.hingeAngle,
@@ -113,15 +109,24 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
       magneticTouchPoint: _magneticTouchWorld,
     );
 
-    // Clean up expired supernova
     if (_activeSupernova != null &&
         _activeSupernova!.getProgress(_animationTime) >= 1.0) {
       _activeSupernova = null;
     }
 
-    // Direct repaint signal to CustomPainter on the render layer - ZERO widget rebuilds!
     // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
     _paintRepaintNotifier.notifyListeners();
+  }
+
+  Constellation? _hitTestConstellation(Offset screenPos) {
+    final worldTap = widget.camera.screenToWorld(screenPos);
+    for (final c in widget.layoutEngine.constellations) {
+      final hitRadius = (c.id == 'core') ? 70.0 : 45.0;
+      if ((worldTap - c.center).distance <= hitRadius) {
+        return c;
+      }
+    }
+    return null;
   }
 
   AppEntry? _hitTestApp(Offset screenPos) {
@@ -129,18 +134,24 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     AppEntry? closest;
     double minDistance = double.infinity;
 
-    for (final app in widget.layoutEngine.allApps) {
-      final d = (worldTap - app.worldPosition).distance;
-      final hitRadius = (32.0 / widget.camera.zoom).clamp(28.0, 56.0);
-      if (d < hitRadius && d < minDistance) {
-        minDistance = d;
-        closest = app;
+    for (final c in widget.layoutEngine.constellations) {
+      // Apps are only interactive if constellation is expanded (or is Solar Core)
+      if (c.id != 'core' && c.expansionProgress < 0.3) continue;
+
+      for (final app in c.apps) {
+        final d = (worldTap - app.worldPosition).distance;
+        final hitRadius = (32.0 / widget.camera.zoom).clamp(28.0, 56.0);
+        if (d < hitRadius && d < minDistance) {
+          minDistance = d;
+          closest = app;
+        }
       }
     }
     return closest;
   }
 
   void _handleTapUp(TapUpDetails details) {
+    // 1. Check if user tapped an active app
     final tappedApp = _hitTestApp(details.localPosition);
     if (tappedApp != null) {
       HapticFeedback.mediumImpact();
@@ -153,13 +164,36 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
       widget.onAppSelected?.call(tappedApp);
 
-      // Launch application after brief dramatic supernova expansion
       Future.delayed(const Duration(milliseconds: 300), () {
         LauncherBridge.launchApp(tappedApp);
       });
-    } else {
-      _focusedApp = null;
+      return;
     }
+
+    // 2. Check if user tapped a constellation cluster hub
+    final tappedConstellation = _hitTestConstellation(details.localPosition);
+    if (tappedConstellation != null) {
+      HapticFeedback.lightImpact();
+      if (tappedConstellation.id == 'core') {
+        widget.layoutEngine.collapseAllExceptCore();
+        widget.camera.flyTo(Offset.zero, targetZoom: 1.25);
+      } else {
+        final willExpand = !tappedConstellation.isExpanded;
+        if (willExpand) {
+          widget.layoutEngine.expandOnly(tappedConstellation.id);
+          widget.camera.flyTo(tappedConstellation.center, targetZoom: 1.4);
+        } else {
+          tappedConstellation.isExpanded = false;
+          widget.camera.flyTo(Offset.zero, targetZoom: 1.05);
+        }
+      }
+      return;
+    }
+
+    // 3. Tapped empty space: smoothly collapse expanded constellations back to clean state
+    _focusedApp = null;
+    widget.layoutEngine.collapseAllExceptCore();
+    widget.camera.flyTo(Offset.zero, targetZoom: 1.0);
   }
 
   void _handleLongPress(LongPressStartDetails details) {

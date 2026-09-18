@@ -22,8 +22,10 @@ class GalaxyLayoutEngine {
         primaryColor: const Color(0xFFFFD54F),
         secondaryColor: const Color(0xFFFF8F00),
         glowColor: const Color(0x66FFD54F),
+        emblemIcon: Icons.star_rounded,
         center: Offset.zero,
-        radius: 120,
+        radius: 125,
+        isExpanded: true,
       ),
       Constellation(
         id: 'social',
@@ -32,8 +34,10 @@ class GalaxyLayoutEngine {
         primaryColor: const Color(0xFFF06292),
         secondaryColor: const Color(0xFFAB47BC),
         glowColor: const Color(0x55F06292),
+        emblemIcon: Icons.forum_rounded,
         center: const Offset(-320, -180),
         radius: 160,
+        isExpanded: false,
       ),
       Constellation(
         id: 'productivity',
@@ -42,8 +46,10 @@ class GalaxyLayoutEngine {
         primaryColor: const Color(0xFF4DD0E1),
         secondaryColor: const Color(0xFF00ACC1),
         glowColor: const Color(0x554DD0E1),
+        emblemIcon: Icons.workspaces_rounded,
         center: const Offset(320, -180),
         radius: 160,
+        isExpanded: false,
       ),
       Constellation(
         id: 'media',
@@ -52,8 +58,10 @@ class GalaxyLayoutEngine {
         primaryColor: const Color(0xFF81C784),
         secondaryColor: const Color(0xFF388E3C),
         glowColor: const Color(0x5581C784),
+        emblemIcon: Icons.play_circle_filled_rounded,
         center: const Offset(-280, 260),
         radius: 160,
+        isExpanded: false,
       ),
       Constellation(
         id: 'tools',
@@ -62,10 +70,35 @@ class GalaxyLayoutEngine {
         primaryColor: const Color(0xFFFFB74D),
         secondaryColor: const Color(0xFFE65100),
         glowColor: const Color(0x55FFB74D),
+        emblemIcon: Icons.handyman_rounded,
         center: const Offset(280, 260),
         radius: 160,
+        isExpanded: false,
       ),
     ]);
+  }
+
+  void toggleConstellation(String id) {
+    for (final c in constellations) {
+      if (c.id == id) {
+        c.isExpanded = !c.isExpanded;
+      }
+    }
+  }
+
+  void expandOnly(String id) {
+    for (final c in constellations) {
+      if (c.id == 'core') continue; // Core stays accessible
+      c.isExpanded = (c.id == id);
+    }
+  }
+
+  void collapseAllExceptCore() {
+    for (final c in constellations) {
+      if (c.id != 'core') {
+        c.isExpanded = false;
+      }
+    }
   }
 
   void assignApps(List<AppEntry> apps) {
@@ -121,20 +154,20 @@ class GalaxyLayoutEngine {
     }
   }
 
-  /// Updates constellation centers and app positions based on foldable posture and delta time
   void updateGalaxyMorph({
     required DevicePosture posture,
     required double hingeAngle,
     required double dt,
     Offset? magneticTouchPoint,
   }) {
-    // 1. Constellation center morphing based on posture
-    // Unfolded (flat): expansive 2D spiral
-    // Folded: narrow vertical filament (History of Everything timeline mode)
-    // Tabletop: split deck
     final double foldFactor = (1.0 - (hingeAngle / 180.0)).clamp(0.0, 1.0);
 
     for (final c in constellations) {
+      // 1. Smooth expansion progress animation (elastic ease-out)
+      final double targetExpansion = c.isExpanded ? 1.0 : 0.0;
+      c.expansionProgress += (targetExpansion - c.expansionProgress) * (dt * 8.0).clamp(0.0, 1.0);
+
+      // 2. Constellation center morphing based on posture
       Offset targetCenter;
 
       if (posture == DevicePosture.folded || foldFactor > 0.8) {
@@ -144,16 +177,16 @@ class GalaxyLayoutEngine {
             targetCenter = Offset.zero;
             break;
           case 'social':
-            targetCenter = const Offset(0, -320);
+            targetCenter = const Offset(0, -300);
             break;
           case 'productivity':
-            targetCenter = const Offset(0, 320);
+            targetCenter = const Offset(0, 300);
             break;
           case 'media':
-            targetCenter = const Offset(0, -640);
+            targetCenter = const Offset(0, -600);
             break;
           case 'tools':
-            targetCenter = const Offset(0, 640);
+            targetCenter = const Offset(0, 600);
             break;
           default:
             targetCenter = Offset.zero;
@@ -162,19 +195,19 @@ class GalaxyLayoutEngine {
         // Flex mode: Top half has observation deck, bottom half has thumb command dock
         switch (c.id) {
           case 'core':
-            targetCenter = const Offset(0, 220); // Bottom thumb reach
+            targetCenter = const Offset(0, 210);
             break;
           case 'tools':
-            targetCenter = const Offset(-220, 260); // Bottom left
+            targetCenter = const Offset(-210, 250);
             break;
           case 'productivity':
-            targetCenter = const Offset(220, 260); // Bottom right
+            targetCenter = const Offset(210, 250);
             break;
           case 'social':
-            targetCenter = const Offset(-240, -220); // Top left
+            targetCenter = const Offset(-230, -210);
             break;
           case 'media':
-            targetCenter = const Offset(240, -220); // Top right
+            targetCenter = const Offset(230, -210);
             break;
           default:
             targetCenter = Offset.zero;
@@ -204,22 +237,26 @@ class GalaxyLayoutEngine {
 
       // Smooth interpolation to target center
       c.center = Offset.lerp(c.center, targetCenter, (dt * 5.0).clamp(0.0, 1.0))!;
-      c.rotation += dt * 0.05; // Ambient constellation rotation
+      c.rotation += dt * 0.04;
 
-      // 2. Update apps inside constellation
+      // 3. Update apps inside constellation
+      // When collapsed, effective radius shrinks down to center orb!
+      final double effectiveExpansion = c.id == 'core' ? 1.0 : c.expansionProgress;
+
       for (final app in c.apps) {
         app.orbitalAngle += app.orbitalSpeed * dt * 60;
 
         final double cosA = math.cos(app.orbitalAngle + c.rotation * 0.2);
         final double sinA = math.sin(app.orbitalAngle + c.rotation * 0.2);
 
-        // Calculate resting orbit position around current constellation center
-        final restingPos = c.center + Offset(cosA * app.orbitalRadius, sinA * app.orbitalRadius);
+        // Radius scales with expansion progress
+        final double currentRadius = app.orbitalRadius * effectiveExpansion;
+        final restingPos = c.center + Offset(cosA * currentRadius, sinA * currentRadius);
         app.basePosition = restingPos;
 
         // Magnetic perturbation if finger is dragging near app
         Offset finalPos = restingPos;
-        if (magneticTouchPoint != null) {
+        if (magneticTouchPoint != null && effectiveExpansion > 0.4) {
           final dist = (magneticTouchPoint - restingPos).distance;
           const magneticRadius = 140.0;
           if (dist < magneticRadius && dist > 1.0) {

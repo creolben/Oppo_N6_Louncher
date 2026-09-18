@@ -10,6 +10,7 @@ class FoldableCockpitBar extends StatefulWidget {
   final GalaxyLayoutEngine layoutEngine;
   final VoidCallback onOpenSearch;
   final VoidCallback onOpenSettings;
+  final VoidCallback onLock;
 
   const FoldableCockpitBar({
     super.key,
@@ -18,6 +19,7 @@ class FoldableCockpitBar extends StatefulWidget {
     required this.layoutEngine,
     required this.onOpenSearch,
     required this.onOpenSettings,
+    required this.onLock,
   });
 
   @override
@@ -28,11 +30,22 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
   bool _showFoldControls = false;
 
   void _jumpToConstellation(String id) {
-    final c = widget.layoutEngine.constellations.firstWhere(
-      (element) => element.id == id,
-      orElse: () => widget.layoutEngine.constellations.first,
-    );
-    widget.camera.flyTo(c.center, targetZoom: id == 'core' ? 1.3 : 1.15);
+    if (id == 'core') {
+      widget.layoutEngine.collapseAllExceptCore();
+      widget.camera.flyTo(Offset.zero, targetZoom: 1.25);
+    } else {
+      final c = widget.layoutEngine.constellations.firstWhere(
+        (element) => element.id == id,
+        orElse: () => widget.layoutEngine.constellations.first,
+      );
+      if (c.isExpanded) {
+        c.isExpanded = false;
+        widget.camera.flyTo(Offset.zero, targetZoom: 1.05);
+      } else {
+        widget.layoutEngine.expandOnly(id);
+        widget.camera.flyTo(c.center, targetZoom: 1.4);
+      }
+    }
   }
 
   @override
@@ -89,7 +102,6 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    // Posture Preset Chips
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
@@ -99,7 +111,6 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                       ],
                     ),
                     const SizedBox(height: 4),
-                    // Angle Slider
                     SliderTheme(
                       data: SliderTheme.of(context).copyWith(
                         activeTrackColor: const Color(0xFF00E5FF),
@@ -145,7 +156,6 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Search Trigger
                       _cockpitIconButton(
                         icon: Icons.search_rounded,
                         color: const Color(0xFF00E5FF),
@@ -171,12 +181,14 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                         ),
                       ),
 
-                      // Center reset & Fold mode toggle
                       _cockpitIconButton(
                         icon: Icons.filter_center_focus_rounded,
                         color: Colors.white70,
                         tooltip: 'Recenter galaxy',
-                        onTap: () => widget.camera.resetView(),
+                        onTap: () {
+                          widget.layoutEngine.collapseAllExceptCore();
+                          widget.camera.resetView();
+                        },
                       ),
 
                       _cockpitIconButton(
@@ -184,6 +196,13 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                         color: _showFoldControls ? const Color(0xFF00E5FF) : Colors.white70,
                         tooltip: 'Foldable simulator',
                         onTap: () => setState(() => _showFoldControls = !_showFoldControls),
+                      ),
+
+                      _cockpitIconButton(
+                        icon: Icons.lock_outline_rounded,
+                        color: Colors.white70,
+                        tooltip: 'Lock screen',
+                        onTap: widget.onLock,
                       ),
 
                       _cockpitIconButton(
@@ -210,7 +229,7 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
     required VoidCallback onTap,
   }) {
     return IconButton(
-      icon: Icon(icon, color: color, size: 22),
+      icon: Icon(icon, color: color, size: 21),
       tooltip: tooltip,
       splashRadius: 22,
       onPressed: onTap,
@@ -226,9 +245,9 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: color.withOpacity(0.12),
+            color: color.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: color.withOpacity(0.35), width: 1.0),
+            border: Border.all(color: color.withValues(alpha: 0.35), width: 1.0),
           ),
           child: Text(
             label,

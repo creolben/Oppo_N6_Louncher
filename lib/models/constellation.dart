@@ -8,27 +8,65 @@ class Constellation {
   final Color primaryColor;
   final Color secondaryColor;
   final Color glowColor;
+  final IconData emblemIcon;
   Offset center;
   double radius;
   double rotation;
   List<AppEntry> apps;
-  TextPainter? titlePainter;
 
-  void ensureTitlePainter() {
+  // Expansion State: 0.0 (condensed celestial orb) to 1.0 (fully bloomed ring of apps)
+  bool isExpanded;
+  double expansionProgress;
+
+  TextPainter? titlePainter;
+  TextPainter? countBadgePainter;
+  TextPainter? iconPainter;
+  int _lastAppCount = -1;
+
+  void ensurePainters() {
     titlePainter ??= TextPainter(
       text: TextSpan(
         text: name.toUpperCase(),
         style: TextStyle(
-          color: primaryColor.withValues(alpha: 0.8),
-          fontSize: 10.0,
+          color: primaryColor.withValues(alpha: 0.85),
+          fontSize: 10.5,
           fontWeight: FontWeight.w700,
-          letterSpacing: 2.2,
+          letterSpacing: 2.0,
           shadows: [
             Shadow(
               color: primaryColor.withValues(alpha: 0.8),
               blurRadius: 8.0,
             ),
           ],
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    if (_lastAppCount != apps.length || countBadgePainter == null) {
+      _lastAppCount = apps.length;
+      countBadgePainter = TextPainter(
+        text: TextSpan(
+          text: '${apps.length} stars',
+          style: TextStyle(
+            color: primaryColor.withValues(alpha: 0.7),
+            fontSize: 9.0,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0.8,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+    }
+
+    iconPainter ??= TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(emblemIcon.codePoint),
+        style: TextStyle(
+          fontSize: 22.0,
+          fontFamily: emblemIcon.fontFamily,
+          package: emblemIcon.fontPackage,
+          color: primaryColor,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -43,8 +81,12 @@ class Constellation {
     required this.secondaryColor,
     required this.glowColor,
     required this.center,
-    this.radius = 180.0,
+    this.emblemIcon = Icons.auto_awesome_rounded,
+    this.radius = 160.0,
     this.rotation = 0.0,
+    this.isExpanded = false,
+    double? initialProgress,
     List<AppEntry>? apps,
-  }) : apps = apps ?? [];
+  })  : expansionProgress = initialProgress ?? (isExpanded ? 1.0 : 0.0),
+        apps = apps ?? [];
 }

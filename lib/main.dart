@@ -10,6 +10,7 @@ import 'canvas/galaxy_interactive_canvas.dart';
 import 'ui/widgets/foldable_cockpit_bar.dart';
 import 'ui/widgets/search_overlay.dart';
 import 'ui/widgets/app_action_dialog.dart';
+import 'features/lockscreen/cosmic_lock_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,6 +60,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
   List<AppEntry> _apps = [];
   bool _isLoading = true;
   bool _isSearchOpen = false;
+  bool _isLocked = false;
 
   @override
   void initState() {
@@ -156,6 +158,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
                     layoutEngine: _layoutEngine,
                     onOpenSearch: () => setState(() => _isSearchOpen = true),
                     onOpenSettings: () => LauncherBridge.openHomeSettings(),
+                    onLock: () => setState(() => _isLocked = true),
                   ),
                 ),
 
@@ -166,6 +169,16 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
                       allApps: _apps,
                       camera: _camera,
                       onClose: () => setState(() => _isSearchOpen = false),
+                    ),
+                  ),
+
+                // 5. Celestial Foldable Lock Screen
+                if (_isLocked)
+                  Positioned.fill(
+                    child: CosmicLockScreen(
+                      foldable: _foldable,
+                      apps: _apps,
+                      onUnlock: () => setState(() => _isLocked = false),
                     ),
                   ),
               ],

@@ -9,7 +9,7 @@ import 'camera_controller.dart';
 class CosmicParticle {
   double x;
   double y;
-  double z; // Parallax depth layer
+  double z;
   double radius;
   double baseBrightness;
   double twinkleSpeed;
@@ -54,7 +54,7 @@ class GalaxyCustomPainter extends CustomPainter {
   final Offset? activeTouchScreenPoint;
   final AppEntry? focusedApp;
 
-  // Reusable Paint objects to completely eliminate GC churn & frame drops
+  // Reusable Paint objects to eliminate GC churn
   static final Paint _bgPaint = Paint();
   static final Paint _starPaint = Paint()..style = PaintingStyle.fill;
   static final Paint _auraPaint = Paint();
@@ -94,7 +94,7 @@ class GalaxyCustomPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 1. Deep cosmic gradient background
+    // 1. Deep space background
     _paintDeepSpace(canvas, size);
 
     // 2. Setup World Space Camera Transform
@@ -102,10 +102,10 @@ class GalaxyCustomPainter extends CustomPainter {
     canvas.translate(camera.translation.dx, camera.translation.dy);
     canvas.scale(camera.zoom, camera.zoom);
 
-    // 3. Render Starfield in world space (flicker-free, perfectly stable)
+    // 3. Render Starfield
     _paintWorldStarfield(canvas);
 
-    // 4. Render Constellation Nebular Auras & Astronomical Rings
+    // 4. Render Constellation Hubs & Auras
     _paintConstellationAuras(canvas);
 
     // 5. Render Luminous Bezier Filaments
@@ -114,7 +114,7 @@ class GalaxyCustomPainter extends CustomPainter {
     // 6. Render App Celestial Nodes
     _paintAppNodes(canvas);
 
-    // 7. Render Supernova Launch Animation (if triggered)
+    // 7. Render Supernova Launch Animation
     if (activeSupernova != null) {
       _paintSupernova(canvas);
     }
@@ -141,11 +141,9 @@ class GalaxyCustomPainter extends CustomPainter {
   }
 
   void _paintWorldStarfield(Canvas canvas) {
-    // Visible world boundary plus margin for culling
     final visible = camera.visibleWorldBounds.inflate(120.0);
 
     for (final star in starfield) {
-      // Fast bounding box culling
       if (star.x < visible.left ||
           star.x > visible.right ||
           star.y < visible.top ||
@@ -153,7 +151,6 @@ class GalaxyCustomPainter extends CustomPainter {
         continue;
       }
 
-      // Smooth, gentle ambient twinkle (no abrupt strobing)
       final double wave = math.sin(animationTime * star.twinkleSpeed + star.x * 0.05);
       final double alpha = star.baseBrightness * (0.65 + wave * 0.25);
 
@@ -164,43 +161,98 @@ class GalaxyCustomPainter extends CustomPainter {
 
   void _paintConstellationAuras(Canvas canvas) {
     for (final c in constellations) {
+      c.ensurePainters();
+      final double progress = c.expansionProgress;
+
       // Ambient radial nebula aura
+      final double auraRadius = (c.id == 'core' || progress > 0.5) ? c.radius * 1.5 : 75.0;
       _auraPaint.shader = ui.Gradient.radial(
         c.center,
-        c.radius * 1.5,
+        auraRadius,
         [
-          c.glowColor.withValues(alpha: 0.28),
+          c.glowColor.withValues(alpha: progress > 0.3 ? 0.28 : 0.40),
           c.glowColor.withValues(alpha: 0.08),
           Colors.transparent,
         ],
-        const [0.0, 0.5, 1.0],
+        const [0.0, 0.55, 1.0],
       );
-      canvas.drawCircle(c.center, c.radius * 1.5, _auraPaint);
+      canvas.drawCircle(c.center, auraRadius, _auraPaint);
 
-      // Fine orbital compass track
-      _trackPaint.color = c.primaryColor.withValues(alpha: 0.12);
-      canvas.drawCircle(c.center, c.radius * 0.6, _trackPaint);
-      canvas.drawCircle(c.center, c.radius * 1.0, _trackPaint);
+      // If collapsed (or transitioning): Render the prominent Celestial Cluster Orb
+      if (c.id != 'core' && progress < 0.85) {
+        final double orbAlpha = (1.0 - progress).clamp(0.0, 1.0);
+        const double orbRadius = 38.0;
 
-      // Rotating celestial tick ring
-      final double rot = c.rotation;
-      _tickPaint.color = c.primaryColor.withValues(alpha: 0.22);
-      for (int i = 0; i < 12; i++) {
-        final double a = rot + (i * math.pi / 6);
-        final cosA = math.cos(a);
-        final sinA = math.sin(a);
-        final p1 = c.center + Offset(cosA * (c.radius - 3), sinA * (c.radius - 3));
-        final p2 = c.center + Offset(cosA * (c.radius + 3), sinA * (c.radius + 3));
-        canvas.drawLine(p1, p2, _tickPaint);
+        // Outer pulse halo
+        _haloPaint.shader = ui.Gradient.radial(
+          c.center,
+          orbRadius * 1.8,
+          [
+            c.primaryColor.withValues(alpha: 0.35 * orbAlpha),
+            Colors.transparent,
+          ],
+        );
+        canvas.drawCircle(c.center, orbRadius * 1.8, _haloPaint);
+
+        // Glassmorphic Orb Body
+        _nodeFillPaint.color = const Color(0xFF13182C).withValues(alpha: 0.95 * orbAlpha);
+        canvas.drawCircle(c.center, orbRadius, _nodeFillPaint);
+
+        // Glowing rim border
+        _nodeStrokePaint
+          ..shader = ui.Gradient.linear(
+            c.center - const Offset(orbRadius, orbRadius),
+            c.center + const Offset(orbRadius, orbRadius),
+            [
+              c.primaryColor.withValues(alpha: 0.9 * orbAlpha),
+              c.secondaryColor.withValues(alpha: 0.35 * orbAlpha),
+            ],
+          )
+          ..strokeWidth = 2.0;
+        canvas.drawCircle(c.center, orbRadius, _nodeStrokePaint);
+
+        // Category Emblem Icon
+        if (c.iconPainter != null) {
+          final ip = c.iconPainter!;
+          ip.paint(canvas, c.center - Offset(ip.width / 2, ip.height / 2));
+        }
+
+        // Subtitle "X stars" badge below orb
+        if (c.countBadgePainter != null) {
+          final cbp = c.countBadgePainter!;
+          cbp.paint(canvas, c.center + Offset(-cbp.width / 2, orbRadius + 6.0));
+        }
       }
 
-      // Constellation Header Title (Zero per-frame layout overhead)
-      if (camera.zoom > 0.45) {
-        c.ensureTitlePainter();
+      // If expanded: Render fine astronomical compass track and tick ring
+      if (progress > 0.15 || c.id == 'core') {
+        final double trackAlpha = c.id == 'core' ? 1.0 : progress;
+
+        _trackPaint.color = c.primaryColor.withValues(alpha: 0.12 * trackAlpha);
+        canvas.drawCircle(c.center, c.radius * 0.6, _trackPaint);
+        canvas.drawCircle(c.center, c.radius * 1.0, _trackPaint);
+
+        final double rot = c.rotation;
+        _tickPaint.color = c.primaryColor.withValues(alpha: 0.22 * trackAlpha);
+        for (int i = 0; i < 12; i++) {
+          final double a = rot + (i * math.pi / 6);
+          final cosA = math.cos(a);
+          final sinA = math.sin(a);
+          final p1 = c.center + Offset(cosA * (c.radius - 3), sinA * (c.radius - 3));
+          final p2 = c.center + Offset(cosA * (c.radius + 3), sinA * (c.radius + 3));
+          canvas.drawLine(p1, p2, _tickPaint);
+        }
+      }
+
+      // Constellation Title Header
+      if (c.titlePainter != null) {
         final painter = c.titlePainter!;
+        final double titleY = (c.id == 'core' || progress > 0.4)
+            ? c.radius * 1.08 + painter.height
+            : 56.0 + painter.height;
         painter.paint(
           canvas,
-          c.center - Offset(painter.width / 2, c.radius * 1.08 + painter.height),
+          c.center - Offset(painter.width / 2, titleY),
         );
       }
     }
@@ -209,7 +261,7 @@ class GalaxyCustomPainter extends CustomPainter {
   void _paintBezierFilaments(Canvas canvas) {
     final Constellation core = constellations.firstWhere((c) => c.id == 'core');
 
-    // 1. Filaments connecting other constellations to the Solar Core
+    // 1. Filaments connecting other constellations to Solar Core
     for (final c in constellations) {
       if (c.id == 'core') continue;
 
@@ -224,21 +276,23 @@ class GalaxyCustomPainter extends CustomPainter {
 
       _path.quadraticBezierTo(controlPoint.dx, controlPoint.dy, c.center.dx, c.center.dy);
 
-      // Soft outer glow pass
+      final double filamentAlpha = c.isExpanded ? 0.5 : 0.2;
       _filamentPaint
-        ..color = c.primaryColor.withValues(alpha: 0.10)
+        ..color = c.primaryColor.withValues(alpha: 0.08 * filamentAlpha)
         ..strokeWidth = 3.0;
       canvas.drawPath(_path, _filamentPaint);
 
-      // Core electric thread pass
       _filamentPaint
-        ..color = c.primaryColor.withValues(alpha: 0.35)
+        ..color = c.primaryColor.withValues(alpha: 0.35 * filamentAlpha)
         ..strokeWidth = 1.0;
       canvas.drawPath(_path, _filamentPaint);
     }
 
-    // 2. Intra-constellation filaments connecting apps to their hub
+    // 2. Intra-constellation filaments (only visible when expanded)
     for (final c in constellations) {
+      final double progress = c.id == 'core' ? 1.0 : c.expansionProgress;
+      if (progress < 0.1) continue;
+
       for (final app in c.apps) {
         _path.reset();
         _path.moveTo(c.center.dx, c.center.dy);
@@ -250,7 +304,7 @@ class GalaxyCustomPainter extends CustomPainter {
         _path.quadraticBezierTo(control.dx, control.dy, app.worldPosition.dx, app.worldPosition.dy);
 
         _filamentPaint
-          ..color = app.accentColor.withValues(alpha: 0.20)
+          ..color = app.accentColor.withValues(alpha: 0.20 * progress)
           ..strokeWidth = 1.0;
         canvas.drawPath(_path, _filamentPaint);
       }
@@ -262,10 +316,12 @@ class GalaxyCustomPainter extends CustomPainter {
     final visible = camera.visibleWorldBounds.inflate(60.0);
 
     for (final c in constellations) {
+      final double progress = c.id == 'core' ? 1.0 : c.expansionProgress;
+      if (progress < 0.08) continue; // Keep collapsed constellations clean and uncluttered!
+
       for (final app in c.apps) {
         final pos = app.worldPosition;
 
-        // Viewport culling
         if (pos.dx < visible.left ||
             pos.dx > visible.right ||
             pos.dy < visible.top ||
@@ -274,9 +330,8 @@ class GalaxyCustomPainter extends CustomPainter {
         }
 
         final isFocused = focusedApp == app;
-        final double nodeRadius = isFocused ? 31.0 : 25.0;
+        final double nodeRadius = (isFocused ? 31.0 : 25.0) * (0.4 + progress * 0.6);
 
-        // Ensure cached TextPainters are initialized once
         app.ensurePainters(nodeRadius);
 
         // Outer glow halo
@@ -284,8 +339,8 @@ class GalaxyCustomPainter extends CustomPainter {
           pos,
           nodeRadius * 2.0,
           [
-            app.accentColor.withValues(alpha: isFocused ? 0.55 : 0.22),
-            app.accentColor.withValues(alpha: 0.05),
+            app.accentColor.withValues(alpha: (isFocused ? 0.55 : 0.22) * progress),
+            app.accentColor.withValues(alpha: 0.04 * progress),
             Colors.transparent,
           ],
           const [0.0, 0.55, 1.0],
@@ -293,7 +348,7 @@ class GalaxyCustomPainter extends CustomPainter {
         canvas.drawCircle(pos, nodeRadius * 2.0, _haloPaint);
 
         // Glassmorphic node body
-        _nodeFillPaint.color = const Color(0xFF111524);
+        _nodeFillPaint.color = const Color(0xFF111524).withValues(alpha: progress);
         canvas.drawCircle(pos, nodeRadius, _nodeFillPaint);
 
         // Illuminated rim border
@@ -302,8 +357,8 @@ class GalaxyCustomPainter extends CustomPainter {
             pos - Offset(nodeRadius, nodeRadius),
             pos + Offset(nodeRadius, nodeRadius),
             [
-              app.accentColor.withValues(alpha: isFocused ? 1.0 : 0.75),
-              app.accentColor.withValues(alpha: 0.2),
+              app.accentColor.withValues(alpha: (isFocused ? 1.0 : 0.75) * progress),
+              app.accentColor.withValues(alpha: 0.2 * progress),
             ],
           )
           ..strokeWidth = isFocused ? 2.2 : 1.4;
@@ -315,6 +370,7 @@ class GalaxyCustomPainter extends CustomPainter {
           final iconSize = nodeRadius * 1.35;
           final srcRect = Rect.fromLTWH(0, 0, icon.width.toDouble(), icon.height.toDouble());
           final dstRect = Rect.fromCenter(center: pos, width: iconSize, height: iconSize);
+          _iconPaint.color = Colors.white.withValues(alpha: progress);
           canvas.drawImageRect(icon, srcRect, dstRect, _iconPaint);
         } else if (app.iconPainter != null) {
           final p = app.iconPainter!;
@@ -322,21 +378,21 @@ class GalaxyCustomPainter extends CustomPainter {
         }
 
         // Notification Pip Badge
-        if (app.notificationCount > 0 && app.badgePainter != null) {
+        if (app.notificationCount > 0 && app.badgePainter != null && progress > 0.6) {
           final badgeCenter = pos + Offset(nodeRadius * 0.70, -nodeRadius * 0.70);
           const badgeR = 8.5;
-          _badgePaint.color = const Color(0xFFFF3366);
+          _badgePaint.color = const Color(0xFFFF3366).withValues(alpha: progress);
           canvas.drawCircle(badgeCenter, badgeR, _badgePaint);
 
-          _badgeGlowPaint.color = const Color(0x55FF3366);
+          _badgeGlowPaint.color = const Color(0x55FF3366).withValues(alpha: progress);
           canvas.drawCircle(badgeCenter, badgeR * 1.4, _badgeGlowPaint);
 
           final bp = app.badgePainter!;
           bp.paint(canvas, badgeCenter - Offset(bp.width / 2, bp.height / 2));
         }
 
-        // App Label (LOD - Level of Detail based on Zoom)
-        if ((zoom > 0.55 || isFocused) && app.labelPainter != null) {
+        // App Label
+        if ((zoom > 0.55 || isFocused) && app.labelPainter != null && progress > 0.75) {
           final lp = app.labelPainter!;
           lp.paint(canvas, pos + Offset(-lp.width / 2, nodeRadius + 4.0));
         }
@@ -352,13 +408,11 @@ class GalaxyCustomPainter extends CustomPainter {
     final pos = supernova.worldPosition;
     final easeP = Curves.easeOutQuart.transform(p);
 
-    // Shockwave Ring
     _shockwavePaint
       ..color = supernova.color.withValues(alpha: (1.0 - p) * 0.8)
       ..strokeWidth = (1.0 - p) * 6.0 + 1.0;
     canvas.drawCircle(pos, easeP * 300.0, _shockwavePaint);
 
-    // Luminous expansion flare
     _burstPaint.shader = ui.Gradient.radial(
       pos,
       easeP * 220.0,
@@ -371,7 +425,6 @@ class GalaxyCustomPainter extends CustomPainter {
     );
     canvas.drawCircle(pos, easeP * 220.0, _burstPaint);
 
-    // Photon streaks
     _streakPaint
       ..color = Colors.white.withValues(alpha: (1.0 - p) * 0.75)
       ..strokeWidth = 1.8;
@@ -386,7 +439,6 @@ class GalaxyCustomPainter extends CustomPainter {
   }
 
   void _paintScreenSpaceElements(Canvas canvas, Size size) {
-    // Fold Crease Holographic Seam Line (Flex / Tabletop mode)
     final crease = foldable.creaseBounds;
     if (crease != null || (foldable.isTabletop && foldable.isSimulated)) {
       final creaseRect = crease ?? Rect.fromLTWH(0, size.height * 0.5 - 2, size.width, 4);
@@ -416,7 +468,6 @@ class GalaxyCustomPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant GalaxyCustomPainter oldDelegate) {
-    // Repainting is strictly driven by the Listenable repaint argument passed to super
     return false;
   }
 }
