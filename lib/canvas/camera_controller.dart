@@ -7,14 +7,15 @@ class CameraController extends ChangeNotifier {
   double _zoom = 1.0;
   Size _viewportSize = Size.zero;
 
-  // Limits
-  static const double minZoom = 0.35;
-  static const double maxZoom = 2.8;
+  // Zoom Limits
+  static const double minZoom = 0.45;
+  static const double maxZoom = 2.4;
 
   // Kinetic Physics
   Ticker? _ticker;
   FrictionSimulation? _panSimulationX;
   FrictionSimulation? _panSimulationY;
+  double _panSimTime = 0.0;
   SpringSimulation? _zoomSpring;
   double _springStartZoom = 1.0;
   double _springTargetZoom = 1.0;
@@ -34,7 +35,7 @@ class CameraController extends ChangeNotifier {
     _ticker = vsync.createTicker(_onTick);
     _flyController = AnimationController(
       vsync: vsync,
-      duration: const Duration(milliseconds: 650),
+      duration: const Duration(milliseconds: 550),
     )..addListener(() {
         if (_flyOffsetAnim != null && _flyZoomAnim != null) {
           _translation = _flyOffsetAnim!.value;
@@ -48,9 +49,20 @@ class CameraController extends ChangeNotifier {
     if (_viewportSize == size) return;
     _viewportSize = size;
     if (_translation == Offset.zero && size != Size.zero) {
-      // Center canvas in viewport initially
       _translation = Offset(size.width / 2, size.height / 2);
     }
+  }
+
+  Offset _clampTranslation(Offset t) {
+    if (_viewportSize == Size.zero) return t;
+    // Allow panning up to 750px from center in world space
+    final double maxPan = 750.0 * _zoom;
+    final double cx = _viewportSize.width / 2;
+    final double cy = _viewportSize.height / 2;
+    return Offset(
+      t.dx.clamp(cx - maxPan, cx + maxPan),
+      t.dy.clamp(cy - maxPan, cy + maxPan),
+    );
   }
 
   Offset worldToScreen(Offset world) {
@@ -76,19 +88,17 @@ class CameraController extends ChangeNotifier {
 
   void applyPan(Offset delta) {
     _stopPhysics();
-    _translation += delta;
+    _translation = _clampTranslation(_translation + delta);
     notifyListeners();
   }
 
   void applyScale(double scaleDelta, Offset focalScreenPoint) {
     _stopPhysics();
-    final double newZoom = (_zoom * scaleDelta).clamp(minZoom * 0.7, maxZoom * 1.3);
+    final double newZoom = (_zoom * scaleDelta).clamp(minZoom * 0.8, maxZoom * 1.2);
 
-    // Zoom centered on focal point:
-    // (focalPoint - translation) / oldZoom = (focalPoint - newTranslation) / newZoom
     final worldFocal = screenToWorld(focalScreenPoint);
     _zoom = newZoom;
-    _translation = focalScreenPoint - (worldFocal * _zoom);
+    _translation = _clampTranslation(focalScreenPoint - (worldFocal * _zoom));
 
     notifyListeners();
   }
@@ -104,17 +114,19 @@ class CameraController extends ChangeNotifier {
       _springTargetZoom = target;
       _springTime = 0.0;
       _zoomSpring = SpringSimulation(
-        const SpringDescription(mass: 1.0, stiffness: 220.0, damping: 24.0),
+        const SpringDescription(mass: 1.0, stiffness: 240.0, damping: 25.0),
         0.0,
         1.0,
         0.0,
       );
     }
 
-    if (vx.abs() > 40 || vy.abs() > 40 || _zoomSpring != null) {
-      const drag = 0.125; // History of Everything style kinetic damping
+    if (vx.abs() > 60 || vy.abs() > 60 || _zoomSpring != null) {
+      // Natural kinetic drag coefficient
+      const drag = 0.135;
       _panSimulationX = FrictionSimulation(drag, _translation.dx, vx);
       _panSimulationY = FrictionSimulation(drag, _translation.dy, vy);
+      _panSimTime = 0.0;
 
       _lastTickTime = Duration.zero;
       _ticker?.stop();
@@ -134,15 +146,16 @@ class CameraController extends ChangeNotifier {
     bool stillRunning = false;
 
     if (_panSimulationX != null && _panSimulationY != null) {
-      final double nextX = _panSimulationX!.x(dt);
-      final double nextY = _panSimulationY!.x(dt);
-      _translation = Offset(nextX, nextY);
+      _panSimTime += dt;
+      final double nextX = _panSimulationX!.x(_panSimTime);
+      final double nextY = _panSimulationY!.x(_panSimTime);
+      _translation = _clampTranslation(Offset(nextX, nextY));
 
-      if (!_panSimulationX!.isDone(dt) || !_panSimulationY!.isDone(dt)) {
-        stillRunning = true;
-      } else {
+      if (_panSimulationX!.isDone(_panSimTime) && _panSimulationY!.isDone(_panSimTime)) {
         _panSimulationX = null;
         _panSimulationY = null;
+      } else {
+        stillRunning = true;
       }
     }
 
@@ -174,14 +187,14 @@ class CameraController extends ChangeNotifier {
     _flyController?.stop();
   }
 
-  void flyTo(Offset worldTarget, {double targetZoom = 1.35}) {
+  void flyTo(Offset worldTarget, {double targetZoom = 1.30}) {
     _stopPhysics();
     if (_viewportSize == Size.zero) return;
 
-    final targetTranslation = Offset(
+    final targetTranslation = _clampTranslation(Offset(
       _viewportSize.width / 2 - (worldTarget.dx * targetZoom),
       _viewportSize.height / 2 - (worldTarget.dy * targetZoom),
-    );
+    ));
 
     final curve = CurvedAnimation(
       parent: _flyController!,

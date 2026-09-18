@@ -17,62 +17,62 @@ class GalaxyLayoutEngine {
     constellations.addAll([
       Constellation(
         id: 'core',
-        name: 'Solar Core',
+        name: 'Essentials',
         category: AppCategory.core,
-        primaryColor: const Color(0xFFFFD54F),
-        secondaryColor: const Color(0xFFFF8F00),
+        primaryColor: const Color(0xFFFFD54F), // Radiant Gold
+        secondaryColor: const Color(0xFFFF9800),
         glowColor: const Color(0x66FFD54F),
         emblemIcon: Icons.star_rounded,
         center: Offset.zero,
-        radius: 125,
+        radius: 110,
         isExpanded: true,
       ),
       Constellation(
         id: 'social',
-        name: 'Social Nebula',
+        name: 'Connect',
         category: AppCategory.social,
-        primaryColor: const Color(0xFFF06292),
-        secondaryColor: const Color(0xFFAB47BC),
-        glowColor: const Color(0x55F06292),
+        primaryColor: const Color(0xFFFF4081), // Vivid Rose
+        secondaryColor: const Color(0xFFE040FB),
+        glowColor: const Color(0x55FF4081),
         emblemIcon: Icons.forum_rounded,
-        center: const Offset(-320, -180),
-        radius: 160,
+        center: const Offset(-270, -180),
+        radius: 140,
         isExpanded: false,
       ),
       Constellation(
         id: 'productivity',
-        name: 'Productivity Helix',
+        name: 'Workspace',
         category: AppCategory.productivity,
-        primaryColor: const Color(0xFF4DD0E1),
-        secondaryColor: const Color(0xFF00ACC1),
-        glowColor: const Color(0x554DD0E1),
+        primaryColor: const Color(0xFF00E5FF), // Cyber Cyan
+        secondaryColor: const Color(0xFF2979FF),
+        glowColor: const Color(0x5500E5FF),
         emblemIcon: Icons.workspaces_rounded,
-        center: const Offset(320, -180),
-        radius: 160,
+        center: const Offset(270, -180),
+        radius: 140,
         isExpanded: false,
       ),
       Constellation(
         id: 'media',
-        name: 'Aurora Media',
+        name: 'Studio',
         category: AppCategory.entertainment,
-        primaryColor: const Color(0xFF81C784),
-        secondaryColor: const Color(0xFF388E3C),
-        glowColor: const Color(0x5581C784),
+        primaryColor: const Color(0xFF00E676), // Emerald Mint
+        secondaryColor: const Color(0xFF1DE9B6),
+        glowColor: const Color(0x5500E676),
         emblemIcon: Icons.play_circle_filled_rounded,
-        center: const Offset(-280, 260),
-        radius: 160,
+        center: const Offset(-270, 190),
+        radius: 140,
         isExpanded: false,
       ),
       Constellation(
         id: 'tools',
-        name: 'Utility Forge',
+        name: 'Utilities',
         category: AppCategory.tools,
-        primaryColor: const Color(0xFFFFB74D),
-        secondaryColor: const Color(0xFFE65100),
-        glowColor: const Color(0x55FFB74D),
-        emblemIcon: Icons.handyman_rounded,
-        center: const Offset(280, 260),
-        radius: 160,
+        primaryColor: const Color(0xFFFFAB00), // Amber Gold
+        secondaryColor: const Color(0xFFFF6D00),
+        glowColor: const Color(0x55FFAB00),
+        emblemIcon: Icons.tune_rounded,
+        center: const Offset(270, 190),
+        radius: 140,
         isExpanded: false,
       ),
     ]);
@@ -88,7 +88,7 @@ class GalaxyLayoutEngine {
 
   void expandOnly(String id) {
     for (final c in constellations) {
-      if (c.id == 'core') continue; // Core stays accessible
+      if (c.id == 'core') continue;
       c.isExpanded = (c.id == id);
     }
   }
@@ -126,27 +126,26 @@ class GalaxyLayoutEngine {
       if (count == 0) continue;
 
       if (c.id == 'core') {
-        // Solar core apps arranged tightly around center
+        // Symmetrical 4-point compass layout for Essentials
+        const double coreRadius = 78.0;
         for (int i = 0; i < count; i++) {
           final angle = (i * 2 * math.pi / count) - (math.pi / 2);
-          final radius = count <= 3 ? 65.0 : 85.0;
-          final pos = c.center + Offset(math.cos(angle) * radius, math.sin(angle) * radius);
+          final pos = c.center + Offset(math.cos(angle) * coreRadius, math.sin(angle) * coreRadius);
           c.apps[i].orbitalAngle = angle;
-          c.apps[i].orbitalRadius = radius;
-          c.apps[i].orbitalSpeed = 0.0012 * (i % 2 == 0 ? 1 : -1);
+          c.apps[i].orbitalRadius = coreRadius;
+          c.apps[i].orbitalSpeed = 0.0003;
           c.apps[i].basePosition = pos;
           c.apps[i].worldPosition = pos;
         }
       } else {
-        // Cluster apps orbit in concentric rings around constellation center
+        // Clean equidistant ring for category apps
+        const double ringRadius = 105.0;
         for (int i = 0; i < count; i++) {
-          final ring = (i % 2 == 0) ? 1 : 2;
-          final radius = ring == 1 ? 75.0 : 130.0;
-          final angle = (i * (2 * math.pi / count)) + (ring * 0.4);
-          final pos = c.center + Offset(math.cos(angle) * radius, math.sin(angle) * radius);
+          final angle = (i * (2 * math.pi / count)) - (math.pi / 2);
+          final pos = c.center + Offset(math.cos(angle) * ringRadius, math.sin(angle) * ringRadius);
           c.apps[i].orbitalAngle = angle;
-          c.apps[i].orbitalRadius = radius;
-          c.apps[i].orbitalSpeed = 0.0008 * (i % 2 == 0 ? 1 : -1);
+          c.apps[i].orbitalRadius = ringRadius;
+          c.apps[i].orbitalSpeed = 0.0002;
           c.apps[i].basePosition = pos;
           c.apps[i].worldPosition = pos;
         }
@@ -160,117 +159,109 @@ class GalaxyLayoutEngine {
     required double dt,
     Offset? magneticTouchPoint,
   }) {
-    final double foldFactor = (1.0 - (hingeAngle / 180.0)).clamp(0.0, 1.0);
-
     for (final c in constellations) {
-      // 1. Smooth expansion progress animation (elastic ease-out)
+      // Smooth expansion animation
       final double targetExpansion = c.isExpanded ? 1.0 : 0.0;
-      c.expansionProgress += (targetExpansion - c.expansionProgress) * (dt * 8.0).clamp(0.0, 1.0);
+      c.expansionProgress += (targetExpansion - c.expansionProgress) * (dt * 9.0).clamp(0.0, 1.0);
 
-      // 2. Constellation center morphing based on posture
+      // Target center based on foldable posture
       Offset targetCenter;
 
-      if (posture == DevicePosture.folded || foldFactor > 0.8) {
-        // Linear vertical galaxy filament for narrow outer screen
+      if (posture == DevicePosture.folded) {
+        // Structured vertical column for tall, narrow cover screen
         switch (c.id) {
           case 'core':
             targetCenter = Offset.zero;
             break;
           case 'social':
-            targetCenter = const Offset(0, -300);
+            targetCenter = const Offset(0, -260);
             break;
           case 'productivity':
-            targetCenter = const Offset(0, 300);
+            targetCenter = const Offset(0, 260);
             break;
           case 'media':
-            targetCenter = const Offset(0, -600);
+            targetCenter = const Offset(0, -520);
             break;
           case 'tools':
-            targetCenter = const Offset(0, 600);
+            targetCenter = const Offset(0, 520);
             break;
           default:
             targetCenter = Offset.zero;
         }
       } else if (posture == DevicePosture.tabletop) {
-        // Flex mode: Top half has observation deck, bottom half has thumb command dock
+        // Flex mode: Split between top observation and bottom thumb reach
         switch (c.id) {
           case 'core':
-            targetCenter = const Offset(0, 210);
+            targetCenter = const Offset(0, 180);
             break;
           case 'tools':
-            targetCenter = const Offset(-210, 250);
-            break;
-          case 'productivity':
-            targetCenter = const Offset(210, 250);
-            break;
-          case 'social':
-            targetCenter = const Offset(-230, -210);
+            targetCenter = const Offset(200, 210);
             break;
           case 'media':
-            targetCenter = const Offset(230, -210);
+            targetCenter = const Offset(-200, 210);
+            break;
+          case 'social':
+            targetCenter = const Offset(-210, -190);
+            break;
+          case 'productivity':
+            targetCenter = const Offset(210, -190);
             break;
           default:
             targetCenter = Offset.zero;
         }
       } else {
-        // Fully opened expansive galactic spiral
+        // Expansive 4-quadrant layout for unfolded main screen
         switch (c.id) {
           case 'core':
             targetCenter = Offset.zero;
             break;
           case 'social':
-            targetCenter = const Offset(-330, -190);
+            targetCenter = const Offset(-270, -180);
             break;
           case 'productivity':
-            targetCenter = const Offset(330, -190);
+            targetCenter = const Offset(270, -180);
             break;
           case 'media':
-            targetCenter = const Offset(-290, 270);
+            targetCenter = const Offset(-270, 190);
             break;
           case 'tools':
-            targetCenter = const Offset(290, 270);
+            targetCenter = const Offset(270, 190);
             break;
           default:
             targetCenter = Offset.zero;
         }
       }
 
-      // Smooth interpolation to target center
-      c.center = Offset.lerp(c.center, targetCenter, (dt * 5.0).clamp(0.0, 1.0))!;
-      c.rotation += dt * 0.04;
+      c.center = Offset.lerp(c.center, targetCenter, (dt * 6.0).clamp(0.0, 1.0))!;
+      c.rotation += dt * 0.02; // Very subtle ambient drift
 
-      // 3. Update apps inside constellation
-      // When collapsed, effective radius shrinks down to center orb!
       final double effectiveExpansion = c.id == 'core' ? 1.0 : c.expansionProgress;
 
       for (final app in c.apps) {
         app.orbitalAngle += app.orbitalSpeed * dt * 60;
 
-        final double cosA = math.cos(app.orbitalAngle + c.rotation * 0.2);
-        final double sinA = math.sin(app.orbitalAngle + c.rotation * 0.2);
+        final double cosA = math.cos(app.orbitalAngle + c.rotation * 0.1);
+        final double sinA = math.sin(app.orbitalAngle + c.rotation * 0.1);
 
-        // Radius scales with expansion progress
         final double currentRadius = app.orbitalRadius * effectiveExpansion;
         final restingPos = c.center + Offset(cosA * currentRadius, sinA * currentRadius);
         app.basePosition = restingPos;
 
-        // Magnetic perturbation if finger is dragging near app
         Offset finalPos = restingPos;
         if (magneticTouchPoint != null && effectiveExpansion > 0.4) {
           final dist = (magneticTouchPoint - restingPos).distance;
-          const magneticRadius = 140.0;
+          const magneticRadius = 120.0;
           if (dist < magneticRadius && dist > 1.0) {
-            final pull = (1.0 - (dist / magneticRadius)) * 28.0;
+            final pull = (1.0 - (dist / magneticRadius)) * 20.0;
             final dir = (magneticTouchPoint - restingPos) / dist;
             finalPos = restingPos + (dir * pull);
           }
         }
 
-        // Smoothly settle towards final position
         app.worldPosition = Offset.lerp(
           app.worldPosition,
           finalPos,
-          (dt * 12.0).clamp(0.0, 1.0),
+          (dt * 14.0).clamp(0.0, 1.0),
         )!;
       }
     }
