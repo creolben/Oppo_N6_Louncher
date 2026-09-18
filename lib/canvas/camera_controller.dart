@@ -46,11 +46,19 @@ class CameraController extends ChangeNotifier {
   }
 
   void updateViewportSize(Size size) {
-    if (_viewportSize == size) return;
+    if (_viewportSize == size || size == Size.zero) return;
+    final oldSize = _viewportSize;
     _viewportSize = size;
-    if (_translation == Offset.zero && size != Size.zero) {
+    if (oldSize == Size.zero || _translation == Offset.zero) {
       _translation = Offset(size.width / 2, size.height / 2);
+    } else {
+      final deltaCenter = Offset(
+        (size.width - oldSize.width) / 2,
+        (size.height - oldSize.height) / 2,
+      );
+      _translation += deltaCenter;
     }
+    notifyListeners();
   }
 
   Offset _clampTranslation(Offset t) {

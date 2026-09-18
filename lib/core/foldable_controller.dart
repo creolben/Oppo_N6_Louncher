@@ -75,11 +75,17 @@ class FoldableController extends ChangeNotifier {
       notifyListeners();
     }
 
-    // If on narrow screen (cover screen aspect ratio > 1.8), and not simulated
+    // Dynamic detection of cover screen vs unfolded main screen
     if (!_isSimulated) {
       final aspect = mediaQuery.size.height / mediaQuery.size.width;
-      if (aspect > 1.85 && foundCrease == null) {
+      if (foundCrease != null) {
+        _updatePostureFromAngle(_hingeAngle > 0 ? _hingeAngle : 180.0);
+      } else if (aspect > 1.65) {
+        // Tall narrow cover screen
         _updatePostureFromAngle(0.0);
+      } else {
+        // Wide square unfolded inner display
+        _updatePostureFromAngle(180.0);
       }
     }
   }

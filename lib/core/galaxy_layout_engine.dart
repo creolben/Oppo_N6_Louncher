@@ -168,64 +168,64 @@ class GalaxyLayoutEngine {
       Offset targetCenter;
 
       if (posture == DevicePosture.folded) {
-        // Structured vertical column for tall, narrow cover screen
+        // Centered balanced 2x2 cluster around Core for tall narrow cover screen
         switch (c.id) {
           case 'core':
             targetCenter = Offset.zero;
             break;
           case 'social':
-            targetCenter = const Offset(0, -260);
+            targetCenter = const Offset(-85, -165);
             break;
           case 'productivity':
-            targetCenter = const Offset(0, 260);
+            targetCenter = const Offset(85, -165);
             break;
           case 'media':
-            targetCenter = const Offset(0, -520);
+            targetCenter = const Offset(-85, 165);
             break;
           case 'tools':
-            targetCenter = const Offset(0, 520);
+            targetCenter = const Offset(85, 165);
             break;
           default:
             targetCenter = Offset.zero;
         }
       } else if (posture == DevicePosture.tabletop) {
-        // Flex mode: Split between top observation and bottom thumb reach
+        // Flex mode: Symmetrical top observation deck and bottom thumb reach
         switch (c.id) {
           case 'core':
-            targetCenter = const Offset(0, 180);
-            break;
-          case 'tools':
-            targetCenter = const Offset(200, 210);
-            break;
-          case 'media':
-            targetCenter = const Offset(-200, 210);
+            targetCenter = const Offset(0, 150);
             break;
           case 'social':
-            targetCenter = const Offset(-210, -190);
+            targetCenter = const Offset(-150, -180);
             break;
           case 'productivity':
-            targetCenter = const Offset(210, -190);
+            targetCenter = const Offset(150, -180);
+            break;
+          case 'media':
+            targetCenter = const Offset(-150, 240);
+            break;
+          case 'tools':
+            targetCenter = const Offset(150, 240);
             break;
           default:
             targetCenter = Offset.zero;
         }
       } else {
-        // Expansive 4-quadrant layout for unfolded main screen
+        // Centered expansive 4-quadrant layout for unfolded main screen
         switch (c.id) {
           case 'core':
             targetCenter = Offset.zero;
             break;
           case 'social':
-            targetCenter = const Offset(-270, -180);
+            targetCenter = const Offset(-220, -170);
             break;
           case 'productivity':
-            targetCenter = const Offset(270, -180);
+            targetCenter = const Offset(220, -170);
             break;
           case 'media':
-            targetCenter = const Offset(-270, 190);
+            targetCenter = const Offset(-220, 170);
             break;
           case 'tools':
-            targetCenter = const Offset(270, 190);
+            targetCenter = const Offset(220, 170);
             break;
           default:
             targetCenter = Offset.zero;
