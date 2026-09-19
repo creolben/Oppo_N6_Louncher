@@ -102,8 +102,6 @@ class GalaxyCustomPainter extends CustomPainter {
   static final Paint _shockwavePaint = Paint()..style = PaintingStyle.stroke;
   static final Paint _burstPaint = Paint();
   static final Paint _streakPaint = Paint();
-  static final Paint _seamPaint = Paint();
-  static final Paint _linePaint = Paint()..strokeWidth = 1.2;
 
   static final Path _path = Path();
   static final Path _starPath = Path();
@@ -139,8 +137,6 @@ class GalaxyCustomPainter extends CustomPainter {
     }
 
     canvas.restore();
-
-    _paintScreenSpaceElements(canvas, size);
   }
 
   void _paintDeepSpace(Canvas canvas, Size size) {
@@ -994,35 +990,6 @@ class GalaxyCustomPainter extends CustomPainter {
       final start = pos + Offset(math.cos(a) * r1, math.sin(a) * r1);
       final end = pos + Offset(math.cos(a) * r2, math.sin(a) * r2);
       canvas.drawLine(start, end, _streakPaint);
-    }
-  }
-
-  void _paintScreenSpaceElements(Canvas canvas, Size size) {
-    final crease = foldable.creaseBounds;
-    if (crease != null || (foldable.isTabletop && foldable.isSimulated)) {
-      final creaseRect = crease ?? Rect.fromLTWH(0, size.height * 0.5 - 2, size.width, 4);
-
-      _seamPaint.shader = ui.Gradient.linear(
-        creaseRect.topLeft,
-        creaseRect.bottomLeft,
-        const [
-          Color(0x0000E5FF),
-          Color(0x4400E5FF),
-          Color(0x0000E5FF),
-        ],
-        const [0.0, 0.5, 1.0],
-      );
-      canvas.drawRect(
-        Rect.fromLTRB(0, creaseRect.top - 10, size.width, creaseRect.bottom + 10),
-        _seamPaint,
-      );
-
-      _linePaint.color = const Color(0x9900E5FF);
-      canvas.drawLine(
-        Offset(0, creaseRect.center.dy),
-        Offset(size.width, creaseRect.center.dy),
-        _linePaint,
-      );
     }
   }
 

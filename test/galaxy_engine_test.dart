@@ -271,5 +271,79 @@ void main() {
       expect(controller.posture, DevicePosture.folded);
       expect(controller.isFolded, true);
     });
+
+    test('Hardware readings drive posture when not simulating', () {
+      final controller = FoldableController();
+      expect(controller.isSimulated, false);
+      expect(controller.hasHingeSensor, false);
+
+      controller.setHingeAngle(0.0, fromSimulation: false);
+      expect(controller.hasHingeSensor, true);
+      expect(controller.posture, DevicePosture.folded);
+
+      controller.setHingeAngle(180.0, fromSimulation: false);
+      expect(controller.posture, DevicePosture.flat);
+    });
+
+    test('Simulator overrides hardware until released', () {
+      final controller = FoldableController();
+      // Device is physically closed.
+      controller.setHingeAngle(0.0, fromSimulation: false);
+      expect(controller.posture, DevicePosture.folded);
+
+      // Operator previews tabletop from the cockpit UI.
+      controller.setPosture(DevicePosture.tabletop);
+      expect(controller.isSimulated, true);
+      expect(controller.posture, DevicePosture.tabletop);
+      expect(controller.hingeAngle, 90.0);
+
+      // Sensor noise while the device sits still must not break the preview.
+      controller.setHingeAngle(2.0, fromSimulation: false);
+      expect(controller.isSimulated, true);
+      expect(controller.posture, DevicePosture.tabletop);
+    });
+
+    test('Real hinge movement releases the simulator', () {
+      final controller = FoldableController();
+      controller.setHingeAngle(0.0, fromSimulation: false);
+      controller.setPosture(DevicePosture.tabletop);
+      expect(controller.isSimulated, true);
+
+      // The user physically opens the device past the release threshold.
+      controller.setHingeAngle(179.0, fromSimulation: false);
+      expect(controller.isSimulated, false);
+      expect(controller.posture, DevicePosture.flat);
+      expect(controller.hingeAngle, 179.0);
+    });
+
+    test('clearSimulation hands control back to the sensor', () {
+      final controller = FoldableController();
+      controller.setHingeAngle(0.0, fromSimulation: false);
+      controller.setPosture(DevicePosture.flat);
+      expect(controller.posture, DevicePosture.flat);
+
+      controller.clearSimulation();
+      expect(controller.isSimulated, false);
+      expect(controller.posture, DevicePosture.folded);
+      expect(controller.hingeAngle, 0.0);
+    });
+
+    test('clearSimulation is a no-op when already live', () {
+      final controller = FoldableController();
+      controller.setHingeAngle(90.0, fromSimulation: false);
+      controller.clearSimulation();
+      expect(controller.isSimulated, false);
+      expect(controller.posture, DevicePosture.tabletop);
+    });
+
+    test('postureForAngle maps the documented bands', () {
+      expect(FoldableController.postureForAngle(0.0), DevicePosture.folded);
+      expect(FoldableController.postureForAngle(35.0), DevicePosture.folded);
+      expect(FoldableController.postureForAngle(60.0), DevicePosture.halfOpened);
+      expect(FoldableController.postureForAngle(90.0), DevicePosture.tabletop);
+      expect(FoldableController.postureForAngle(115.0), DevicePosture.tabletop);
+      expect(FoldableController.postureForAngle(140.0), DevicePosture.halfOpened);
+      expect(FoldableController.postureForAngle(180.0), DevicePosture.flat);
+    });
   });
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/foldable_controller.dart';
 import '../../canvas/camera_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
+import 'foldable_simulation_chip.dart';
 
 class FoldableCockpitBar extends StatefulWidget {
   final FoldableController foldable;
@@ -99,20 +100,29 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.screen_rotation_rounded, color: Color(0xFF00E5FF), size: 18),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Foldable Posture: ${posture.name.toUpperCase()} (${angle.toStringAsFixed(0)}°)',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.8,
+                        Expanded(
+                          child: Row(
+                            children: [
+                              const Icon(Icons.screen_rotation_rounded, color: Color(0xFF00E5FF), size: 18),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  'Foldable Posture: ${posture.name.toUpperCase()} (${angle.toStringAsFixed(0)}°)',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 0.8,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ],
+                              if (widget.foldable.isSimulated) ...[
+                                const SizedBox(width: 8),
+                                FoldableSimulationChip(foldable: widget.foldable),
+                              ],
+                            ],
+                          ),
                         ),
                         IconButton(
                           icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
