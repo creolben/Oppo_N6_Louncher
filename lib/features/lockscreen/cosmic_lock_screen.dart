@@ -9,33 +9,6 @@ import '../../ui/widgets/fading_horizontal_scroll.dart';
 import 'bouncing_physics_engine.dart';
 import 'bouncing_apps_painter.dart';
 
-/// State of the lock screen's fingerprint sensor.
-enum _FingerprintStatus {
-  /// This app holds the reader and it is waiting for a finger.
-  listening,
-
-  /// A finger touched the sensor but did not match.
-  failed,
-
-  /// Matched: the lock screen is unlocking.
-  granted,
-
-  /// No reader, nothing enrolled, or the reader could not be held.
-  unavailable,
-}
-
-/// Diameter of the on-screen fingerprint affordance.
-///
-/// The reader on this device class is the side power button rather than an
-/// under-display sensor (the platform reports `sensorType: side`), so this is
-/// an indicator that names the sensor rather than a target the user is meant
-/// to press: the screen is not the reader.
-const double _fingerprintAffordanceSize = 60.0;
-
-/// How many times a failed session is retried before the affordance admits the
-/// reader is not available to this app.
-const int _maxFingerprintRearms = 2;
-
 class CosmicLockScreen extends StatefulWidget {
   final FoldableController foldable;
   final VoidCallback onUnlock;
@@ -82,21 +55,34 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   DateTime _lastInteractionTime = DateTime.now();
   int _physicsFrameCount = 0;
 
-  // Silent fingerprint sensor (the lock screen is its UI)
-  _FingerprintStatus _fingerprintStatus = _FingerprintStatus.unavailable;
+  // Silent fingerprint sensor. The reader is the side power button, not the
+  // panel, so the lock screen deliberately draws no fingerprint affordance:
+  // no image can be touched to unlock. This flag only records that the sensor
+  // already unlocked, which keeps a late platform signal from unlocking twice.
+  bool _unlockedBySensor = false;
   StreamSubscription<Map<String, dynamic>>? _fingerprintSubscription;
-  Timer? _fingerprintResetTimer;
   bool _disposed = false;
-
-  /// Consecutive automatic re-arms after a sensor error, so a transient
-  /// cancellation recovers without a reader that keeps failing being re-armed
-  /// forever. Any real read resets it.
-  int _fingerprintRearms = 0;
 
   /// Guards [_armFingerprintSensor] against overlapping runs: two in flight
   /// would each subscribe and cancel, and the loser's cancel would disarm the
   /// session the winner just armed.
   bool _armingFingerprint = false;
+
+  /// The platform will not let an app hold the reader while the panel is off,
+  /// and cancels the session the instant it is armed. Arming then does not just
+  /// fail, it spends the retry budget, so the lock screen would give up before
+  /// the user touched anything and the sensor stayed dead for the rest of the
+  /// session. Tracking the real panel state — reported natively from
+  /// PowerManager, not inferred from the app lifecycle, which stays resumed
+  /// through doze on this build — keeps arming to the moments it can succeed.
+  bool _screenInteractive = true;
+
+  /// One bounded re-arm per fresh attempt. The platform preempts an app's
+  /// reader session whenever the keyguard is holding the sensor, and retrying
+  /// that in a loop produced a burst of cancellations that ended in a dead
+  /// affordance; a single retry covers a genuinely transient cancellation
+  /// without becoming a storm.
+  bool _retriedArm = false;
 
   @override
   void initState() {
@@ -152,19 +138,40 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       }
     });
 
+    // The panel turning on is the first moment the reader can be held again,
+    // and it arrives before the activity resumes.
+    LauncherBridge.setScreenOnListener(_onScreenOn);
+    LauncherBridge.setUserPresentListener(_onUserPresent);
     _armFingerprintSensor();
   }
 
-  /// Arms the reader as soon as the lock screen appears. Nothing is drawn by
-  /// the system: the fingerprint affordance below is the whole UI, so a touch
-  /// on the sensor authenticates and unlocks without any prompt.
+  /// The platform authenticated someone and the keyguard is gone, so this
+  /// overlay clears with it. While the launcher draws over the keyguard its own
+  /// reader session is usually preempted, so the platform's success is the
+  /// signal that a real touch produced a real unlock — never a bare wake, since
+  /// the native side only reports an unlock that followed a locked keyguard.
+  void _onUserPresent() {
+    if (!mounted || _disposed) return;
+    if (_unlockedBySensor) return;
+    debugPrint('Platform unlocked a locked keyguard; clearing the overlay');
+    HapticFeedback.mediumImpact();
+    _unlockedBySensor = true;
+    _unlock();
+  }
+
+  void _onScreenOn() {
+    if (!mounted || _disposed) return;
+    _screenInteractive = true;
+    _armFingerprintSensor();
+  }
+
+  /// Arms the reader as soon as the lock screen appears. Nothing is drawn for
+  /// it, by us or by the system: the reader is the side power button, so a
+  /// touch on the sensor authenticates and unlocks without any prompt.
   Future<void> _armFingerprintSensor() async {
     if (_armingFingerprint || _disposed) return;
     _armingFingerprint = true;
-    // A deliberate arm — on mount, or back from the background — is a fresh
-    // attempt, so it gets the full retry budget again instead of inheriting a
-    // spent one and reporting a working reader as unavailable.
-    _fingerprintRearms = 0;
+    _retriedArm = false;
     try {
       final capability = await LauncherBridge.fingerprintCapability();
       if (!mounted || _disposed) return;
@@ -174,7 +181,6 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
           'Fingerprint reader not usable '
           '(hardware: ${capability.hardware}, enrolled: ${capability.enrolled})',
         );
-        setState(() => _fingerprintStatus = _FingerprintStatus.unavailable);
         return;
       }
 
@@ -189,12 +195,12 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         _onFingerprintEvent,
         onError: (Object error) {
           debugPrint('Fingerprint stream error: $error');
-          if (mounted) {
-            setState(() => _fingerprintStatus = _FingerprintStatus.unavailable);
-          }
         },
       );
-      setState(() => _fingerprintStatus = _FingerprintStatus.listening);
+      // The awaits above can outlive a pause: if the panel went away in the
+      // meantime, arming now would grab the reader for a backgrounded app and
+      // silently swallow the next genuine arm.
+      if (!mounted || _disposed || !_screenInteractive) return;
       await LauncherBridge.startFingerprintScan();
     } finally {
       _armingFingerprint = false;
@@ -208,55 +214,64 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     switch (event['type'] as String?) {
       case 'succeeded':
         debugPrint('Fingerprint matched: unlocking');
-        _fingerprintRearms = 0;
+        _retriedArm = false;
         HapticFeedback.mediumImpact();
-        setState(() => _fingerprintStatus = _FingerprintStatus.granted);
+        _unlockedBySensor = true;
         _unlock();
 
       case 'failed':
-        // The reader stays armed, so this is feedback, not a dead end.
+        // The reader stays armed, so this is a buzz rather than a dead end.
+        // Nothing on screen changes: there is no affordance to update.
         debugPrint('Fingerprint did not match');
-        _fingerprintRearms = 0;
+        _retriedArm = false;
         HapticFeedback.heavyImpact();
-        _fingerprintResetTimer?.cancel();
-        setState(() => _fingerprintStatus = _FingerprintStatus.failed);
-        _fingerprintResetTimer = Timer(const Duration(milliseconds: 1800), () {
-          if (mounted) {
-            setState(() => _fingerprintStatus = _FingerprintStatus.listening);
-          }
-        });
 
       case 'error':
         final code = (event['code'] as num?)?.toInt() ?? -1;
         debugPrint('Fingerprint sensor stopped: $code ${event['message']}');
-        _fingerprintResetTimer?.cancel();
-        // A cancelled or transiently failed session is worth one retry, but a
-        // reader that keeps failing must not be re-armed forever, and the
-        // affordance must not claim a session this app does not hold.
-        if (_fingerprintRearms < _maxFingerprintRearms) {
-          _fingerprintRearms++;
-          setState(() => _fingerprintStatus = _FingerprintStatus.listening);
-          _fingerprintResetTimer = Timer(const Duration(milliseconds: 600), () {
-            if (mounted && !_disposed) {
-              LauncherBridge.startFingerprintScan();
-            }
-          });
+        if (!_screenInteractive) {
+          // Expected while the panel is off. Not a failure, and not worth a
+          // retry that the platform would cancel again.
           return;
         }
-        setState(() => _fingerprintStatus = _FingerprintStatus.unavailable);
+        if (!_retriedArm) {
+          _retriedArm = true;
+          LauncherBridge.startFingerprintScan();
+          return;
+        }
+        // The platform would not let this app hold the reader. Swipe-up still
+        // works, and the reader is re-armed on the next screen-on or resume.
+
+      case 'screenOff':
+        // Refused rather than failed: wait for the panel; re-arming on
+        // screen-on will pick the reader back up.
+        _screenInteractive = false;
 
       case 'unavailable':
-        _fingerprintResetTimer?.cancel();
-        setState(() => _fingerprintStatus = _FingerprintStatus.unavailable);
+        debugPrint('Fingerprint reader unavailable');
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // A backgrounded app loses the reader, so arm it again on the way back in.
-    if (state == AppLifecycleState.resumed &&
-        _fingerprintStatus != _FingerprintStatus.granted) {
-      _armFingerprintSensor();
+    switch (state) {
+      case AppLifecycleState.resumed:
+        // The panel may or may not be on by now; arming is refused cheaply if
+        // it is not, and the screen-on broadcast will arm it for real.
+        if (_unlockedBySensor) return;
+        _armFingerprintSensor();
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        // Backgrounded: the platform owns the reader now. Drop it quietly
+        // instead of collecting cancellations as failures.
+        _screenInteractive = false;
+        _fingerprintSubscription?.cancel();
+        _fingerprintSubscription = null;
+        LauncherBridge.stopFingerprintScan();
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+        // Transient (a dialog, the notification shade): leave the session be.
+        break;
     }
   }
 
@@ -313,7 +328,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       20.0,
       size.height * 0.28, // Room below top clock & category filters
       20.0,
-      210.0, // Room above the fingerprint sensor, hints and quick shortcuts
+      210.0, // Room above the gesture hints and quick shortcuts
     );
 
     if (_physicsEngine.bubbles.isEmpty) {
@@ -485,8 +500,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     WidgetsBinding.instance.removeObserver(this);
     _clockTimer.cancel();
     _turbulenceTimer?.cancel();
-    _fingerprintResetTimer?.cancel();
     _fingerprintSubscription?.cancel();
+    LauncherBridge.setScreenOnListener(null);
+    LauncherBridge.setUserPresentListener(null);
     LauncherBridge.stopFingerprintScan();
     _physicsTicker.dispose();
     _slideController.dispose();
@@ -761,9 +777,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
                         const Spacer(),
 
-                        // Secondary gesture hints. The fingerprint affordance
-                        // is not part of this column: it floats over the reader
-                        // itself, further down.
+                        // Secondary gesture hints: the reader is the side power
+                        // button, so no fingerprint affordance is drawn here or
+                        // anywhere else on the panel.
                         IgnorePointer(
                           child: Column(
                             children: [
@@ -791,9 +807,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
                         const SizedBox(height: 14),
 
-                        // Quick shortcuts flanking the fingerprint indicator.
-                        // The reader is the side power button, so the indicator
-                        // names the sensor instead of asking for a screen press.
+                        // Quick shortcuts: phone on the left, camera on the
+                        // right. Nothing sits between them, so the swipe-up
+                        // gesture has clear panel to travel across.
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -802,13 +818,6 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                               icon: Icons.phone_rounded,
                               tooltip: 'Open Phone',
                               onTap: () => _launchQuickApp('com.android.phone'),
-                            ),
-                            // Never a tap target: the swipe-up-to-unlock
-                            // gesture has to pass straight through it.
-                            IgnorePointer(
-                              child: _FingerprintIndicator(
-                                status: _fingerprintStatus,
-                              ),
                             ),
                             _quickActionCircle(
                               icon: Icons.camera_alt_rounded,
@@ -926,208 +935,5 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
     return names[(month - 1) % 12];
-  }
-}
-
-/// On-screen fingerprint affordance.
-///
-/// The reader itself is armed by the lock screen, so this is an indicator
-/// rather than a button: it marks where the sensor sits, breathes while it is
-/// listening, and reports the outcome of a touch. Nothing here opens a system
-/// prompt.
-class _FingerprintIndicator extends StatefulWidget {
-  final _FingerprintStatus status;
-
-  const _FingerprintIndicator({required this.status});
-
-  @override
-  State<_FingerprintIndicator> createState() => _FingerprintIndicatorState();
-}
-
-class _FingerprintIndicatorState extends State<_FingerprintIndicator>
-    with TickerProviderStateMixin {
-  late final AnimationController _pulse;
-  late final AnimationController _shake;
-
-  /// Built once: a [CurvedAnimation] created inside build() would add a status
-  /// listener on every rebuild, and this widget rebuilds with the physics loop.
-  late final Animation<double> _shakeOffset = TweenSequence<double>([
-    TweenSequenceItem(tween: Tween(begin: 0.0, end: -7.0), weight: 1),
-    TweenSequenceItem(tween: Tween(begin: -7.0, end: 6.0), weight: 1),
-    TweenSequenceItem(tween: Tween(begin: 6.0, end: -4.0), weight: 1),
-    TweenSequenceItem(tween: Tween(begin: -4.0, end: 0.0), weight: 1),
-  ]).animate(CurvedAnimation(parent: _shake, curve: Curves.easeOut));
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2200),
-    )..repeat();
-    _shake = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 420),
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant _FingerprintIndicator oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.status == _FingerprintStatus.failed &&
-        oldWidget.status != _FingerprintStatus.failed) {
-      _shake.forward(from: 0.0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    _shake.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final status = widget.status;
-    final bool failed = status == _FingerprintStatus.failed;
-    final bool granted = status == _FingerprintStatus.granted;
-    final bool unavailable = status == _FingerprintStatus.unavailable;
-    final Color tint = failed
-        ? const Color(0xFFFF5252)
-        : (unavailable ? const Color(0x8AFFFFFF) : const Color(0xFF00E5FF));
-
-    final String label = switch (status) {
-      _FingerprintStatus.listening => 'TOUCH SENSOR TO UNLOCK',
-      _FingerprintStatus.failed => 'NOT RECOGNIZED • TOUCH AGAIN',
-      _FingerprintStatus.granted => 'UNLOCKED',
-      _FingerprintStatus.unavailable => 'FINGERPRINT UNAVAILABLE',
-    };
-
-    return Semantics(
-      // liveRegion announces the status changes; the label text below is the
-      // node's own name, so it is not repeated here as well.
-      container: true,
-      liveRegion: true,
-      child: SizedBox(
-        // Bounded so the quick shortcuts either side can never be pushed off
-        // the panel by a long status label.
-        width: _fingerprintAffordanceSize + 96,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-          Transform.translate(
-            offset: Offset(_shakeOffset.value, 0),
-            child: SizedBox(
-              width: _fingerprintAffordanceSize + 32,
-              height: _fingerprintAffordanceSize + 32,
-              child: AnimatedBuilder(
-                animation: Listenable.merge([_pulse, _shake]),
-                builder: (context, child) {
-                  return CustomPaint(
-                    painter: _SensorPulsePainter(
-                      // A dead reader has nothing to breathe for.
-                      phase: unavailable ? 0.35 : _pulse.value,
-                      color: tint,
-                      intensity: unavailable ? 0.25 : (failed ? 0.7 : 0.55),
-                    ),
-                    child: child,
-                  );
-                },
-                child: Center(
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOutCubic,
-                    width: _fingerprintAffordanceSize,
-                    height: _fingerprintAffordanceSize,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: tint.withValues(alpha: granted ? 0.26 : 0.12),
-                      border: Border.all(
-                        color: tint.withValues(alpha: granted ? 1.0 : 0.8),
-                        width: granted ? 2.0 : 1.4,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: tint.withValues(alpha: granted ? 0.5 : 0.3),
-                          blurRadius: granted ? 26 : 18,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Icon(
-                      granted
-                          ? Icons.lock_open_rounded
-                          : Icons.fingerprint_rounded,
-                      color: tint,
-                      size: granted ? 28 : 30,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 2),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 160),
-            child: Text(
-              label,
-              key: ValueKey(label),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: tint,
-                fontSize: 9.5,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.3,
-                shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
-              ),
-            ),
-          ),
-        ],
-      ),
-      ),
-    );
-  }
-}
-
-/// Sonar rings under the sensor disc, breathing while the reader is armed.
-class _SensorPulsePainter extends CustomPainter {
-  final double phase;
-  final Color color;
-  final double intensity;
-
-  const _SensorPulsePainter({
-    required this.phase,
-    required this.color,
-    required this.intensity,
-  });
-
-  /// Reused across paints: this runs every frame on a 120 Hz panel.
-  static final Paint _ring = Paint()
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 1.2;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = size.center(Offset.zero);
-
-    for (var i = 0; i < 2; i++) {
-      final p = (phase + i * 0.5) % 1.0;
-      _ring.color = color.withValues(alpha: (1.0 - p) * intensity * 0.55);
-      canvas.drawCircle(
-        center,
-        _fingerprintAffordanceSize / 2 + 4.0 + p * 12.0,
-        _ring,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SensorPulsePainter oldDelegate) {
-    return oldDelegate.phase != phase ||
-        oldDelegate.color != color ||
-        oldDelegate.intensity != intensity;
   }
 }

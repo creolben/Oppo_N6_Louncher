@@ -81,11 +81,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     _camera = CameraController();
     _layoutEngine = GalaxyLayoutEngine();
 
-    LauncherBridge.setScreenLockListener(() {
-      if (mounted) {
-        setState(() => _isLocked = true);
-      }
-    });
+    LauncherBridge.setScreenLockListener(_lockForScreenOff);
 
     LauncherBridge.setPackageChangeListener(() {
       if (mounted) {
@@ -108,10 +104,16 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
-      if (mounted) {
-        setState(() => _isLocked = true);
-      }
+      _lockForScreenOff();
     }
+  }
+
+  /// Raises the cover-screen lock when the panel goes off or the launcher is
+  /// backgrounded. The platform keyguard authenticates a touch on the reader
+  /// behind it and hands the unlock back, which is what clears this overlay.
+  void _lockForScreenOff() {
+    if (!mounted) return;
+    setState(() => _isLocked = true);
   }
 
 

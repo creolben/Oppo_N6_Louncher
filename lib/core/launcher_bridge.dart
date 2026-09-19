@@ -18,6 +18,8 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   static VoidCallback? _onLockScreenListener;
   static VoidCallback? _onPackageChangeListener;
   static VoidCallback? _onHomeButtonListener;
+  static VoidCallback? _onScreenOnListener;
+  static VoidCallback? _onUserPresentListener;
   static bool _handlerInitialized = false;
 
   static void _ensureHandlerInitialized() {
@@ -34,12 +36,34 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         case 'onHomePressed':
           _onHomeButtonListener?.call();
           break;
+        case 'screenOn':
+          _onScreenOnListener?.call();
+          break;
+        case 'userPresent':
+          _onUserPresentListener?.call();
+          break;
       }
     });
   }
 
   static void setScreenLockListener(VoidCallback onLock) {
     _onLockScreenListener = onLock;
+    _ensureHandlerInitialized();
+  }
+
+  /// Fires when the platform reports an unlock that followed a genuinely
+  /// locked keyguard, i.e. it authenticated someone. The launcher's lock
+  /// overlay clears on this, because covering the keyguard means the reader
+  /// answers to the platform rather than to this app.
+  static void setUserPresentListener(VoidCallback? onUserPresent) {
+    _onUserPresentListener = onUserPresent;
+    _ensureHandlerInitialized();
+  }
+
+  /// Fires when the panel turns on, i.e. the moment the platform will let an
+  /// app hold the fingerprint reader again.
+  static void setScreenOnListener(VoidCallback? onScreenOn) {
+    _onScreenOnListener = onScreenOn;
     _ensureHandlerInitialized();
   }
 

@@ -267,5 +267,44 @@ void main() {
       // Non-Android/test environment simulates successful authentication, unlocking and launching
       expect(unlocked, isTrue);
     });
+
+    testWidgets('Draws no fingerprint affordance: the panel is not the reader',
+        (tester) async {
+      final foldable = FoldableController();
+      final apps = [
+        AppEntry(
+          packageName: 'com.test.phone',
+          label: 'Phone',
+          category: AppCategory.core,
+          accentColor: Colors.green,
+          fallbackIcon: Icons.phone,
+        ),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CosmicLockScreen(
+              foldable: foldable,
+              apps: apps,
+              onUnlock: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // The reader is the side power button, so nothing on the panel may look
+      // like a fingerprint target the user could press.
+      expect(find.byIcon(Icons.fingerprint_rounded), findsNothing);
+      expect(find.byIcon(Icons.lock_open_rounded), findsNothing);
+      expect(find.text('TOUCH SENSOR TO UNLOCK'), findsNothing);
+      expect(find.text('NOT RECOGNIZED • TOUCH AGAIN'), findsNothing);
+      expect(find.text('FINGERPRINT UNAVAILABLE'), findsNothing);
+
+      // The quick shortcuts survive the removal, at both ends of the row.
+      expect(find.byIcon(Icons.phone_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.camera_alt_rounded), findsOneWidget);
+    });
   });
 }

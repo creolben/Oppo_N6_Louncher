@@ -25,6 +25,7 @@ import android.app.role.RoleManager
 import android.hardware.biometrics.BiometricPrompt
 import android.hardware.fingerprint.FingerprintManager
 import android.os.CancellationSignal
+import android.os.PowerManager
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -46,6 +47,15 @@ class MainActivity : FlutterActivity() {
     private var accelSensor: Sensor? = null
     private var fingerprintCancellation: CancellationSignal? = null
     private var fingerprintEvents: EventChannel.EventSink? = null
+    private var powerManager: PowerManager? = null
+
+    /**
+     * Whether the keyguard required authentication when the panel last went
+     * off. Only an unlock that follows a genuinely locked keyguard is handed to
+     * the launcher: a wake that merely dismissed an already-open keyguard is
+     * not an authentication and must not clear the overlay.
+     */
+    private var keyguardWasLocked = false
     private var screenReceiver: BroadcastReceiver? = null
     private var packageReceiver: BroadcastReceiver? = null
     private var appsMethodChannel: MethodChannel? = null
@@ -53,6 +63,10 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#020306")))
+        // The cover screen is its own lock surface, so it is drawn over the
+        // keyguard. Android still authenticates the keyguard behind it, which
+        // is what makes a touch on the power-button reader unlock; the launcher
+        // clears this overlay when the platform reports that unlock.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -66,9 +80,25 @@ class MainActivity : FlutterActivity() {
 
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                    runOnUiThread {
-                        appsMethodChannel?.invokeMethod("lockScreen", null)
+                val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> {
+                        keyguardWasLocked = keyguard?.isKeyguardLocked == true ||
+                            keyguard?.isDeviceLocked == true
+                        runOnUiThread {
+                            appsMethodChannel?.invokeMethod("lockScreen", null)
+                        }
+                    }
+                    Intent.ACTION_SCREEN_ON ->
+                        runOnUiThread {
+                            appsMethodChannel?.invokeMethod("screenOn", null)
+                        }
+                    Intent.ACTION_USER_PRESENT -> {
+                        if (keyguardWasLocked) {
+                            runOnUiThread {
+                                appsMethodChannel?.invokeMethod("userPresent", null)
+                            }
+                        }
                     }
                 }
             }
@@ -76,6 +106,7 @@ class MainActivity : FlutterActivity() {
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
         }
         registerReceiver(screenReceiver, filter)
 
@@ -119,6 +150,7 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
 
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
         // TYPE_HINGE_ANGLE is 36
         hingeSensor = sensorManager?.getDefaultSensor(36)
 
@@ -471,6 +503,14 @@ class MainActivity : FlutterActivity() {
         val manager = fingerprintManager()
         if (manager == null || !manager.isHardwareDetected || !manager.hasEnrolledFingerprints()) {
             fingerprintEvents?.success(mapOf("type" to "unavailable"))
+            return
+        }
+
+        if (powerManager?.isInteractive != true) {
+            // The platform cancels an app's reader session the moment the panel
+            // goes off, so arming now would only burn the caller's retry budget
+            // and leave the sensor dead before the user has touched anything.
+            fingerprintEvents?.success(mapOf("type" to "screenOff"))
             return
         }
 
