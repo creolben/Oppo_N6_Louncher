@@ -5,8 +5,36 @@ import 'package:flutter/services.dart';
 import '../../core/foldable_controller.dart';
 import '../../models/app_entry.dart';
 import '../../core/launcher_bridge.dart';
+import '../../ui/widgets/fading_horizontal_scroll.dart';
 import 'bouncing_physics_engine.dart';
 import 'bouncing_apps_painter.dart';
+
+/// State of the lock screen's fingerprint sensor.
+enum _FingerprintStatus {
+  /// This app holds the reader and it is waiting for a finger.
+  listening,
+
+  /// A finger touched the sensor but did not match.
+  failed,
+
+  /// Matched: the lock screen is unlocking.
+  granted,
+
+  /// No reader, nothing enrolled, or the reader could not be held.
+  unavailable,
+}
+
+/// Diameter of the on-screen fingerprint affordance.
+///
+/// The reader on this device class is the side power button rather than an
+/// under-display sensor (the platform reports `sensorType: side`), so this is
+/// an indicator that names the sensor rather than a target the user is meant
+/// to press: the screen is not the reader.
+const double _fingerprintAffordanceSize = 60.0;
+
+/// How many times a failed session is retried before the affordance admits the
+/// reader is not available to this app.
+const int _maxFingerprintRearms = 2;
 
 class CosmicLockScreen extends StatefulWidget {
   final FoldableController foldable;
@@ -27,7 +55,7 @@ class CosmicLockScreen extends StatefulWidget {
 }
 
 class _CosmicLockScreenState extends State<CosmicLockScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _slideController;
   late Animation<double> _slideAnimation;
   double _dragOffset = 0.0;
@@ -54,9 +82,26 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   DateTime _lastInteractionTime = DateTime.now();
   int _physicsFrameCount = 0;
 
+  // Silent fingerprint sensor (the lock screen is its UI)
+  _FingerprintStatus _fingerprintStatus = _FingerprintStatus.unavailable;
+  StreamSubscription<Map<String, dynamic>>? _fingerprintSubscription;
+  Timer? _fingerprintResetTimer;
+  bool _disposed = false;
+
+  /// Consecutive automatic re-arms after a sensor error, so a transient
+  /// cancellation recovers without a reader that keeps failing being re-armed
+  /// forever. Any real read resets it.
+  int _fingerprintRearms = 0;
+
+  /// Guards [_armFingerprintSensor] against overlapping runs: two in flight
+  /// would each subscribe and cancel, and the loser's cancel would disarm the
+  /// session the winner just armed.
+  bool _armingFingerprint = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     _slideController = AnimationController(
       vsync: this,
@@ -70,11 +115,14 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       });
 
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        setState(() {
-          _currentTime = DateTime.now();
-        });
+      // Hours and minutes are all this renders: repaint when the visible
+      // minute rolls over rather than once a second.
+      final now = DateTime.now();
+      if (!mounted ||
+          (now.minute == _currentTime.minute && now.hour == _currentTime.hour)) {
+        return;
       }
+      setState(() => _currentTime = now);
     });
 
     // 60/120 FPS Physics simulation loop
@@ -103,6 +151,113 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         }
       }
     });
+
+    _armFingerprintSensor();
+  }
+
+  /// Arms the reader as soon as the lock screen appears. Nothing is drawn by
+  /// the system: the fingerprint affordance below is the whole UI, so a touch
+  /// on the sensor authenticates and unlocks without any prompt.
+  Future<void> _armFingerprintSensor() async {
+    if (_armingFingerprint || _disposed) return;
+    _armingFingerprint = true;
+    // A deliberate arm — on mount, or back from the background — is a fresh
+    // attempt, so it gets the full retry budget again instead of inheriting a
+    // spent one and reporting a working reader as unavailable.
+    _fingerprintRearms = 0;
+    try {
+      final capability = await LauncherBridge.fingerprintCapability();
+      if (!mounted || _disposed) return;
+
+      if (!capability.isReady) {
+        debugPrint(
+          'Fingerprint reader not usable '
+          '(hardware: ${capability.hardware}, enrolled: ${capability.enrolled})',
+        );
+        setState(() => _fingerprintStatus = _FingerprintStatus.unavailable);
+        return;
+      }
+
+      // Detach the old subscription before arming: the native onCancel for it
+      // calls stopFingerprintScan, which would otherwise disarm what we are
+      // about to start.
+      await _fingerprintSubscription?.cancel();
+      _fingerprintSubscription = null;
+      if (!mounted || _disposed) return;
+
+      _fingerprintSubscription = LauncherBridge.fingerprintEvents().listen(
+        _onFingerprintEvent,
+        onError: (Object error) {
+          debugPrint('Fingerprint stream error: $error');
+          if (mounted) {
+            setState(() => _fingerprintStatus = _FingerprintStatus.unavailable);
+          }
+        },
+      );
+      setState(() => _fingerprintStatus = _FingerprintStatus.listening);
+      await LauncherBridge.startFingerprintScan();
+    } finally {
+      _armingFingerprint = false;
+    }
+  }
+
+  void _onFingerprintEvent(Map<String, dynamic> event) {
+    if (!mounted || _disposed) return;
+    _lastInteractionTime = DateTime.now();
+
+    switch (event['type'] as String?) {
+      case 'succeeded':
+        debugPrint('Fingerprint matched: unlocking');
+        _fingerprintRearms = 0;
+        HapticFeedback.mediumImpact();
+        setState(() => _fingerprintStatus = _FingerprintStatus.granted);
+        _unlock();
+
+      case 'failed':
+        // The reader stays armed, so this is feedback, not a dead end.
+        debugPrint('Fingerprint did not match');
+        _fingerprintRearms = 0;
+        HapticFeedback.heavyImpact();
+        _fingerprintResetTimer?.cancel();
+        setState(() => _fingerprintStatus = _FingerprintStatus.failed);
+        _fingerprintResetTimer = Timer(const Duration(milliseconds: 1800), () {
+          if (mounted) {
+            setState(() => _fingerprintStatus = _FingerprintStatus.listening);
+          }
+        });
+
+      case 'error':
+        final code = (event['code'] as num?)?.toInt() ?? -1;
+        debugPrint('Fingerprint sensor stopped: $code ${event['message']}');
+        _fingerprintResetTimer?.cancel();
+        // A cancelled or transiently failed session is worth one retry, but a
+        // reader that keeps failing must not be re-armed forever, and the
+        // affordance must not claim a session this app does not hold.
+        if (_fingerprintRearms < _maxFingerprintRearms) {
+          _fingerprintRearms++;
+          setState(() => _fingerprintStatus = _FingerprintStatus.listening);
+          _fingerprintResetTimer = Timer(const Duration(milliseconds: 600), () {
+            if (mounted && !_disposed) {
+              LauncherBridge.startFingerprintScan();
+            }
+          });
+          return;
+        }
+        setState(() => _fingerprintStatus = _FingerprintStatus.unavailable);
+
+      case 'unavailable':
+        _fingerprintResetTimer?.cancel();
+        setState(() => _fingerprintStatus = _FingerprintStatus.unavailable);
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // A backgrounded app loses the reader, so arm it again on the way back in.
+    if (state == AppLifecycleState.resumed &&
+        _fingerprintStatus != _FingerprintStatus.granted) {
+      _armFingerprintSensor();
+    }
   }
 
   void _onPhysicsTick(Duration elapsed) {
@@ -158,7 +313,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       20.0,
       size.height * 0.28, // Room below top clock & category filters
       20.0,
-      115.0, // Room above bottom dock & swipe indicator
+      210.0, // Room above the fingerprint sensor, hints and quick shortcuts
     );
 
     if (_physicsEngine.bubbles.isEmpty) {
@@ -314,6 +469,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   }
 
   Future<void> _launchQuickApp(String packageName) async {
+    // The shortcut circles render before the app list has loaded, so there may
+    // be nothing to resolve yet.
+    if (widget.apps.isEmpty) return;
     final app = widget.apps.firstWhere(
       (a) => a.packageName == packageName,
       orElse: () => widget.apps.first,
@@ -323,8 +481,13 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
   @override
   void dispose() {
+    _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
     _clockTimer.cancel();
     _turbulenceTimer?.cancel();
+    _fingerprintResetTimer?.cancel();
+    _fingerprintSubscription?.cancel();
+    LauncherBridge.stopFingerprintScan();
     _physicsTicker.dispose();
     _slideController.dispose();
     _shakeSubscription?.cancel();
@@ -404,6 +567,31 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                       physics: _physicsEngine,
                       animationProgress: _lastElapsed.inMilliseconds / 1000.0,
                       draggedBubble: _draggedBubble,
+                    ),
+                  ),
+                ),
+
+                // Scrim: keeps the unlock cluster and gesture hints readable
+                // while bouncing bubbles keep moving behind them.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: 260,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            const Color(0xFF020306).withValues(alpha: 0.0),
+                            const Color(0xFF020306).withValues(alpha: 0.72),
+                            const Color(0xFF020306),
+                          ],
+                          stops: const [0.0, 0.5, 1.0],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -503,8 +691,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                                   fontWeight: FontWeight.w100,
                                   letterSpacing: -2.0,
                                   height: 1.0,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
                                   shadows: const [
-                                    Shadow(color: Color(0x7700E5FF), blurRadius: 28),
+                                    Shadow(color: Color(0x6600E5FF), blurRadius: 26),
                                     Shadow(color: Colors.black, blurRadius: 12),
                                   ],
                                 ),
@@ -550,44 +741,45 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
                         const SizedBox(height: 12),
                         // Interactive Curated Category Chips Bar
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _categoryFilterChip('★ Featured', null),
-                              const SizedBox(width: 6),
-                              _categoryFilterChip('Core', AppCategory.core),
-                              const SizedBox(width: 6),
-                              _categoryFilterChip('Social', AppCategory.social),
-                              const SizedBox(width: 6),
-                              _categoryFilterChip('Media', AppCategory.entertainment),
-                              const SizedBox(width: 6),
-                              _categoryFilterChip('Work', AppCategory.productivity),
-                              const SizedBox(width: 6),
-                              _categoryFilterChip('Tools', AppCategory.tools),
-                            ],
-                          ),
+                        FadingHorizontalScroll(
+                          center: true,
+                          fadeColor: const Color(0xFF090D1A),
+                          children: [
+                            _categoryFilterChip('★ Featured', null),
+                            const SizedBox(width: 8),
+                            _categoryFilterChip('Core', AppCategory.core),
+                            const SizedBox(width: 8),
+                            _categoryFilterChip('Social', AppCategory.social),
+                            const SizedBox(width: 8),
+                            _categoryFilterChip('Media', AppCategory.entertainment),
+                            const SizedBox(width: 8),
+                            _categoryFilterChip('Work', AppCategory.productivity),
+                            const SizedBox(width: 8),
+                            _categoryFilterChip('Tools', AppCategory.tools),
+                          ],
                         ),
 
                         const Spacer(),
 
-                        // Bottom Hints & Swipe to Unlock
+                        // Secondary gesture hints. The fingerprint affordance
+                        // is not part of this column: it floats over the reader
+                        // itself, further down.
                         IgnorePointer(
                           child: Column(
                             children: [
                               const Icon(
                                 Icons.keyboard_arrow_up_rounded,
                                 color: Color(0xFF00E5FF),
-                                size: 26,
+                                size: 22,
                               ),
                               Text(
                                 'TAP APP TO LAUNCH • SWIPE UP TO ENTER',
+                                textAlign: TextAlign.center,
                                 style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.7),
+                                  color: Colors.white.withValues(alpha: 0.72),
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,
-                                  letterSpacing: 2.0,
+                                  letterSpacing: 1.6,
                                   shadows: const [
                                     Shadow(color: Colors.black, blurRadius: 6),
                                   ],
@@ -597,18 +789,30 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                           ),
                         ),
 
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 14),
 
-                        // Bottom Quick Shortcut Docks (Phone & Camera)
+                        // Quick shortcuts flanking the fingerprint indicator.
+                        // The reader is the side power button, so the indicator
+                        // names the sensor instead of asking for a screen press.
                         Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             _quickActionCircle(
                               icon: Icons.phone_rounded,
+                              tooltip: 'Open Phone',
                               onTap: () => _launchQuickApp('com.android.phone'),
+                            ),
+                            // Never a tap target: the swipe-up-to-unlock
+                            // gesture has to pass straight through it.
+                            IgnorePointer(
+                              child: _FingerprintIndicator(
+                                status: _fingerprintStatus,
+                              ),
                             ),
                             _quickActionCircle(
                               icon: Icons.camera_alt_rounded,
+                              tooltip: 'Open Camera',
                               onTap: () => _launchQuickApp('com.android.camera'),
                             ),
                           ],
@@ -627,23 +831,41 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
   Widget _quickActionCircle({
     required IconData icon,
+    required String tooltip,
     required VoidCallback onTap,
   }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(28),
-      child: Container(
-        width: 52,
-        height: 52,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: const Color(0x7711172A),
-          border: Border.all(color: const Color(0x44FFFFFF), width: 1.0),
-          boxShadow: const [
-            BoxShadow(color: Color(0x44000000), blurRadius: 12),
-          ],
+    return Tooltip(
+      message: tooltip,
+      child: Semantics(
+        button: true,
+        label: tooltip,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(28),
+            child: Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0x8A11172A),
+                border: Border.all(
+                  color: const Color(0x4DFFFFFF),
+                  width: 1.0,
+                ),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x66000000),
+                    blurRadius: 14,
+                    offset: Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Icon(icon, color: Colors.white, size: 23),
+            ),
+          ),
         ),
-        child: Icon(icon, color: Colors.white, size: 24),
       ),
     );
   }
@@ -652,30 +874,41 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
   Widget _categoryFilterChip(String label, AppCategory? category) {
     final bool isSelected = _selectedCategory == category;
-    return GestureDetector(
-      onTap: () => _onCategorySelected(category),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0x3D00E5FF) : const Color(0x3310172C),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isSelected ? const Color(0xFF00E5FF) : const Color(0x2EFFFFFF),
-            width: isSelected ? 1.2 : 0.8,
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: '$label apps',
+      child: GestureDetector(
+        onTap: () => _onCategorySelected(category),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0x3D00E5FF) : const Color(0x3310172C),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isSelected ? const Color(0xFF00E5FF) : const Color(0x2EFFFFFF),
+              width: isSelected ? 1.2 : 0.8,
+            ),
+            boxShadow: isSelected
+                ? const [
+                    BoxShadow(
+                      color: Color(0x3300E5FF),
+                      blurRadius: 10,
+                      offset: Offset(0, 3),
+                    ),
+                  ]
+                : null,
           ),
-          boxShadow: isSelected
-              ? const [
-                  BoxShadow(color: Color(0x3300E5FF), blurRadius: 10, spreadRadius: 1),
-                ]
-              : null,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? const Color(0xFF00E5FF) : Colors.white70,
-            fontSize: 10,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-            letterSpacing: 0.5,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? const Color(0xFF00E5FF) : Colors.white70,
+              fontSize: 10,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+              letterSpacing: 0.5,
+            ),
           ),
         ),
       ),
@@ -693,5 +926,208 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
     return names[(month - 1) % 12];
+  }
+}
+
+/// On-screen fingerprint affordance.
+///
+/// The reader itself is armed by the lock screen, so this is an indicator
+/// rather than a button: it marks where the sensor sits, breathes while it is
+/// listening, and reports the outcome of a touch. Nothing here opens a system
+/// prompt.
+class _FingerprintIndicator extends StatefulWidget {
+  final _FingerprintStatus status;
+
+  const _FingerprintIndicator({required this.status});
+
+  @override
+  State<_FingerprintIndicator> createState() => _FingerprintIndicatorState();
+}
+
+class _FingerprintIndicatorState extends State<_FingerprintIndicator>
+    with TickerProviderStateMixin {
+  late final AnimationController _pulse;
+  late final AnimationController _shake;
+
+  /// Built once: a [CurvedAnimation] created inside build() would add a status
+  /// listener on every rebuild, and this widget rebuilds with the physics loop.
+  late final Animation<double> _shakeOffset = TweenSequence<double>([
+    TweenSequenceItem(tween: Tween(begin: 0.0, end: -7.0), weight: 1),
+    TweenSequenceItem(tween: Tween(begin: -7.0, end: 6.0), weight: 1),
+    TweenSequenceItem(tween: Tween(begin: 6.0, end: -4.0), weight: 1),
+    TweenSequenceItem(tween: Tween(begin: -4.0, end: 0.0), weight: 1),
+  ]).animate(CurvedAnimation(parent: _shake, curve: Curves.easeOut));
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2200),
+    )..repeat();
+    _shake = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 420),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _FingerprintIndicator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.status == _FingerprintStatus.failed &&
+        oldWidget.status != _FingerprintStatus.failed) {
+      _shake.forward(from: 0.0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    _shake.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final status = widget.status;
+    final bool failed = status == _FingerprintStatus.failed;
+    final bool granted = status == _FingerprintStatus.granted;
+    final bool unavailable = status == _FingerprintStatus.unavailable;
+    final Color tint = failed
+        ? const Color(0xFFFF5252)
+        : (unavailable ? const Color(0x8AFFFFFF) : const Color(0xFF00E5FF));
+
+    final String label = switch (status) {
+      _FingerprintStatus.listening => 'TOUCH SENSOR TO UNLOCK',
+      _FingerprintStatus.failed => 'NOT RECOGNIZED • TOUCH AGAIN',
+      _FingerprintStatus.granted => 'UNLOCKED',
+      _FingerprintStatus.unavailable => 'FINGERPRINT UNAVAILABLE',
+    };
+
+    return Semantics(
+      // liveRegion announces the status changes; the label text below is the
+      // node's own name, so it is not repeated here as well.
+      container: true,
+      liveRegion: true,
+      child: SizedBox(
+        // Bounded so the quick shortcuts either side can never be pushed off
+        // the panel by a long status label.
+        width: _fingerprintAffordanceSize + 96,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+          Transform.translate(
+            offset: Offset(_shakeOffset.value, 0),
+            child: SizedBox(
+              width: _fingerprintAffordanceSize + 32,
+              height: _fingerprintAffordanceSize + 32,
+              child: AnimatedBuilder(
+                animation: Listenable.merge([_pulse, _shake]),
+                builder: (context, child) {
+                  return CustomPaint(
+                    painter: _SensorPulsePainter(
+                      // A dead reader has nothing to breathe for.
+                      phase: unavailable ? 0.35 : _pulse.value,
+                      color: tint,
+                      intensity: unavailable ? 0.25 : (failed ? 0.7 : 0.55),
+                    ),
+                    child: child,
+                  );
+                },
+                child: Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    width: _fingerprintAffordanceSize,
+                    height: _fingerprintAffordanceSize,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: tint.withValues(alpha: granted ? 0.26 : 0.12),
+                      border: Border.all(
+                        color: tint.withValues(alpha: granted ? 1.0 : 0.8),
+                        width: granted ? 2.0 : 1.4,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: tint.withValues(alpha: granted ? 0.5 : 0.3),
+                          blurRadius: granted ? 26 : 18,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      granted
+                          ? Icons.lock_open_rounded
+                          : Icons.fingerprint_rounded,
+                      color: tint,
+                      size: granted ? 28 : 30,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 2),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 160),
+            child: Text(
+              label,
+              key: ValueKey(label),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: tint,
+                fontSize: 9.5,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.3,
+                shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
+              ),
+            ),
+          ),
+        ],
+      ),
+      ),
+    );
+  }
+}
+
+/// Sonar rings under the sensor disc, breathing while the reader is armed.
+class _SensorPulsePainter extends CustomPainter {
+  final double phase;
+  final Color color;
+  final double intensity;
+
+  const _SensorPulsePainter({
+    required this.phase,
+    required this.color,
+    required this.intensity,
+  });
+
+  /// Reused across paints: this runs every frame on a 120 Hz panel.
+  static final Paint _ring = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.2;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+
+    for (var i = 0; i < 2; i++) {
+      final p = (phase + i * 0.5) % 1.0;
+      _ring.color = color.withValues(alpha: (1.0 - p) * intensity * 0.55);
+      canvas.drawCircle(
+        center,
+        _fingerprintAffordanceSize / 2 + 4.0 + p * 12.0,
+        _ring,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SensorPulsePainter oldDelegate) {
+    return oldDelegate.phase != phase ||
+        oldDelegate.color != color ||
+        oldDelegate.intensity != intensity;
   }
 }

@@ -3,6 +3,10 @@
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- The lock screen reads the sensor directly through the legacy
+         FingerprintManager so no biometric system dialog is shown; that legacy
+         path requires USE_FINGERPRINT (a normal, install-time permission). -->
+    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
 
     <application
         android:label="ChronoFold"

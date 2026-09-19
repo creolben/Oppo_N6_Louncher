@@ -8,6 +8,34 @@ import '../../models/constellation.dart';
 import '../../core/launcher_bridge.dart';
 import '../../core/foldable_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
+import '../widgets/fading_horizontal_scroll.dart';
+import '../widgets/foldable_simulation_chip.dart';
+
+/// Visual tokens for the folded cover surface.
+///
+/// The cover panel is narrow and used one-handed, so it runs a tighter rhythm
+/// than the unfolded galaxy: one 4-based gutter, one card radius, one chip
+/// radius, one touch target. Values live here so a single surface cannot drift
+/// into five near-identical greys and radii again.
+abstract final class CoverStyle {
+  static const Color page = Color(0xFF020306);
+  static const Color accent = Color(0xFF00E5FF);
+  static const Color hairline = Color(0x3364B5F6);
+  static const Color label = Color(0xA6FFFFFF);
+  static const Color labelMuted = Color(0x8AFFFFFF);
+
+  static const double gutter = 16;
+  static const double cardRadius = 18;
+  static const double chipRadius = 16;
+  static const double tileRadius = 14;
+  static const double dockRadius = 24;
+
+  /// Minimum comfortable touch target for a control on the cover panel.
+  static const double touchTarget = 44;
+
+  /// Height reserved below the scrolling body for the floating cockpit dock.
+  static const double dockClearance = 118;
+}
 
 class FoldedCoverScreen extends StatefulWidget {
   final List<AppEntry> apps;
@@ -53,11 +81,13 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
   void initState() {
     super.initState();
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        setState(() {
-          _now = DateTime.now();
-        });
+      // The header renders hours and minutes only: repaint when the visible
+      // minute actually rolls over instead of once a second.
+      final now = DateTime.now();
+      if (!mounted || now.minute == _now.minute && now.hour == _now.hour) {
+        return;
       }
+      setState(() => _now = now);
     });
 
     _pulseController = AnimationController(
@@ -105,10 +135,31 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     final selectedConstellation = _selectedConstellation;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF020306),
+      backgroundColor: CoverStyle.page,
       body: Stack(
         children: [
-          // 1. Ambient Stardust Starfield Background
+          // 1. Ambient nebula wash: ties the cover panel to the lock screen,
+          // which opens on the same deep-space gradient.
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment(0.0, -0.85),
+                    radius: 1.05,
+                    colors: [
+                      Color(0x1F00E5FF),
+                      Color(0x0D2979FF),
+                      Color(0x00020306),
+                    ],
+                    stops: [0.0, 0.42, 1.0],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // 2. Ambient Stardust Starfield Background
           Positioned.fill(
             child: CustomPaint(
               painter: _CoverStardustPainter(
@@ -117,7 +168,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             ),
           ),
 
-          // 2. Main Scrollable Cover Screen Content
+          // 3. Main Scrollable Cover Screen Content
           SafeArea(
             bottom: false,
             child: Column(
@@ -131,27 +182,30 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 // Scrollable Body (Essentials + Sector Browser)
                 Expanded(
                   child: ListView(
-                    padding: const EdgeInsets.only(
-                      left: 16.0,
-                      right: 16.0,
-                      top: 4.0,
-                      bottom: 96.0, // Space for bottom cockpit bar
+                    padding: const EdgeInsets.fromLTRB(
+                      CoverStyle.gutter,
+                      4.0,
+                      CoverStyle.gutter,
+                      CoverStyle.dockClearance,
                     ),
-                    physics: const BouncingScrollPhysics(),
+                    physics: const ClampingScrollPhysics(),
                     children: [
                       // Essentials (Core) Launchpad Shelf
                       _buildEssentialsShelf(coreConstellation),
 
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 18),
 
                       // Constellation Sector Tabs Bar
                       _buildSectorTabBar(otherConstellations),
 
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 12),
 
                       // Active Sector Grid
                       if (selectedConstellation != null)
-                        _buildSectorAppCard(selectedConstellation),
+                        _SectorCrossFade(
+                          sectorId: selectedConstellation.id,
+                          child: _buildSectorAppCard(selectedConstellation),
+                        ),
                     ],
                   ),
                 ),
@@ -159,7 +213,32 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             ),
           ),
 
-          // 3. Ergonomic Bottom Cockpit Bar for Narrow Cover
+          // 4. Scrim so the scrolling body dissolves under the floating dock
+          // instead of colliding with it.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 150,
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      CoverStyle.page.withValues(alpha: 0.0),
+                      CoverStyle.page.withValues(alpha: 0.86),
+                      CoverStyle.page,
+                    ],
+                    stops: const [0.0, 0.55, 1.0],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // 5. Ergonomic Bottom Cockpit Bar for Narrow Cover
           Positioned(
             left: 0,
             right: 0,
@@ -167,12 +246,12 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             child: _buildCoverCockpitBar(),
           ),
 
-          // 4. Fold Simulator Popup Drawer (if toggled)
+          // 6. Fold Simulator Popup Drawer (if toggled)
           if (_showFoldControls)
             Positioned(
-              left: 16,
-              right: 16,
-              bottom: 82,
+              left: CoverStyle.gutter,
+              right: CoverStyle.gutter,
+              bottom: 92,
               child: _buildFoldControlsSheet(),
             ),
         ],
@@ -189,7 +268,12 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
         '${_weekdayName(_now.weekday)}, ${_monthName(_now.month)} ${_now.day}';
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
+      padding: const EdgeInsets.fromLTRB(
+        CoverStyle.gutter,
+        8.0,
+        CoverStyle.gutter,
+        10.0,
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -204,83 +288,95 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                   color: Colors.white,
                   fontSize: 38,
                   fontWeight: FontWeight.w200,
-                  letterSpacing: -1.0,
-                  height: 1.1,
+                  letterSpacing: -1.2,
+                  height: 1.05,
+                  // Tabular figures keep the clock from shifting width as the
+                  // minute rolls over.
+                  fontFeatures: [FontFeature.tabularFigures()],
                   shadows: [
-                    Shadow(color: Color(0x7700E5FF), blurRadius: 18),
+                    Shadow(color: Color(0x5900E5FF), blurRadius: 16),
                   ],
                 ),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 3),
               Text(
                 dateString.toUpperCase(),
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.65),
+                style: const TextStyle(
+                  color: CoverStyle.labelMuted,
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  letterSpacing: 2.2,
+                  letterSpacing: 1.6,
                 ),
               ),
             ],
           ),
 
-          // Cover Mode Posture Telemetry Badge (Tappable to toggle simulator)
-          GestureDetector(
-            onTap: () {
-              HapticFeedback.selectionClick();
-              setState(() => _showFoldControls = !_showFoldControls);
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: _showFoldControls
-                    ? const Color(0x3300E5FF)
-                    : const Color(0x22101424),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
+          // Cover Mode Posture Telemetry Badge (tappable to toggle simulator)
+          Semantics(
+            button: true,
+            label: _showFoldControls
+                ? 'Hide posture controls'
+                : 'Show posture controls',
+            child: GestureDetector(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                setState(() => _showFoldControls = !_showFoldControls);
+              },
+              behavior: HitTestBehavior.opaque,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                decoration: BoxDecoration(
                   color: _showFoldControls
-                      ? const Color(0xFF00E5FF)
-                      : const Color(0x4464B5F6),
-                  width: 1.0,
+                      ? const Color(0x3300E5FF)
+                      : const Color(0x1F101424),
+                  borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
+                  border: Border.all(
+                    color: _showFoldControls
+                        ? CoverStyle.accent
+                        : CoverStyle.hairline,
+                    width: 1.0,
+                  ),
                 ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Color(0xFF00E5FF),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Color(0xFF00E5FF),
-                          blurRadius: 8,
-                          spreadRadius: 1,
-                        ),
-                      ],
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: CoverStyle.accent,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Color(0x9900E5FF),
+                            blurRadius: 7,
+                            spreadRadius: 0.5,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 6),
-                  const Text(
-                    'COVER',
-                    style: TextStyle(
-                      color: Color(0xFF00E5FF),
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.5,
+                    const SizedBox(width: 7),
+                    const Text(
+                      'COVER',
+                      style: TextStyle(
+                        color: CoverStyle.accent,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.4,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(
-                    _showFoldControls
-                        ? Icons.keyboard_arrow_down_rounded
-                        : Icons.keyboard_arrow_up_rounded,
-                    size: 14,
-                    color: const Color(0xFF00E5FF),
-                  ),
-                ],
+                    const SizedBox(width: 2),
+                    Icon(
+                      _showFoldControls
+                          ? Icons.keyboard_arrow_down_rounded
+                          : Icons.keyboard_arrow_up_rounded,
+                      size: 15,
+                      color: CoverStyle.accent,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -291,55 +387,64 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
 
   Widget _buildSearchPill() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: widget.onOpenSearch,
-          borderRadius: BorderRadius.circular(22),
-          child: Container(
-            height: 44,
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            decoration: BoxDecoration(
-              color: const Color(0x2210162A),
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(
-                color: const Color(0x3300E5FF),
-                width: 0.9,
+      padding: const EdgeInsets.fromLTRB(
+        CoverStyle.gutter,
+        6.0,
+        CoverStyle.gutter,
+        4.0,
+      ),
+      child: Semantics(
+        button: true,
+        label: 'Search apps or cosmos',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: widget.onOpenSearch,
+            borderRadius: BorderRadius.circular(23),
+            child: Container(
+              height: 46,
+              padding: const EdgeInsets.symmetric(horizontal: 15),
+              decoration: BoxDecoration(
+                color: const Color(0x2E10162A),
+                borderRadius: BorderRadius.circular(23),
+                border: Border.all(
+                  color: const Color(0x2E00E5FF),
+                  width: 0.9,
+                ),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x40000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 3),
+                  ),
+                ],
               ),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x1100E5FF),
-                  blurRadius: 12,
-                  spreadRadius: 0,
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.search_rounded,
-                  color: Color(0xFF00E5FF),
-                  size: 19,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Search apps or cosmos...',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.5),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w400,
-                      letterSpacing: 0.2,
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.search_rounded,
+                    color: CoverStyle.accent,
+                    size: 19,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Search apps or cosmos...',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.58),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                        letterSpacing: 0.1,
+                      ),
                     ),
                   ),
-                ),
-                Icon(
-                  Icons.auto_awesome_rounded,
-                  color: Colors.white.withValues(alpha: 0.35),
-                  size: 16,
-                ),
-              ],
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    color: Colors.white.withValues(alpha: 0.32),
+                    size: 16,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -347,100 +452,152 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     );
   }
 
-  Widget _buildEssentialsShelf(Constellation core) {
+  /// Shared card surface: one radius, one fill, one hairline, and a single
+  /// two-part elevation (real drop shadow + faint accent halo). Both the
+  /// Essentials shelf and the sector grid are built from it so they cannot
+  /// drift apart.
+  Widget _cardSurface({
+    required Color accent,
+    required Color glow,
+    required Widget child,
+  }) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
-        color: const Color(0x1C131A30),
-        borderRadius: BorderRadius.circular(22),
+        color: const Color(0x1A131A30),
+        borderRadius: BorderRadius.circular(CoverStyle.cardRadius),
         border: Border.all(
-          color: core.primaryColor.withValues(alpha: 0.3),
-          width: 1.0,
+          color: accent.withValues(alpha: 0.26),
+          width: 0.9,
         ),
         boxShadow: [
+          const BoxShadow(
+            color: Color(0x52000000),
+            blurRadius: 14,
+            offset: Offset(0, 6),
+          ),
           BoxShadow(
-            color: core.glowColor.withValues(alpha: 0.12),
+            color: glow.withValues(alpha: 0.10),
             blurRadius: 18,
-            spreadRadius: 0,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
+      child: child,
+    );
+  }
+
+  Widget _cardHeader({
+    required IconData icon,
+    required String title,
+    required Color color,
+    required int starCount,
+    Widget? action,
+  }) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 7),
+        Flexible(
+          child: Text(
+            title.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.6,
+            ),
+          ),
+        ),
+        const SizedBox(width: 7),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            starCount == 1 ? '1 star' : '$starCount stars',
+            style: TextStyle(
+              color: color,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ),
+        if (action != null) ...[const Spacer(), action],
+      ],
+    );
+  }
+
+  Widget _buildEssentialsShelf(Constellation core) {
+    return _cardSurface(
+      accent: core.primaryColor,
+      glow: core.glowColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Shelf Header
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    core.emblemIcon,
-                    size: 16,
-                    color: core.primaryColor,
+          _cardHeader(
+            icon: core.emblemIcon,
+            title: 'Essentials',
+            color: core.primaryColor,
+            starCount: core.apps.length,
+            action: widget.onEditCore == null
+                ? null
+                : _cardAction(
+                    icon: Icons.edit_outlined,
+                    tooltip: 'Edit Essentials',
+                    onPressed: widget.onEditCore!,
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'ESSENTIALS',
-                    style: TextStyle(
-                      color: core.primaryColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.8,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                    decoration: BoxDecoration(
-                      color: core.primaryColor.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '${core.apps.length} stars',
-                      style: TextStyle(
-                        color: core.primaryColor,
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (widget.onEditCore != null)
-                IconButton(
-                  icon: Icon(
-                    Icons.edit_outlined,
-                    size: 16,
-                    color: Colors.white.withValues(alpha: 0.6),
-                  ),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  tooltip: 'Edit Essentials',
-                  onPressed: widget.onEditCore,
-                ),
-            ],
           ),
 
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
 
           // App Grid for Essentials
           if (core.apps.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12.0),
-              child: Center(
-                child: Text(
-                  'No essentials added. Long-press any app to assign.',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.45),
-                    fontSize: 11,
-                  ),
-                ),
-              ),
+            const _ShelfEmptyState(
+              icon: Icons.star_outline_rounded,
+              title: 'Nothing pinned yet',
+              hint: 'Long-press any app to add it to Essentials.',
             )
           else
-            _buildAppGrid(core.apps, core.primaryColor),
+            _buildAppGrid(core.apps),
         ],
+      ),
+    );
+  }
+
+  Widget _cardAction({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    return IconButton(
+      icon: Icon(icon, size: 17, color: Colors.white.withValues(alpha: 0.62)),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(
+        minWidth: 40,
+        minHeight: 40,
+      ),
+      tooltip: tooltip,
+      onPressed: onPressed,
+    );
+  }
+
+  Widget _sectionLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4.0),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: CoverStyle.labelMuted,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.8,
+        ),
       ),
     );
   }
@@ -448,86 +605,80 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
   Widget _buildSectorTabBar(List<Constellation> outerList) {
     if (outerList.isEmpty) return const SizedBox.shrink();
 
+    final List<Widget> chips = [
+      for (final c in outerList)
+        _buildSectorChip(
+          label: c.name,
+          icon: c.emblemIcon,
+          color: c.primaryColor,
+          isSelected: _selectedSectorId == c.id ||
+              (_selectedSectorId == null && c == outerList.first),
+          onTap: () => setState(() => _selectedSectorId = c.id),
+        ),
+      if (widget.onCreateConstellation != null)
+        _buildAddSectorChip(widget.onCreateConstellation!),
+    ];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(left: 4.0, bottom: 8.0),
-          child: Text(
-            'SECTORS',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.55),
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 2.0,
-            ),
-          ),
-        ),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          child: Row(
-            children: [
-              // Outer constellations chips
-              ...outerList.map((c) {
-                final isSelected = _selectedSectorId == c.id ||
-                    (_selectedSectorId == null && c == outerList.first);
-                return _buildSectorChip(
-                  id: c.id,
-                  label: c.name,
-                  icon: c.emblemIcon,
-                  color: c.primaryColor,
-                  isSelected: isSelected,
-                  onTap: () => setState(() => _selectedSectorId = c.id),
-                );
-              }),
-
-              // "+ Add Sector" Chip
-              if (widget.onCreateConstellation != null)
-                Padding(
-                  padding: const EdgeInsets.only(right: 6.0),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: widget.onCreateConstellation,
-                      borderRadius: BorderRadius.circular(16),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF00E5FF).withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: const Color(0xFF00E5FF).withValues(alpha: 0.35),
-                          ),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.add_rounded, size: 14, color: Color(0xFF00E5FF)),
-                            SizedBox(width: 4),
-                            Text(
-                              'Sector',
-                              style: TextStyle(
-                                color: Color(0xFF00E5FF),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
+        _sectionLabel('SECTORS'),
+        const SizedBox(height: 8),
+        FadingHorizontalScroll(
+          fadeColor: CoverStyle.page,
+          children: [...chips, const SizedBox(width: 4)],
         ),
       ],
     );
   }
 
+  Widget _buildAddSectorChip(VoidCallback onCreate) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6.0),
+      child: Semantics(
+        button: true,
+        label: 'Create a new sector',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onCreate,
+            borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 40),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: CoverStyle.accent.withValues(alpha: 0.09),
+                borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
+                border: Border.all(
+                  color: CoverStyle.accent.withValues(alpha: 0.32),
+                  width: 0.9,
+                ),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.add_rounded, size: 15, color: CoverStyle.accent),
+                  SizedBox(width: 5),
+                  Text(
+                    'Sector',
+                    style: TextStyle(
+                      color: CoverStyle.accent,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSectorChip({
-    required String id,
     required String label,
     required IconData icon,
     required Color color,
@@ -536,51 +687,59 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
   }) {
     return Padding(
       padding: const EdgeInsets.only(right: 8.0),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(18),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: isSelected
-                  ? color.withValues(alpha: 0.22)
-                  : const Color(0x18131A30),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: isSelected ? color : color.withValues(alpha: 0.25),
-                width: isSelected ? 1.2 : 0.8,
+      child: Semantics(
+        button: true,
+        selected: isSelected,
+        label: '$label sector',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+              constraints: const BoxConstraints(minHeight: 40),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? color.withValues(alpha: 0.20)
+                    : const Color(0x14131A30),
+                borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
+                border: Border.all(
+                  color: isSelected ? color : color.withValues(alpha: 0.22),
+                  width: isSelected ? 1.1 : 0.8,
+                ),
+                boxShadow: isSelected
+                    ? [
+                        BoxShadow(
+                          color: color.withValues(alpha: 0.22),
+                          blurRadius: 10,
+                          offset: const Offset(0, 3),
+                        ),
+                      ]
+                    : null,
               ),
-              boxShadow: isSelected
-                  ? [
-                      BoxShadow(
-                        color: color.withValues(alpha: 0.28),
-                        blurRadius: 10,
-                        spreadRadius: 0,
-                      )
-                    ]
-                  : null,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  icon,
-                  size: 14,
-                  color: isSelected ? color : Colors.white70,
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : Colors.white70,
-                    fontSize: 11.5,
-                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    icon,
+                    size: 14,
+                    color: isSelected ? color : Colors.white70,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : Colors.white70,
+                      fontSize: 11.5,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -589,217 +748,112 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
   }
 
   Widget _buildSectorAppCard(Constellation constellation) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0x18131A30),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: constellation.primaryColor.withValues(alpha: 0.28),
-          width: 0.9,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: constellation.glowColor.withValues(alpha: 0.10),
-            blurRadius: 16,
-            spreadRadius: 0,
-          ),
-        ],
-      ),
+    return _cardSurface(
+      accent: constellation.primaryColor,
+      glow: constellation.glowColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Sector Card Header with Edit Action
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    constellation.emblemIcon,
-                    size: 16,
-                    color: constellation.primaryColor,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    constellation.name.toUpperCase(),
-                    style: TextStyle(
-                      color: constellation.primaryColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.8,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                    decoration: BoxDecoration(
-                      color: constellation.primaryColor.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '${constellation.apps.length} stars',
-                      style: TextStyle(
-                        color: constellation.primaryColor,
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              IconButton(
-                icon: Icon(
-                  Icons.tune_rounded,
-                  size: 16,
-                  color: Colors.white.withValues(alpha: 0.6),
-                ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                tooltip: 'Edit Constellation',
-                onPressed: () {
-                  widget.onConstellationLongPressed?.call(constellation);
-                },
-              ),
-            ],
+          _cardHeader(
+            icon: constellation.emblemIcon,
+            title: constellation.name,
+            color: constellation.primaryColor,
+            starCount: constellation.apps.length,
+            action: _cardAction(
+              icon: Icons.tune_rounded,
+              tooltip: 'Edit Constellation',
+              onPressed: () =>
+                  widget.onConstellationLongPressed?.call(constellation),
+            ),
           ),
 
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
 
           // App Grid for Sector
           if (constellation.apps.isEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24.0),
-              child: Center(
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.star_outline_rounded,
-                      size: 28,
-                      color: constellation.primaryColor.withValues(alpha: 0.4),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'No apps in this sector yet',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.5),
-                        fontSize: 12,
+              padding: const EdgeInsets.symmetric(vertical: 18.0),
+              child: Column(
+                children: [
+                  const _ShelfEmptyState(
+                    icon: Icons.star_outline_rounded,
+                    title: 'This sector is empty',
+                    hint: 'Add apps to bring it into orbit.',
+                  ),
+                  const SizedBox(height: 14),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: constellation.primaryColor,
+                      side: BorderSide(
+                        color: constellation.primaryColor.withValues(alpha: 0.4),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: constellation.primaryColor,
-                        side: BorderSide(color: constellation.primaryColor.withValues(alpha: 0.4)),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      ),
-                      icon: const Icon(Icons.add_rounded, size: 16),
-                      label: const Text('Add Apps', style: TextStyle(fontSize: 11)),
-                      onPressed: () {
-                        widget.onConstellationLongPressed?.call(constellation);
-                      },
-                    ),
-                  ],
-                ),
+                    icon: const Icon(Icons.add_rounded, size: 16),
+                    label: const Text('Add Apps', style: TextStyle(fontSize: 11)),
+                    onPressed: () {
+                      widget.onConstellationLongPressed?.call(constellation);
+                    },
+                  ),
+                ],
               ),
             )
           else
-            _buildAppGrid(constellation.apps, constellation.primaryColor),
+            _buildAppGrid(constellation.apps),
         ],
       ),
     );
   }
 
-  Widget _buildAppGrid(List<AppEntry> appList, Color sectorColor) {
+  /// Column count for an app grid on the cover panel, chosen so the trailing
+  /// row is never a lone orphan.
+  static int _columnsFor(double availableWidth, int appCount) {
+    final int maxColumns = (availableWidth / 64).floor().clamp(3, 5);
+    if (appCount <= 1) return maxColumns;
+    for (var columns = maxColumns; columns >= 3; columns--) {
+      final remainder = appCount % columns;
+      if (remainder == 0 || remainder * 2 >= columns) return columns;
+    }
+    return maxColumns;
+  }
+
+  /// Fixed-size tile grid built on [Wrap] rather than [GridView]: the rows keep
+  /// their natural height (no stretched aspect-ratio gap under each label) and
+  /// a short final row centres instead of leaving a hole.
+  Widget _buildAppGrid(List<AppEntry> appList) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Adapt between 3 or 4 columns based on narrow screen width
-        final int crossAxisCount = constraints.maxWidth > 350 ? 4 : 3;
+        const double spacing = 8.0;
+        final int columns = _columnsFor(constraints.maxWidth, appList.length);
+        final double tileWidth =
+            (constraints.maxWidth - spacing * (columns - 1)) / columns - 0.5;
 
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: appList.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 12,
-            childAspectRatio: 0.82,
-          ),
-          itemBuilder: (context, index) {
-            final app = appList[index];
-            return _buildAppItem(app, sectorColor);
-          },
+        return Wrap(
+          spacing: spacing,
+          runSpacing: 14.0,
+          alignment: WrapAlignment.center,
+          children: [
+            for (final app in appList)
+              SizedBox(
+                width: tileWidth,
+                child: _CoverAppTile(
+                  app: app,
+                  onTap: () => _launchAppWithFeedback(app),
+                  onLongPress: (position) {
+                    HapticFeedback.heavyImpact();
+                    widget.onAppLongPressed?.call(app, position);
+                  },
+                ),
+              ),
+          ],
         );
       },
-    );
-  }
-
-  Widget _buildAppItem(AppEntry app, Color sectorColor) {
-    return GestureDetector(
-      onTap: () => _launchAppWithFeedback(app),
-      onLongPressStart: (details) {
-        HapticFeedback.heavyImpact();
-        widget.onAppLongPressed?.call(app, details.globalPosition);
-      },
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // App Icon Container with Glowing Border & Glass Backing
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: app.accentColor.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: app.accentColor.withValues(alpha: 0.45),
-                width: 1.0,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: app.accentColor.withValues(alpha: 0.18),
-                  blurRadius: 10,
-                  spreadRadius: 0,
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(13),
-              child: app.iconBytes != null
-                  ? Image.memory(
-                      app.iconBytes!,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Icon(
-                        app.fallbackIcon,
-                        color: app.accentColor,
-                        size: 24,
-                      ),
-                    )
-                  : Icon(
-                      app.fallbackIcon,
-                      color: app.accentColor,
-                      size: 24,
-                    ),
-            ),
-          ),
-          const SizedBox(height: 5),
-          // App Label
-          Text(
-            app.label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w500,
-              letterSpacing: 0.2,
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -807,26 +861,28 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+        padding: const EdgeInsets.fromLTRB(
+          CoverStyle.gutter,
+          8.0,
+          CoverStyle.gutter,
+          8.0,
+        ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(26),
+          borderRadius: BorderRadius.circular(CoverStyle.dockRadius),
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
             child: Container(
-              height: 56,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              height: 60,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
-                color: const Color(0xCC0D1120),
-                borderRadius: BorderRadius.circular(26),
-                border: Border.all(
-                  color: const Color(0x3364B5F6),
-                  width: 0.9,
-                ),
+                color: const Color(0xD90D1120),
+                borderRadius: BorderRadius.circular(CoverStyle.dockRadius),
+                border: Border.all(color: CoverStyle.hairline, width: 0.9),
                 boxShadow: const [
                   BoxShadow(
-                    color: Color(0x33000000),
-                    blurRadius: 16,
-                    offset: Offset(0, 4),
+                    color: Color(0x66000000),
+                    blurRadius: 18,
+                    offset: Offset(0, 6),
                   ),
                 ],
               ),
@@ -836,7 +892,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                   // Search
                   _dockIconButton(
                     icon: Icons.search_rounded,
-                    color: const Color(0xFF00E5FF),
+                    color: CoverStyle.accent,
                     tooltip: 'Search Apps',
                     onTap: widget.onOpenSearch,
                   ),
@@ -844,8 +900,11 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                   // Fold Simulator Toggle
                   _dockIconButton(
                     icon: Icons.splitscreen_rounded,
-                    color: _showFoldControls ? const Color(0xFF00E5FF) : Colors.white70,
+                    color: _showFoldControls
+                        ? CoverStyle.accent
+                        : Colors.white70,
                     tooltip: 'Fold Simulator',
+                    isActive: _showFoldControls,
                     onTap: () {
                       HapticFeedback.selectionClick();
                       setState(() => _showFoldControls = !_showFoldControls);
@@ -881,17 +940,29 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     required Color color,
     required String tooltip,
     required VoidCallback onTap,
+    bool isActive = false,
   }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          width: 44,
-          height: 44,
-          alignment: Alignment.center,
-          child: Icon(icon, color: color, size: 22),
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            width: CoverStyle.touchTarget + 4,
+            height: CoverStyle.touchTarget + 4,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: isActive
+                  ? CoverStyle.accent.withValues(alpha: 0.16)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
+            ),
+            child: Icon(icon, color: color, size: 22),
+          ),
         ),
       ),
     );
@@ -904,11 +975,23 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xEE0D1120),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0x6600E5FF), width: 1.0),
+        color: const Color(0xF20D1120),
+        borderRadius: BorderRadius.circular(CoverStyle.cardRadius),
+        border: Border.all(
+          color: CoverStyle.accent.withValues(alpha: 0.42),
+          width: 1.0,
+        ),
         boxShadow: const [
-          BoxShadow(color: Color(0x4400E5FF), blurRadius: 18),
+          BoxShadow(
+            color: Color(0x73000000),
+            blurRadius: 20,
+            offset: Offset(0, 8),
+          ),
+          BoxShadow(
+            color: Color(0x2E00E5FF),
+            blurRadius: 22,
+            offset: Offset(0, 4),
+          ),
         ],
       ),
       child: Column(
@@ -934,6 +1017,13 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                         ),
                       ),
                     ),
+                    if (widget.foldable.isSimulated) ...[
+                      const SizedBox(width: 6),
+                      FoldableSimulationChip(
+                        foldable: widget.foldable,
+                        fontSize: 9,
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1076,4 +1166,233 @@ class _CoverStar {
     required this.blinkRate,
     required this.color,
   });
+}
+
+/// A single app on the cover grid.
+///
+/// Pressing a tile scales it down and lifts its accent glow, so a tap on a
+/// small cover-panel target is acknowledged before the app opens.
+class _CoverAppTile extends StatefulWidget {
+  final AppEntry app;
+  final VoidCallback onTap;
+  final void Function(Offset globalPosition) onLongPress;
+
+  const _CoverAppTile({
+    required this.app,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  @override
+  State<_CoverAppTile> createState() => _CoverAppTileState();
+}
+
+class _CoverAppTileState extends State<_CoverAppTile> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() => _pressed = value);
+  }
+
+  /// Anchors the long-press dialog on the tile itself when the action comes
+  /// from a screen reader rather than a finger.
+  void _semanticLongPress() {
+    final box = context.findRenderObject() as RenderBox?;
+    final position = box == null || !box.hasSize
+        ? Offset.zero
+        : box.localToGlobal(box.size.center(Offset.zero));
+    widget.onLongPress(position);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final app = widget.app;
+    return Semantics(
+      button: true,
+      label: 'Open ${app.label}',
+      // Without this the long-press route to Essentials is unreachable under
+      // a screen reader, and the hint below advertises it.
+      onLongPress: _semanticLongPress,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) {
+          HapticFeedback.selectionClick();
+          _setPressed(true);
+        },
+        onTapUp: (_) => _setPressed(false),
+        onTapCancel: () => _setPressed(false),
+        onTap: widget.onTap,
+        onLongPressStart: (details) {
+          _setPressed(false);
+          widget.onLongPress(details.globalPosition);
+        },
+        child: AnimatedScale(
+          scale: _pressed ? 0.92 : 1.0,
+          duration: const Duration(milliseconds: 110),
+          curve: Curves.easeOutCubic,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // App Icon Container with Glowing Border & Glass Backing
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                curve: Curves.easeOutCubic,
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: app.accentColor.withValues(alpha: _pressed ? 0.22 : 0.13),
+                  borderRadius: BorderRadius.circular(CoverStyle.tileRadius),
+                  border: Border.all(
+                    color: app.accentColor.withValues(alpha: _pressed ? 0.7 : 0.4),
+                    width: 1.0,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: app.accentColor.withValues(
+                        alpha: _pressed ? 0.32 : 0.14,
+                      ),
+                      blurRadius: _pressed ? 14 : 9,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(CoverStyle.tileRadius - 1),
+                  child: app.iconBytes != null
+                      ? Image.memory(
+                          app.iconBytes!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Icon(
+                            app.fallbackIcon,
+                            color: app.accentColor,
+                            size: 24,
+                          ),
+                        )
+                      : Icon(
+                          app.fallbackIcon,
+                          color: app.accentColor,
+                          size: 24,
+                        ),
+                ),
+              ),
+              const SizedBox(height: 5),
+              // App Label
+              Text(
+                app.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Empty state for a shelf or sector with no apps.
+class _ShelfEmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String hint;
+
+  const _ShelfEmptyState({
+    required this.icon,
+    required this.title,
+    required this.hint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      child: Column(
+        children: [
+          Icon(icon, size: 24, color: Colors.white.withValues(alpha: 0.45)),
+          const SizedBox(height: 8),
+          Text(
+            title,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.72),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            hint,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.5),
+              fontSize: 11,
+              height: 1.3,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fades a freshly selected sector card in, so switching sectors reads as a
+/// content change instead of an instant swap. Only the incoming card is built,
+/// which keeps a single set of app tiles in the tree at any moment.
+class _SectorCrossFade extends StatefulWidget {
+  final String sectorId;
+  final Widget child;
+
+  const _SectorCrossFade({required this.sectorId, required this.child});
+
+  @override
+  State<_SectorCrossFade> createState() => _SectorCrossFadeState();
+}
+
+class _SectorCrossFadeState extends State<_SectorCrossFade>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+    value: 1.0,
+  );
+
+  late final Animation<double> _curve = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeOutCubic,
+  );
+
+  @override
+  void didUpdateWidget(covariant _SectorCrossFade oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sectorId != widget.sectorId) {
+      _controller.forward(from: 0.0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _curve,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0.0, 0.025),
+          end: Offset.zero,
+        ).animate(_curve),
+        child: widget.child,
+      ),
+    );
+  }
 }

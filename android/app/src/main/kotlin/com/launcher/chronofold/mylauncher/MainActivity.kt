@@ -23,6 +23,7 @@ import android.view.WindowManager
 import android.app.KeyguardManager
 import android.app.role.RoleManager
 import android.hardware.biometrics.BiometricPrompt
+import android.hardware.fingerprint.FingerprintManager
 import android.os.CancellationSignal
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
@@ -37,11 +38,14 @@ class MainActivity : FlutterActivity() {
     private val APPS_CHANNEL = "com.launcher.chronofold/apps"
     private val HINGE_CHANNEL = "com.launcher.chronofold/hinge"
     private val SHAKE_CHANNEL = "com.launcher.chronofold/shake"
+    private val FINGERPRINT_CHANNEL = "com.launcher.chronofold/fingerprint"
 
     private val backgroundExecutor = Executors.newSingleThreadExecutor()
     private var sensorManager: SensorManager? = null
     private var hingeSensor: Sensor? = null
     private var accelSensor: Sensor? = null
+    private var fingerprintCancellation: CancellationSignal? = null
+    private var fingerprintEvents: EventChannel.EventSink? = null
     private var screenReceiver: BroadcastReceiver? = null
     private var packageReceiver: BroadcastReceiver? = null
     private var appsMethodChannel: MethodChannel? = null
@@ -103,6 +107,9 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        stopFingerprintScan()
+        // Drop the sink so a live channel cannot outlive the activity.
+        fingerprintEvents = null
         screenReceiver?.let { unregisterReceiver(it) }
         packageReceiver?.let { unregisterReceiver(it) }
         super.onDestroy()
@@ -190,6 +197,17 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
+                    "fingerprintCapability" -> {
+                        result.success(fingerprintCapability())
+                    }
+                    "startFingerprintScan" -> {
+                        startFingerprintScan()
+                        result.success(true)
+                    }
+                    "stopFingerprintScan" -> {
+                        stopFingerprintScan()
+                        result.success(true)
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -223,6 +241,21 @@ class MainActivity : FlutterActivity() {
                 override fun onCancel(arguments: Any?) {
                     listener?.let { sensorManager?.unregisterListener(it) }
                     listener = null
+                }
+            })
+
+        // EventChannel for silent fingerprint scanning. Unlike BiometricPrompt,
+        // the legacy FingerprintManager renders no system UI: the app owns the
+        // affordance, so touching the sensor authenticates directly.
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, FINGERPRINT_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    fingerprintEvents = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    fingerprintEvents = null
+                    stopFingerprintScan()
                 }
             })
 
@@ -414,6 +447,95 @@ class MainActivity : FlutterActivity() {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         startActivity(intent)
+    }
+
+    // --- Silent fingerprint scanning -------------------------------------------------
+    //
+    // BiometricPrompt always draws its own system dialog. The legacy
+    // FingerprintManager does not: the app owns the affordance, which is what
+    // the lock screen provides, so touching the sensor authenticates directly
+    // and no prompt is ever shown.
+
+    private fun fingerprintManager(): FingerprintManager? =
+        getSystemService(Context.FINGERPRINT_SERVICE) as? FingerprintManager
+
+    private fun fingerprintCapability(): Map<String, Any> {
+        val manager = fingerprintManager()
+        val hardware = manager?.isHardwareDetected == true
+        val enrolled = hardware && manager?.hasEnrolledFingerprints() == true
+        return mapOf("hardware" to hardware, "enrolled" to enrolled)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startFingerprintScan() {
+        val manager = fingerprintManager()
+        if (manager == null || !manager.isHardwareDetected || !manager.hasEnrolledFingerprints()) {
+            fingerprintEvents?.success(mapOf("type" to "unavailable"))
+            return
+        }
+
+        stopFingerprintScan()
+        val signal = CancellationSignal()
+        fingerprintCancellation = signal
+
+        try {
+            manager.authenticate(
+                null,
+                signal,
+                0,
+                object : FingerprintManager.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(
+                        result: FingerprintManager.AuthenticationResult?
+                    ) {
+                        // A superseded session keeps reporting after it was
+                        // replaced; only the live signal may reach Dart.
+                        if (fingerprintCancellation !== signal) return
+                        fingerprintCancellation = null
+                        fingerprintEvents?.success(mapOf("type" to "succeeded"))
+                    }
+
+                    override fun onAuthenticationFailed() {
+                        if (fingerprintCancellation !== signal) return
+                        // A non-matching finger: the sensor stays armed.
+                        fingerprintEvents?.success(mapOf("type" to "failed"))
+                    }
+
+                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                        if (fingerprintCancellation !== signal) return
+                        fingerprintCancellation = null
+                        fingerprintEvents?.success(
+                            mapOf(
+                                "type" to "error",
+                                "code" to errorCode,
+                                "message" to (errString?.toString() ?: ""),
+                            )
+                        )
+                    }
+
+                    override fun onAuthenticationHelp(helpCode: Int, helpString: CharSequence?) {
+                        // Partial read (finger moved, sensor dirty): stay armed.
+                    }
+                },
+                null,
+            )
+            fingerprintEvents?.success(mapOf("type" to "listening"))
+        } catch (error: Exception) {
+            fingerprintCancellation = null
+            fingerprintEvents?.success(
+                mapOf(
+                    "type" to "unavailable",
+                    "message" to (error.message ?: "Fingerprint sensor unavailable"),
+                )
+            )
+        }
+    }
+
+    private fun stopFingerprintScan() {
+        // Cleared before cancelling so the callback the cancel triggers is
+        // recognised as belonging to a superseded session and is dropped.
+        val signal = fingerprintCancellation
+        fingerprintCancellation = null
+        signal?.cancel()
     }
 
     private fun authenticateUser(appName: String?, callback: (Boolean, String?) -> Unit) {

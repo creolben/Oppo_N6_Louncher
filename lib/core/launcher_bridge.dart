@@ -6,11 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/app_entry.dart';
 
-class LauncherBridge {
-  static const MethodChannel _appsChannel =
+class LauncherBridge {  static const MethodChannel _appsChannel =
       MethodChannel('com.launcher.chronofold/apps');
   static const EventChannel _shakeChannel =
       EventChannel('com.launcher.chronofold/shake');
+  static const EventChannel _fingerprintChannel =
+      EventChannel('com.launcher.chronofold/fingerprint');
 
   static Stream<Map<String, dynamic>>? _shakeStream;
 
@@ -51,6 +52,7 @@ class LauncherBridge {
     _onHomeButtonListener = onHomePressed;
     _ensureHandlerInitialized();
   }
+
 
   static Stream<Map<String, dynamic>> getShakeStream() {
     if (_shakeStream == null) {
@@ -146,6 +148,58 @@ class LauncherBridge {
       debugPrint('Simulating biometric authentication success for $appName');
       return true;
     }
+  }
+
+  /// Whether a fingerprint reader exists and has at least one finger enrolled.
+  static Future<FingerprintCapability> fingerprintCapability() async {
+    if (kIsWeb || !Platform.isAndroid) {
+      return const FingerprintCapability(hardware: false, enrolled: false);
+    }
+    try {
+      final Map<Object?, Object?>? raw =
+          await _appsChannel.invokeMethod<Map<Object?, Object?>>(
+        'fingerprintCapability',
+      );
+      return FingerprintCapability(
+        hardware: raw?['hardware'] == true,
+        enrolled: raw?['enrolled'] == true,
+      );
+    } catch (e) {
+      debugPrint('Fingerprint capability probe failed: $e');
+      return const FingerprintCapability(hardware: false, enrolled: false);
+    }
+  }
+
+  /// Arms the sensor without showing any system UI, so a touch on the reader
+  /// authenticates straight away. Results arrive on [fingerprintEvents].
+  static Future<void> startFingerprintScan() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _appsChannel.invokeMethod('startFingerprintScan');
+    } catch (e) {
+      debugPrint('Starting fingerprint scan failed: $e');
+    }
+  }
+
+  /// Disarms the sensor.
+  static Future<void> stopFingerprintScan() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _appsChannel.invokeMethod('stopFingerprintScan');
+    } catch (e) {
+      debugPrint('Stopping fingerprint scan failed: $e');
+    }
+  }
+
+  /// Silent fingerprint events: `listening`, `failed`, `succeeded`,
+  /// `error` (with `code`/`message`) and `unavailable`.
+  static Stream<Map<String, dynamic>> fingerprintEvents() {
+    if (kIsWeb || !Platform.isAndroid) {
+      return const Stream<Map<String, dynamic>>.empty();
+    }
+    return _fingerprintChannel
+        .receiveBroadcastStream()
+        .map((event) => Map<String, dynamic>.from(event as Map));
   }
 
   static Future<bool> isDefaultLauncher() async {
@@ -508,4 +562,15 @@ class LauncherBridge {
       ),
     ];
   }
+}
+
+/// What the platform reports about the fingerprint reader.
+class FingerprintCapability {
+  final bool hardware;
+  final bool enrolled;
+
+  const FingerprintCapability({required this.hardware, required this.enrolled});
+
+  /// True only when a scan can actually be armed.
+  bool get isReady => hardware && enrolled;
 }
