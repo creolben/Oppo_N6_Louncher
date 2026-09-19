@@ -70,7 +70,8 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   List<AppEntry> _apps = [];
   bool _isLoading = true;
   bool _isSearchOpen = false;
-  bool _isLocked = true;
+  bool _isLocked = false;
+  bool _isCockpitMode = false;
 
   @override
   void initState() {
@@ -312,7 +313,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                               onCreateConstellation: _openCreateConstellationModal,
                               onEditCore: _openCenterConstellationEditorModal,
                             )
-                          : _foldable.isTabletop
+                          : (_isCockpitMode && _foldable.isTabletop)
                               ? TabletopCockpitView(
                                   key: const ValueKey('tabletop_cockpit_view'),
                                   apps: _apps,
@@ -326,6 +327,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                   onConstellationLongPressed: _openConstellationEditorModal,
                                   onCreateConstellation: _openCreateConstellationModal,
                                   onEditCore: _openCenterConstellationEditorModal,
+                                  onToggleFullscreen: () => setState(() => _isCockpitMode = false),
                                 )
                               : Stack(
                                   key: const ValueKey('unfolded_galaxy_screen'),
@@ -348,7 +350,12 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       top: 0,
                                       left: 0,
                                       right: 0,
-                                      child: CosmicHeaderHud(foldable: _foldable),
+                                      child: CosmicHeaderHud(
+                                        foldable: _foldable,
+                                        onToggleCockpit: _foldable.isTabletop
+                                            ? () => setState(() => _isCockpitMode = true)
+                                            : null,
+                                      ),
                                     ),
 
                                     // 3. Ergonomic Bottom Cockpit Bar

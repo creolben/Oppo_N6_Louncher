@@ -49,6 +49,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
   String? _selectedSectorId;
   late final CameraController _activeCamera;
   bool _ownsCamera = false;
+  bool _isLaunchpadCollapsed = false;
 
   @override
   void initState() {
@@ -94,7 +95,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           children: [
             // TOP HALF: Ambient Cosmic Constellation Viewport (Upright Screen)
             Expanded(
-              flex: 5,
+              flex: _isLaunchpadCollapsed ? 1 : 5,
               child: ClipRect(
                 child: Stack(
                   children: [
@@ -123,14 +124,24 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
               ),
             ),
 
-            // CREASE ILLUMINATION DIVIDER (Hinge Boundary)
-            _buildCreaseDivider(),
+            // CREASE ILLUMINATION DIVIDER (Hinge Boundary) with Collapse Toggle
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                HapticFeedback.selectionClick();
+                setState(() => _isLaunchpadCollapsed = !_isLaunchpadCollapsed);
+              },
+              child: _buildCreaseDivider(),
+            ),
 
             // BOTTOM HALF: Tactile Cockpit Launchpad (Flat Desk Surface)
-            Expanded(
-              flex: 6,
-              child: _buildBottomCockpitPanel(core, outerConstellations),
-            ),
+            if (!_isLaunchpadCollapsed)
+              Expanded(
+                flex: 6,
+                child: _buildBottomCockpitPanel(core, outerConstellations),
+              )
+            else
+              _buildCollapsedCockpitBar(),
           ],
         ),
       ),
@@ -310,26 +321,131 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
 
   Widget _buildCreaseDivider() {
     return Container(
-      height: 6,
-      margin: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(3),
-        gradient: const LinearGradient(
-          colors: [
-            Colors.transparent,
-            Color(0x3300E5FF),
-            Color(0xCC00E5FF),
-            Color(0x3300E5FF),
-            Colors.transparent,
-          ],
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x4400E5FF),
-            blurRadius: 10,
-            spreadRadius: 1,
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            height: 5,
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(2.5),
+              gradient: const LinearGradient(
+                colors: [
+                  Colors.transparent,
+                  Color(0x3300E5FF),
+                  Color(0xCC00E5FF),
+                  Color(0x3300E5FF),
+                  Colors.transparent,
+                ],
+              ),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x4400E5FF),
+                  blurRadius: 10,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 3),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+            decoration: BoxDecoration(
+              color: const Color(0x3310162A),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0x3300E5FF), width: 0.8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _isLaunchpadCollapsed
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  color: const Color(0xFF00E5FF),
+                  size: 14,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  _isLaunchpadCollapsed ? 'EXPAND LAUNCHPAD' : 'COLLAPSE PANEL',
+                  style: const TextStyle(
+                    color: Color(0xFF00E5FF),
+                    fontSize: 8.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCollapsedCockpitBar() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: const BoxDecoration(
+        color: Color(0xCC0A0E1C),
+      ),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            _cockpitActionButton(
+              icon: Icons.grid_view_rounded,
+              label: 'Launchpad',
+              color: const Color(0xFF00E5FF),
+              onTap: () {
+                HapticFeedback.selectionClick();
+                setState(() => _isLaunchpadCollapsed = false);
+              },
+            ),
+            _cockpitActionButton(
+              icon: Icons.search_rounded,
+              label: 'Search',
+              color: const Color(0xFF00E5FF),
+              onTap: widget.onOpenSearch,
+            ),
+            if (widget.onToggleFullscreen != null)
+              _cockpitActionButton(
+                icon: Icons.fullscreen_rounded,
+                label: 'Fullscreen',
+                color: const Color(0xFF00E5FF),
+                onTap: widget.onToggleFullscreen!,
+              ),
+            if (widget.onCreateConstellation != null)
+              _cockpitActionButton(
+                icon: Icons.add_circle_outline_rounded,
+                label: 'Create',
+                color: const Color(0xFF69F0AE),
+                onTap: widget.onCreateConstellation!,
+              ),
+            if (widget.onEditCore != null)
+              _cockpitActionButton(
+                icon: Icons.hub_rounded,
+                label: 'Center Hub',
+                color: const Color(0xFFFFD54F),
+                onTap: widget.onEditCore!,
+              ),
+            _cockpitActionButton(
+              icon: Icons.lock_outline_rounded,
+              label: 'Lock',
+              color: const Color(0xFFFF8A80),
+              onTap: widget.onLock,
+            ),
+            _cockpitActionButton(
+              icon: Icons.tune_rounded,
+              label: 'Settings',
+              color: Colors.white70,
+              onTap: widget.onOpenSettings,
+            ),
+          ],
+        ),
       ),
     );
   }
