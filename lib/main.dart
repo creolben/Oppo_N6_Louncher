@@ -71,7 +71,6 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   bool _isLoading = true;
   bool _isSearchOpen = false;
   bool _isLocked = true;
-  bool _isFullscreenGalaxy = false;
 
   @override
   void initState() {
@@ -313,7 +312,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                               onCreateConstellation: _openCreateConstellationModal,
                               onEditCore: _openCenterConstellationEditorModal,
                             )
-                          : (!_isFullscreenGalaxy)
+                          : _foldable.isTabletop
                               ? TabletopCockpitView(
                                   key: const ValueKey('tabletop_cockpit_view'),
                                   apps: _apps,
@@ -327,7 +326,6 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                   onConstellationLongPressed: _openConstellationEditorModal,
                                   onCreateConstellation: _openCreateConstellationModal,
                                   onEditCore: _openCenterConstellationEditorModal,
-                                  onToggleFullscreen: () => setState(() => _isFullscreenGalaxy = true),
                                 )
                               : Stack(
                                   key: const ValueKey('unfolded_galaxy_screen'),
@@ -350,10 +348,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       top: 0,
                                       left: 0,
                                       right: 0,
-                                      child: CosmicHeaderHud(
-                                        foldable: _foldable,
-                                        onToggleCockpit: () => setState(() => _isFullscreenGalaxy = false),
-                                      ),
+                                      child: CosmicHeaderHud(foldable: _foldable),
                                     ),
 
                                     // 3. Ergonomic Bottom Cockpit Bar
