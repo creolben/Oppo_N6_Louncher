@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import '../../core/foldable_controller.dart';
 import '../../models/app_entry.dart';
@@ -41,7 +43,13 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _slideController;
   late Animation<double> _slideAnimation;
-  double _dragOffset = 0.0;
+  /// How far the panel has been pulled up, by drag or by the unlock slide.
+  ///
+  /// A [ValueNotifier] on purpose: the only thing this value moves is a
+  /// `Transform.translate` and the opacity derived from it, so animating it
+  /// re-evaluates that one builder instead of rebuilding the whole lock screen
+  /// at up to 120Hz.
+  final ValueNotifier<double> _panelOffset = ValueNotifier<double>(0.0);
   DateTime _currentTime = DateTime.now();
   late Timer _clockTimer;
 
@@ -100,10 +108,92 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     return LauncherBridge.authenticate(appName: appName);
   }
 
+  /// Whether a screen reader is running, i.e. whether the semantics layer is
+  /// worth building at all.
+  bool get _screenReaderActive => SemanticsBinding.instance.semanticsEnabled;
+
+  /// Smallest focus rectangle a screen reader can reliably land on.
+  static const double _minSemanticTarget = 48.0;
+
+  /// One focusable node per bubble, at the position the canvas paints it.
+  ///
+  /// A reader navigates these linearly, so their positions matter for touch
+  /// exploration rather than for reaching them — which is why the simulation is
+  /// held still while one is active (see [_syncPhysicsLoop]).
+  Widget _buildBubbleSemantics() {
+    return Stack(
+      children: [
+        for (final bubble in _physicsEngine.bubbles)
+          () {
+            final rect = Rect.fromCircle(
+              center: bubble.position,
+              radius: bubble.radius * 1.3,
+            );
+            final target = rect.width >= _minSemanticTarget &&
+                    rect.height >= _minSemanticTarget
+                ? rect
+                : Rect.fromCenter(
+                    center: rect.center,
+                    width: math.max(rect.width, _minSemanticTarget),
+                    height: math.max(rect.height, _minSemanticTarget),
+                  );
+            return Positioned(
+              left: target.left,
+              top: target.top,
+              width: target.width,
+              height: target.height,
+              child: Semantics(
+                container: true,
+                button: true,
+                label: bubble.app.label,
+                hint: 'Open app',
+                onTap: () => _unlockAndLaunchApp(bubble.app),
+                child: const SizedBox.expand(),
+              ),
+            );
+          }(),
+      ],
+    );
+  }
+
+  void _onSemanticsEnabledChanged() {
+    if (!mounted) return;
+    setState(() {});
+    _syncPhysicsLoop();
+  }
+
+  /// Runs the simulation only when it is both wanted and useful.
+  ///
+  /// Held still for reduce-motion (the drift is decorative, not informative) and
+  /// while a screen reader is active, so its targets are not moving out from
+  /// under a reader's finger and the node rectangles do not need rebuilding
+  /// every frame. Drags still repaint, because they go through [markDirty].
+  void _syncPhysicsLoop() {
+    final bool holdStill = (MediaQuery.maybeDisableAnimationsOf(context) ?? false) ||
+        _screenReaderActive;
+    if (holdStill) {
+      if (_physicsTicker.isActive) _physicsTicker.stop();
+    } else if (!_physicsTicker.isActive) {
+      _physicsTicker.start();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncPhysicsLoop();
+  }
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    // A reader can be switched on while this panel is already up, and nothing
+    // else here rebuilds when that happens.
+    SemanticsBinding.instance.addSemanticsEnabledListener(
+      _onSemanticsEnabledChanged,
+    );
 
     _slideController = AnimationController(
       vsync: this,
@@ -113,7 +203,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     _slideAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
     )..addListener(() {
-        setState(() {});
+        // The slide moves one transform; pushing it through the notifier keeps
+        // ~330 lines of lock screen from rebuilding per animation frame.
+        _panelOffset.value = _slideAnimation.value;
       });
 
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -128,7 +220,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     });
 
     // 60/120 FPS Physics simulation loop
-    _physicsTicker = createTicker(_onPhysicsTick)..start();
+    _physicsTicker = createTicker(_onPhysicsTick);
 
     // Native Android accelerometer shake & gravity tilt stream
     _shakeSubscription = LauncherBridge.getShakeStream().listen((event) {
@@ -311,10 +403,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       return;
     }
 
+    // The engine notifies the painter, which repaints only its own layer —
+    // the widget tree around it does not rebuild per simulation frame.
     _physicsEngine.update(dt);
-    if (mounted) {
-      setState(() {});
-    }
   }
 
   AppCategory? _selectedCategory;
@@ -415,12 +506,13 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       _lastPointerPos = event.localPosition;
       _lastPointerTime = now;
       _draggedBubble!.position = event.localPosition;
+      // Repaint immediately: a drag must follow the finger even when the
+      // simulation ticker is stopped.
+      _physicsEngine.markDirty();
     } else if (!_isDraggingApp) {
-      // Swiping up on background
-      final dy = event.delta.dy;
-      setState(() {
-        _dragOffset = (_dragOffset - dy).clamp(0.0, 600.0);
-      });
+      // Swiping up on background. The notifier drives the transform, so a
+      // finger drag does not rebuild the tree per pointer move.
+      _panelOffset.value = (_panelOffset.value - event.delta.dy).clamp(0.0, 600.0);
     }
   }
 
@@ -448,7 +540,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       _draggedBubble = null;
       _isDraggingApp = false;
     } else if (!_isDraggingApp) {
-      if (_dragOffset > 140.0) {
+      if (_panelOffset.value > 140.0) {
         // Anyone can swipe up to enter the launcher
         _unlock();
       } else {
@@ -499,7 +591,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       return;
     }
 
-    _slideAnimation = Tween<double>(begin: _dragOffset, end: 900.0).animate(
+    _slideAnimation = Tween<double>(begin: _panelOffset.value, end: 900.0).animate(
       CurvedAnimation(parent: _slideController, curve: Curves.easeInCubic),
     );
     await _slideController.forward(from: 0.0);
@@ -508,11 +600,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   }
 
   void _snapBack() {
-    _slideAnimation = Tween<double>(begin: _dragOffset, end: 0.0).animate(
+    _slideAnimation = Tween<double>(begin: _panelOffset.value, end: 0.0).animate(
       CurvedAnimation(parent: _slideController, curve: Curves.easeOutBack),
     );
     _slideController.forward(from: 0.0).then((_) {
-      _dragOffset = 0.0;
+      _panelOffset.value = 0.0;
     });
   }
 
@@ -587,6 +679,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   @override
   void dispose() {
     _disposed = true;
+    SemanticsBinding.instance.removeSemanticsEnabledListener(
+      _onSemanticsEnabledChanged,
+    );
+    _panelOffset.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _clockTimer.cancel();
     _turbulenceTimer?.cancel();
@@ -605,10 +701,6 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     final screenSize = MediaQuery.of(context).size;
     _ensurePhysicsInitialized(screenSize);
 
-    final currentOffset = _slideController.isAnimating ? _slideAnimation.value : _dragOffset;
-    final double unlockProgress = (currentOffset / 300.0).clamp(0.0, 1.0);
-    final double opacity = (1.0 - (unlockProgress * 0.85)).clamp(0.0, 1.0);
-
     final timeHour = _currentTime.hour.toString().padLeft(2, '0');
     final timeMinute = _currentTime.minute.toString().padLeft(2, '0');
     final dateFormatted =
@@ -617,11 +709,19 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     final isTabletop = widget.foldable.isTabletop;
     final isUnfolded = !widget.foldable.isFolded && screenSize.width > 550;
 
-    return Transform.translate(
-      offset: Offset(0, -currentOffset),
-      child: Opacity(
-        opacity: opacity,
-        child: Listener(
+    // Everything below this builder is built once per state change; only the
+    // transform and its opacity re-evaluate while the panel slides.
+    return ValueListenableBuilder<double>(
+      valueListenable: _panelOffset,
+      builder: (context, currentOffset, child) {
+        final double unlockProgress = (currentOffset / 300.0).clamp(0.0, 1.0);
+        final double opacity = (1.0 - (unlockProgress * 0.85)).clamp(0.0, 1.0);
+        return Transform.translate(
+          offset: Offset(0, -currentOffset),
+          child: Opacity(opacity: opacity, child: child),
+        );
+      },
+      child: Listener(
           behavior: HitTestBehavior.opaque,
           onPointerDown: _onPointerDown,
           onPointerMove: _onPointerMove,
@@ -666,16 +766,35 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                   ),
                 ),
 
-                // CustomPaint Canvas rendering bouncing apps
+                // CustomPaint canvas rendering bouncing apps. The boundary
+                // gives the physics layer its own repaint scope: simulation
+                // frames repaint this canvas alone, and HUD state changes
+                // never repaint the bubbles.
                 Positioned.fill(
-                  child: CustomPaint(
-                    painter: BouncingAppsPainter(
-                      physics: _physicsEngine,
-                      animationProgress: _lastElapsed.inMilliseconds / 1000.0,
-                      draggedBubble: _draggedBubble,
+                  child: RepaintBoundary(
+                    child: CustomPaint(
+                      painter: BouncingAppsPainter(
+                        physics: _physicsEngine,
+                        draggedBubble: _draggedBubble,
+                        textScaler: MediaQuery.textScalerOf(context),
+                      ),
                     ),
                   ),
                 ),
+
+                // Screen reader targets for the bubbles, which are painted into
+                // the canvas and would otherwise be unreachable — the same
+                // defect the galaxy home screen had. They are never wrapped in
+                // IgnorePointer: that sets isBlockingUserActions and would strip
+                // the tap action back off them. Each is a bare SizedBox, so it
+                // takes no touch and the panel gestures below still work.
+                if (_screenReaderActive)
+                  Positioned.fill(
+                    child: ListenableBuilder(
+                      listenable: _physicsEngine,
+                      builder: (context, _) => _buildBubbleSemantics(),
+                    ),
+                  ),
 
                 // Scrim: keeps the unlock cluster and gesture hints readable
                 // while bouncing bubbles keep moving behind them.
@@ -734,11 +853,21 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                               ],
                             ),
 
-                            // Interactive Shake / Scatter Button
-                            GestureDetector(
+                            // Interactive Shake / Scatter Button. It carried no
+                            // button trait, so a reader heard the word "SHAKE"
+                            // without being told it was actionable. The action
+                            // is declared here rather than left to the gesture
+                            // detector, so the node a reader lands on is the one
+                            // that carries both the label and the action.
+                            Semantics(
+                              container: true,
+                              button: true,
+                              label: 'Scatter apps',
                               onTap: () => _triggerShakeScatter(),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              child: GestureDetector(
+                                onTap: () => _triggerShakeScatter(),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                                 decoration: BoxDecoration(
                                   color: const Color(0x3300E5FF),
                                   borderRadius: BorderRadius.circular(14),
@@ -764,6 +893,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                                   ],
                                 ),
                               ),
+                            ),
                             ),
 
                             Row(
@@ -926,8 +1056,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
             ),
           ),
         ),
-      ),
-    );
+      );
   }
 
   Widget _quickActionCircle({

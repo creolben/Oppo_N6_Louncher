@@ -32,7 +32,22 @@ class Constellation {
     _lastAppCount = -1;
   }
 
-  void ensurePainters() {
+  /// The system text scale the cached title and badge were laid out at.
+  TextScaler _painterScaler = TextScaler.noScaling;
+
+  /// Lays out the cached painters for this constellation.
+  ///
+  /// [textScaler] is the ambient system text scale. The title and app-count
+  /// badge are words the user reads, so they follow it; the emblem glyph is
+  /// sized to the pod and deliberately does not.
+  void ensurePainters({TextScaler textScaler = TextScaler.noScaling}) {
+    if (_painterScaler != textScaler) {
+      _painterScaler = textScaler;
+      titlePainter = null;
+      countBadgePainter = null;
+      _lastAppCount = -1;
+    }
+
     titlePainter ??= TextPainter(
       text: TextSpan(
         text: name.toUpperCase(),
@@ -50,6 +65,7 @@ class Constellation {
         ),
       ),
       textDirection: TextDirection.ltr,
+      textScaler: textScaler,
     )..layout();
 
     if (_lastAppCount != apps.length || countBadgePainter == null) {
@@ -65,6 +81,7 @@ class Constellation {
           ),
         ),
         textDirection: TextDirection.ltr,
+        textScaler: textScaler,
       )..layout();
     }
 

@@ -126,6 +126,47 @@ void main() {
       final miss = engine.findBubbleAt(const Offset(50, 50));
       expect(miss, isNull);
     });
+
+    test('notifies listeners per simulation step so the canvas can repaint', () {
+      // The lock screen's canvas repaints from this notifier instead of the
+      // widget rebuilding every frame. If the engine stops notifying, the
+      // bubbles silently freeze while every test above still passes.
+      const size = Size(400, 800);
+      engine.initializeBubbles(apps: testApps, size: size);
+
+      var notifications = 0;
+      engine.addListener(() => notifications++);
+
+      engine.update(0.016);
+      expect(notifications, equals(1));
+
+      engine.update(0.016);
+      expect(notifications, equals(2));
+    });
+
+    test('notifies on a direct-manipulation repaint request', () {
+      const size = Size(400, 800);
+      engine.initializeBubbles(apps: testApps, size: size);
+
+      var notifications = 0;
+      engine.addListener(() => notifications++);
+
+      // A drag moves a bubble without stepping the simulation, so it needs its
+      // own repaint path — it must work even with the ticker stopped.
+      engine.markDirty();
+      expect(notifications, equals(1));
+    });
+
+    test('notifies when a shake scatters the field', () {
+      const size = Size(400, 800);
+      engine.initializeBubbles(apps: testApps, size: size);
+
+      var notifications = 0;
+      engine.addListener(() => notifications++);
+
+      engine.triggerShakeScatter(strength: 1.5);
+      expect(notifications, greaterThan(0));
+    });
   });
 
   group('CosmicLockScreen Widget Tests', () {

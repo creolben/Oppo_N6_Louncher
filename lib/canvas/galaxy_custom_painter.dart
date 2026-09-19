@@ -77,6 +77,10 @@ class GalaxyCustomPainter extends CustomPainter {
   final Offset? activeTouchScreenPoint;
   final AppEntry? focusedApp;
 
+  /// Ambient system text scale, so painted app names and constellation titles
+  /// grow with the setting the same way widget text does.
+  final TextScaler textScaler;
+
   // Statically allocated Paint objects
   static final Paint _bgPaint = Paint();
   static final Paint _nebulaPaint = Paint();
@@ -117,6 +121,7 @@ class GalaxyCustomPainter extends CustomPainter {
     this.activeSupernova,
     this.activeTouchScreenPoint,
     this.focusedApp,
+    this.textScaler = TextScaler.noScaling,
   }) : super(repaint: repaint);
 
   @override
@@ -302,7 +307,7 @@ class GalaxyCustomPainter extends CustomPainter {
     final double othersFade = (1.0 - maxOuterProgress * 1.5).clamp(0.0, 1.0);
 
     for (final c in constellations) {
-      c.ensurePainters();
+      c.ensurePainters(textScaler: textScaler);
       final double progress = c.expansionProgress;
       final bool isCore = c.id == 'core';
 
@@ -851,7 +856,7 @@ class GalaxyCustomPainter extends CustomPainter {
 
         final double halfSize = nodeSize / 2;
 
-        app.ensurePainters(halfSize);
+        app.ensurePainters(halfSize, textScaler: textScaler);
 
         final nodeRect = Rect.fromCenter(center: pos, width: nodeSize, height: nodeSize);
         final nodeRRect = RRect.fromRectAndRadius(nodeRect, Radius.circular(nodeSize * 0.30));
@@ -995,6 +1000,8 @@ class GalaxyCustomPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant GalaxyCustomPainter oldDelegate) {
-    return false;
+    // Repaints are driven by the repaint listenable, but a text-scale change
+    // arrives as a rebuild, and every painted label has to be laid out again.
+    return oldDelegate.textScaler != textScaler;
   }
 }

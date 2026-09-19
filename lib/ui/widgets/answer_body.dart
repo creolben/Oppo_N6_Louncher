@@ -88,6 +88,9 @@ class AnswerBody extends StatelessWidget {
     final segments = parseAnswerSegments(answer, sources);
 
     return RichText(
+      // Raw RichText defaults to no scaling, so answer prose ignored the
+      // system text size while every Text around it grew.
+      textScaler: MediaQuery.textScalerOf(context),
       text: TextSpan(
         style: const TextStyle(
           color: Color(0xFFE8ECF5),

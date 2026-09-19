@@ -36,7 +36,28 @@ class AppEntry {
   TextPainter? badgePainter;
   int _lastBadgeCount = -1;
 
-  void ensurePainters(double nodeRadius) {
+  /// The system text scale the cached label was laid out at.
+  TextScaler _painterScaler = TextScaler.noScaling;
+
+  /// Lays out the cached painters for this app.
+  ///
+  /// [textScaler] is the ambient system text scale: canvas labels are painted,
+  /// not laid out as widgets, so without it an app name stays at 1.0x while
+  /// every real `Text` on screen grows. The glyph used in place of a missing
+  /// icon is deliberately *not* scaled — it is sized to the node it sits in, and
+  /// scaling it would push it out of its bubble.
+  void ensurePainters(
+    double nodeRadius, {
+    TextScaler textScaler = TextScaler.noScaling,
+  }) {
+    if (_painterScaler != textScaler) {
+      // Relayout anything whose size depends on the scale.
+      _painterScaler = textScaler;
+      labelPainter = null;
+      badgePainter = null;
+      _lastBadgeCount = -1;
+    }
+
     labelPainter ??= TextPainter(
       text: TextSpan(
         text: label,
@@ -52,6 +73,7 @@ class AppEntry {
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
+      textScaler: textScaler,
     )..layout();
 
     if (decodedIcon == null) {
@@ -81,6 +103,7 @@ class AppEntry {
           ),
         ),
         textDirection: TextDirection.ltr,
+        textScaler: textScaler,
       )..layout();
     }
   }

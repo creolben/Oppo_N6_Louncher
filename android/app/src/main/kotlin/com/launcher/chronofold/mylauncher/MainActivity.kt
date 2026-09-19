@@ -43,6 +43,9 @@ class MainActivity : FlutterActivity() {
     private val SHAKE_CHANNEL = "com.launcher.chronofold/shake"
     private val FINGERPRINT_CHANNEL = "com.launcher.chronofold/fingerprint"
 
+    /** Edge length of the launcher icons sent to Dart. */
+    private val ICON_PIXELS = 96
+
     private val backgroundExecutor = Executors.newSingleThreadExecutor()
     private var sensorManager: SensorManager? = null
     private var hingeSensor: Sensor? = null
@@ -428,22 +431,31 @@ class MainActivity : FlutterActivity() {
         return appList
     }
 
+    /**
+     * Renders [drawable] into a launcher-sized PNG.
+     *
+     * Icons used to be sent at intrinsic size — for adaptive icons that is
+     * 432px on this device — which put tens of megabytes into a single
+     * platform-channel message and made the Dart side decode every icon at
+     * full size. The Dart layer already downscales to this size before drawing,
+     * so scaling here is lossless from the launcher's point of view and removes
+     * both the channel weight and the decode cost.
+     */
     private fun drawableToByteArray(drawable: Drawable): ByteArray {
-        val bitmap = if (drawable is BitmapDrawable && drawable.bitmap != null) {
-            drawable.bitmap
-        } else {
-            val width = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 96
-            val height = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 96
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val bitmap = Bitmap.createBitmap(ICON_PIXELS, ICON_PIXELS, Bitmap.Config.ARGB_8888)
+        try {
             val canvas = Canvas(bitmap)
             drawable.setBounds(0, 0, canvas.width, canvas.height)
             drawable.draw(canvas)
-            bitmap
-        }
 
-        val stream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.PNG, 90, stream)
-        return stream.toByteArray()
+            val stream = ByteArrayOutputStream()
+            // PNG is lossless, so the quality argument does nothing; the win is
+            // that the bitmap is already the size the launcher renders.
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            return stream.toByteArray()
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     /**

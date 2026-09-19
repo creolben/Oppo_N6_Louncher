@@ -16,6 +16,9 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
 
   static Stream<Map<String, dynamic>>? _shakeStream;
 
+  /// Edge length icons are decoded at, matching the native side's downscale.
+  static const int _iconPixels = 96;
+
   static VoidCallback? _onLockScreenListener;
   static VoidCallback? _onPackageChangeListener;
   static VoidCallback? _onHomeButtonListener;
@@ -104,6 +107,7 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
 
         if (rawApps != null && rawApps.isNotEmpty) {
           final List<AppEntry> apps = [];
+          final List<AppEntry> needsDecode = [];
           for (final raw in rawApps) {
             final map = Map<String, dynamic>.from(raw as Map);
             final String packageName = map['packageName'] as String? ?? '';
@@ -116,6 +120,10 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
             final category = _mapCategory(categoryInt, packageName, label);
             final accentColor = _getCategoryColor(category);
 
+            // An icon already decoded for this package is reused as-is: a
+            // package-change event must not re-decode the whole device.
+            final cachedIcon = _iconCache[packageName];
+
             final app = AppEntry(
               packageName: packageName,
               activityName: activityName,
@@ -123,15 +131,19 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
               isSystemApp: isSystemApp,
               category: category,
               iconBytes: iconBytes,
+              decodedIcon: cachedIcon,
               accentColor: accentColor,
             );
 
-            if (iconBytes != null) {
-              _decodeAppIcon(app);
+            if (iconBytes != null && cachedIcon == null) {
+              needsDecode.add(app);
             }
 
             apps.add(app);
           }
+
+          await _decodeIcons(needsDecode);
+          _pruneIconCache(apps);
           return apps;
         }
       } catch (e) {
@@ -143,19 +155,63 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return _generateMockApps();
   }
 
-  static Future<void> _decodeAppIcon(AppEntry app) async {
-    if (app.iconBytes == null) return;
+  /// Decoded icons by package name.
+  ///
+  /// Icons are the most expensive thing a scan produces, and a package-change
+  /// event used to re-decode every one of them. Keeping them here means only
+  /// genuinely new packages pay for a decode.
+  static final Map<String, ui.Image> _iconCache = {};
+
+  /// How many icon decodes run at once.
+  ///
+  /// Starting one per app produced a burst of 150+ concurrent codecs right
+  /// after the first frame; a small window bounds the CPU and memory spike
+  /// without serialising the whole scan.
+  static const int _iconDecodeWindow = 4;
+
+  /// Decodes [apps]' icons with a bounded window, caching what it produces.
+  static Future<void> _decodeIcons(List<AppEntry> apps) async {
+    if (apps.isEmpty) return;
+
+    var next = 0;
+    Future<void> worker() async {
+      while (next < apps.length) {
+        final app = apps[next++];
+        final image = await _decodeIconBytes(app.iconBytes);
+        if (image == null) continue;
+        app.decodedIcon = image;
+        _iconCache[app.packageName] = image;
+      }
+    }
+
+    await Future.wait([
+      for (int i = 0; i < _iconDecodeWindow && i < apps.length; i++) worker(),
+    ]);
+  }
+
+  static Future<ui.Image?> _decodeIconBytes(Uint8List? bytes) async {
+    if (bytes == null) return null;
     try {
       final codec = await ui.instantiateImageCodec(
-        app.iconBytes!,
-        targetWidth: 96,
-        targetHeight: 96,
+        bytes,
+        targetWidth: _iconPixels,
+        targetHeight: _iconPixels,
       );
       final frame = await codec.getNextFrame();
-      app.decodedIcon = frame.image;
+      return frame.image;
     } catch (e) {
-      debugPrint('Failed to decode icon for ${app.label}: $e');
+      debugPrint('Failed to decode an app icon: $e');
+      return null;
     }
+  }
+
+  /// Drops cached icons for packages that are no longer installed. Removing the
+  /// last reference is what lets the engine reclaim them; nothing is disposed
+  /// eagerly, because a widget still painting the previous list may hold one.
+  static void _pruneIconCache(List<AppEntry> apps) {
+    if (_iconCache.isEmpty) return;
+    final installed = {for (final app in apps) app.packageName};
+    _iconCache.removeWhere((packageName, _) => !installed.contains(packageName));
   }
 
   static Future<bool> authenticate({String? appName}) async {

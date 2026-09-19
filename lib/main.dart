@@ -327,7 +327,17 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                 return Stack(
                   children: [
                     // Main Launcher Content (Folded Cover Screen vs Unfolded Cosmic Galaxy)
-                    AnimatedSwitcher(
+                    //
+                    // The lock panel and both search surfaces cover this
+                    // content completely, so its tickers are muted until it is
+                    // visible again — an invisible 120Hz starfield behind an
+                    // opaque overlay is pure battery cost, and freezing it also
+                    // stops the search blur from re-filtering a moving
+                    // background every frame.
+                    TickerMode(
+                      enabled:
+                          !(_isLocked || _isSearchOpen || _isCometSearchOpen),
+                      child: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 320),
                       switchInCurve: Curves.easeOutCubic,
                       switchOutCurve: Curves.easeInCubic,
@@ -415,6 +425,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                     ),
                                   ],
                                 ),
+                    ),
                     ),
 
                     // Fullscreen Search HUD & Categorized Celestial Library

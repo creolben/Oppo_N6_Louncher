@@ -209,9 +209,10 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                           child: TextButton(
                             onPressed: widget.onOpenWebSearch,
                             style: TextButton.styleFrom(
-                              minimumSize: const Size(36, 36),
+                              // 48dp minimum; shrinkWrap was explicitly
+                              // opting out of it. The orb stays 22px.
+                              minimumSize: const Size(48, 48),
                               padding: EdgeInsets.zero,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               shape: const CircleBorder(),
                             ),
                             child: const Tooltip(
@@ -333,9 +334,11 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
     required String tooltip,
     required VoidCallback onTap,
   }) {
+    // 48dp, the Android minimum. The icon itself stays 19px, so this widens
+    // what a finger can hit without changing how the dock looks.
     return SizedBox(
-      width: 36,
-      height: 36,
+      width: 48,
+      height: 48,
       child: IconButton(
         icon: Icon(icon, color: color, size: 19),
         tooltip: tooltip,

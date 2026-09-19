@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import '../models/app_entry.dart';
 import '../models/constellation.dart';
@@ -66,13 +67,43 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
     widget.camera.addListener(_onCameraChange);
     _renderLoopTicker = createTicker(_onRenderTick);
-    _renderLoopTicker.start();
+
+    // A reader can be switched on while this screen is already up, and nothing
+    // else here rebuilds when that happens — without this the canvas would stay
+    // unreachable until the next unrelated rebuild.
+    SemanticsBinding.instance.addSemanticsEnabledListener(
+      _onSemanticsEnabledChanged,
+    );
   }
 
-  void _onCameraChange() {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Perpetual orbiting and twinkling is the point of this surface, but a user
+    // who turned animations off should get one still frame of it rather than a
+    // 120Hz loop they explicitly asked not to have.
+    _syncRenderLoop();
+  }
+
+  void _syncRenderLoop() {
+    final bool reduceMotion =
+        MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (reduceMotion) {
+      if (_renderLoopTicker.isActive) _renderLoopTicker.stop();
+      // Paint the resting arrangement once.
+      _requestRepaint();
+    } else if (!_renderLoopTicker.isActive) {
+      _renderLoopTicker.start();
+    }
+  }
+
+  /// Asks the canvas to repaint without advancing the simulation.
+  void _requestRepaint() {
     // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
     _paintRepaintNotifier.notifyListeners();
   }
+
+  void _onCameraChange() => _requestRepaint();
 
   void _generateWorldStarfield(int count) {
     _starfield.clear();
@@ -256,53 +287,14 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     // 1. Check if user tapped an active app
     final tappedApp = _hitTestApp(details.localPosition);
     if (tappedApp != null) {
-      HapticFeedback.mediumImpact();
-      _focusedApp = tappedApp;
-      _activeSupernova = SupernovaAnimation(
-        worldPosition: tappedApp.worldPosition,
-        color: tappedApp.accentColor,
-        startTime: _animationTime,
-      );
-
-      widget.onAppSelected?.call(tappedApp);
-
-      Future.delayed(const Duration(milliseconds: 300), () {
-        LauncherBridge.launchApp(tappedApp);
-      });
+      _activateApp(tappedApp);
       return;
     }
 
     // 2. Check if user tapped a constellation cluster hub
     final tappedConstellation = _hitTestConstellation(details.localPosition);
     if (tappedConstellation != null) {
-      HapticFeedback.lightImpact();
-      if (tappedConstellation.id == 'core') {
-        final anyOuterExpanded = widget.layoutEngine.constellations.any(
-          (c) => c.id != 'core' && (c.isExpanded || c.expansionProgress > 0.25),
-        );
-        if (anyOuterExpanded) {
-          widget.layoutEngine.expandOnly('core');
-          widget.camera.flyTo(Offset.zero, targetZoom: 1.25);
-        } else {
-          // Toggle center constellation between open and closed
-          final willExpand = !tappedConstellation.isExpanded;
-          tappedConstellation.isExpanded = willExpand;
-          if (willExpand) {
-            widget.camera.flyTo(Offset.zero, targetZoom: 1.25);
-          } else {
-            widget.camera.flyTo(Offset.zero, targetZoom: 1.05);
-          }
-        }
-      } else {
-        final willExpand = !tappedConstellation.isExpanded;
-        if (willExpand) {
-          widget.layoutEngine.expandOnly(tappedConstellation.id);
-          widget.camera.flyTo(tappedConstellation.center, targetZoom: 1.4);
-        } else {
-          tappedConstellation.isExpanded = false;
-          widget.camera.flyTo(Offset.zero, targetZoom: 1.05);
-        }
-      }
+      _activateConstellation(tappedConstellation);
       return;
     }
 
@@ -313,6 +305,52 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     );
     if (anyOuterExpanded) {
       widget.layoutEngine.collapseAllExceptCore();
+      widget.camera.flyTo(Offset.zero, targetZoom: 1.05);
+    }
+  }
+
+  /// Opens [app] — the single path shared by a tap on the canvas and a
+  /// TalkBack activation, so the two can never drift apart.
+  void _activateApp(AppEntry app) {
+    HapticFeedback.mediumImpact();
+    _focusedApp = app;
+    _activeSupernova = SupernovaAnimation(
+      worldPosition: app.worldPosition,
+      color: app.accentColor,
+      startTime: _animationTime,
+    );
+
+    widget.onAppSelected?.call(app);
+
+    Future.delayed(const Duration(milliseconds: 300), () {
+      LauncherBridge.launchApp(app);
+    });
+  }
+
+  /// Expands or collapses [constellation], the action a hub tap performs.
+  void _activateConstellation(Constellation constellation) {
+    HapticFeedback.lightImpact();
+    if (constellation.id == 'core') {
+      final anyOuterExpanded = widget.layoutEngine.constellations.any(
+        (c) => c.id != 'core' && (c.isExpanded || c.expansionProgress > 0.25),
+      );
+      if (anyOuterExpanded) {
+        widget.layoutEngine.expandOnly('core');
+        widget.camera.flyTo(Offset.zero, targetZoom: 1.25);
+      } else {
+        // Toggle center constellation between open and closed
+        final willExpand = !constellation.isExpanded;
+        constellation.isExpanded = willExpand;
+        widget.camera.flyTo(Offset.zero, targetZoom: willExpand ? 1.25 : 1.05);
+      }
+      return;
+    }
+
+    if (!constellation.isExpanded) {
+      widget.layoutEngine.expandOnly(constellation.id);
+      widget.camera.flyTo(constellation.center, targetZoom: 1.4);
+    } else {
+      constellation.isExpanded = false;
       widget.camera.flyTo(Offset.zero, targetZoom: 1.05);
     }
   }
@@ -337,10 +375,131 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
   @override
   void dispose() {
+    SemanticsBinding.instance.removeSemanticsEnabledListener(
+      _onSemanticsEnabledChanged,
+    );
     widget.camera.removeListener(_onCameraChange);
     _renderLoopTicker.dispose();
     _paintRepaintNotifier.dispose();
     super.dispose();
+  }
+
+  /// Whether a screen reader is running, i.e. whether the semantics layer is
+  /// worth building at all.
+  ///
+  /// Everything on this surface is painted into one canvas, so nothing is
+  /// reachable without explicit semantic nodes — but building a node per app on
+  /// every camera change would be per-frame work for users who cannot benefit
+  /// from it. Touch exploration is only meaningful when a reader is active.
+  bool get _screenReaderActive => SemanticsBinding.instance.semanticsEnabled;
+
+  void _onSemanticsEnabledChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Smallest focus rectangle a screen reader can reliably land on.
+  static const double _minSemanticTarget = 48.0;
+
+  static Rect _minTarget(Rect rect) {
+    if (rect.width >= _minSemanticTarget && rect.height >= _minSemanticTarget) {
+      return rect;
+    }
+    final center = rect.center;
+    final w = math.max(rect.width, _minSemanticTarget);
+    final h = math.max(rect.height, _minSemanticTarget);
+    return Rect.fromCenter(center: center, width: w, height: h);
+  }
+
+  /// The nodes a screen reader can reach, in the order the canvas presents
+  /// them: the constellation hubs, then the apps of the constellation that is
+  /// currently open — mirroring exactly what a sighted user can tap.
+  List<_SemanticTarget> _semanticTargets(Size size) {
+    final viewport = Offset.zero & size;
+    final targets = <_SemanticTarget>[];
+
+    final openConstellation = widget.layoutEngine.constellations
+        .where((c) => c.isExpanded)
+        .firstOrNull;
+
+    for (final constellation in widget.layoutEngine.constellations) {
+      final center = widget.camera.worldToScreen(constellation.center);
+      final hitRadius = (constellation.id == 'core' ? 70.0 : 45.0);
+      final rect = _minTarget(
+        Rect.fromCircle(
+          center: center,
+          radius: hitRadius * widget.camera.zoom,
+        ),
+      );
+      if (!rect.overlaps(viewport)) continue;
+
+      final int appCount = constellation.apps.length;
+      targets.add(
+        _SemanticTarget(
+          label: constellation.name,
+          hint: constellation.isExpanded
+              ? 'Open, $appCount apps. Double tap to close.'
+              : '$appCount apps. Double tap to open.',
+          rect: rect,
+          onTap: () => _activateConstellation(constellation),
+          onLongPress: widget.onConstellationLongPressed == null
+              ? null
+              : () => widget.onConstellationLongPressed!(constellation),
+        ),
+      );
+
+      // Only the open constellation's apps have distinct positions on screen;
+      // a collapsed one is a single hub, and reporting its apps would point a
+      // reader at the same spot several times.
+      if (constellation.id != openConstellation?.id) continue;
+
+      for (final app in constellation.apps) {
+        final appCenter = widget.camera.worldToScreen(app.worldPosition);
+        final appRect = _minTarget(
+          Rect.fromCircle(
+            center: appCenter,
+            radius: 32.0 * widget.camera.zoom,
+          ),
+        );
+        if (!appRect.overlaps(viewport)) continue;
+
+        targets.add(
+          _SemanticTarget(
+            label: app.label,
+            hint: 'Open app',
+            rect: appRect,
+            onTap: () => _activateApp(app),
+            onLongPress: widget.onAppLongPressed == null
+                ? null
+                : () => widget.onAppLongPressed!(app, appCenter),
+          ),
+        );
+      }
+    }
+
+    return targets;
+  }
+
+  Widget _buildSemanticsLayer(Size size) {
+    return Stack(
+      children: [
+        for (final target in _semanticTargets(size))
+          Positioned(
+            left: target.rect.left,
+            top: target.rect.top,
+            width: target.rect.width,
+            height: target.rect.height,
+            child: Semantics(
+              container: true,
+              button: true,
+              label: target.label,
+              hint: target.hint,
+              onTap: target.onTap,
+              onLongPress: target.onLongPress,
+              child: const SizedBox.expand(),
+            ),
+          ),
+      ],
+    );
   }
 
   @override
@@ -349,72 +508,117 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
       builder: (context, constraints) {
         widget.camera.updateViewportSize(constraints.biggest);
 
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapUp: _handleTapUp,
-          onLongPressStart: _handleLongPress,
-          onScaleStart: (details) {
-            _lastFocalPoint = details.localFocalPoint;
-            _lastScale = 1.0;
-            _accumulatedPanDy = 0.0;
-            _accumulatedPanDx = 0.0;
-            _magneticTouchWorld = widget.camera.screenToWorld(details.localFocalPoint);
-          },
-          onScaleUpdate: (details) {
-            if (_lastFocalPoint != null) {
-              final delta = details.localFocalPoint - _lastFocalPoint!;
-              _accumulatedPanDy += delta.dy;
-              _accumulatedPanDx += delta.dx;
-              widget.camera.applyPan(delta);
-              _lastFocalPoint = details.localFocalPoint;
-            }
-
-            if (details.scale != 1.0) {
-              final scaleDelta = details.scale / _lastScale;
-              widget.camera.applyScale(scaleDelta, details.localFocalPoint);
-              _lastScale = details.scale;
-            }
-
-            _magneticTouchWorld = widget.camera.screenToWorld(details.localFocalPoint);
-          },
-          onScaleEnd: (details) {
-            final vy = details.velocity.pixelsPerSecond.dy;
-            final vx = details.velocity.pixelsPerSecond.dx.abs();
-            final isFastSwipeDown = vy > 480 && vy > vx * 1.5;
-            final isIntentionalDragDown = _accumulatedPanDy > 140 && _accumulatedPanDy > _accumulatedPanDx.abs() * 2.0;
-
-            if ((isFastSwipeDown || isIntentionalDragDown) && widget.onSwipeDown != null) {
-              HapticFeedback.mediumImpact();
-              widget.onSwipeDown!();
-            } else {
-              widget.camera.onDragEnd(details.velocity);
-            }
-
-            _lastFocalPoint = null;
-            _lastScale = 1.0;
-            _accumulatedPanDy = 0.0;
-            _accumulatedPanDx = 0.0;
-            _magneticTouchWorld = null;
-          },
-          child: RepaintBoundary(
-            child: CustomPaint(
-              size: Size.infinite,
-              painter: GalaxyCustomPainter(
-                repaint: _paintRepaintNotifier,
-                camera: widget.camera,
-                constellations: widget.layoutEngine.constellations,
-                foldable: widget.foldable,
-                animationTime: _animationTime,
-                starfield: _starfield,
-                shootingStars: _shootingStars,
-                activeSupernova: _activeSupernova,
-                activeTouchScreenPoint: _lastFocalPoint,
-                focusedApp: _focusedApp,
-              ),
-            ),
+        return Semantics(
+          container: true,
+          explicitChildNodes: true,
+          child: Stack(
+            children: [
+              Positioned.fill(child: _buildCanvas()),
+              // These nodes exist for the screen reader only. They are not
+              // wrapped in IgnorePointer, because that would set
+              // isBlockingUserActions and strip the tap action back off them,
+              // leaving a reader able to hear an app but not open it. They
+              // absorb nothing on their own: each is a bare SizedBox, which is
+              // not hit-testable, so panning, zooming and dragging still belong
+              // to the canvas gestures underneath.
+              if (_screenReaderActive)
+                Positioned.fill(
+                  child: ListenableBuilder(
+                    listenable: widget.camera,
+                    builder: (context, _) =>
+                        _buildSemanticsLayer(constraints.biggest),
+                  ),
+                ),
+            ],
           ),
         );
       },
     );
   }
+
+  Widget _buildCanvas() {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapUp: _handleTapUp,
+      onLongPressStart: _handleLongPress,
+      onScaleStart: (details) {
+        _lastFocalPoint = details.localFocalPoint;
+        _lastScale = 1.0;
+        _accumulatedPanDy = 0.0;
+        _accumulatedPanDx = 0.0;
+        _magneticTouchWorld = widget.camera.screenToWorld(details.localFocalPoint);
+      },
+      onScaleUpdate: (details) {
+        if (_lastFocalPoint != null) {
+          final delta = details.localFocalPoint - _lastFocalPoint!;
+          _accumulatedPanDy += delta.dy;
+          _accumulatedPanDx += delta.dx;
+          widget.camera.applyPan(delta);
+          _lastFocalPoint = details.localFocalPoint;
+        }
+
+        if (details.scale != 1.0) {
+          final scaleDelta = details.scale / _lastScale;
+          widget.camera.applyScale(scaleDelta, details.localFocalPoint);
+          _lastScale = details.scale;
+        }
+
+        _magneticTouchWorld = widget.camera.screenToWorld(details.localFocalPoint);
+      },
+      onScaleEnd: (details) {
+        final vy = details.velocity.pixelsPerSecond.dy;
+        final vx = details.velocity.pixelsPerSecond.dx.abs();
+        final isFastSwipeDown = vy > 480 && vy > vx * 1.5;
+        final isIntentionalDragDown = _accumulatedPanDy > 140 && _accumulatedPanDy > _accumulatedPanDx.abs() * 2.0;
+
+        if ((isFastSwipeDown || isIntentionalDragDown) && widget.onSwipeDown != null) {
+          HapticFeedback.mediumImpact();
+          widget.onSwipeDown!();
+        } else {
+          widget.camera.onDragEnd(details.velocity);
+        }
+
+        _lastFocalPoint = null;
+        _lastScale = 1.0;
+        _accumulatedPanDy = 0.0;
+        _accumulatedPanDx = 0.0;
+        _magneticTouchWorld = null;
+      },
+      child: RepaintBoundary(
+        child: CustomPaint(
+          size: Size.infinite,
+          painter: GalaxyCustomPainter(
+            repaint: _paintRepaintNotifier,
+            textScaler: MediaQuery.textScalerOf(context),
+            camera: widget.camera,
+            constellations: widget.layoutEngine.constellations,
+            foldable: widget.foldable,
+            animationTime: _animationTime,
+            starfield: _starfield,
+            shootingStars: _shootingStars,
+            activeSupernova: _activeSupernova,
+            activeTouchScreenPoint: _lastFocalPoint,
+            focusedApp: _focusedApp,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One focusable point on the galaxy canvas for a screen reader.
+class _SemanticTarget {
+  final String label;
+  final String hint;
+  final Rect rect;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  const _SemanticTarget({
+    required this.label,
+    required this.hint,
+    required this.rect,
+    required this.onTap,
+    this.onLongPress,
+  });
 }

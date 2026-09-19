@@ -62,9 +62,14 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
       _ownsCamera = true;
     }
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        setState(() => _now = DateTime.now());
+      // The header renders hours and minutes only: repaint when the visible
+      // minute rolls over, as the cover and lock screens already do, instead
+      // of rebuilding the whole cockpit once a second.
+      final now = DateTime.now();
+      if (!mounted || (now.minute == _now.minute && now.hour == _now.hour)) {
+        return;
       }
+      setState(() => _now = now);
     });
   }
 
@@ -284,35 +289,41 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           ),
           const SizedBox(height: 8),
 
-          // Quick System Search Trigger Pill
-          GestureDetector(
-            onTap: widget.onOpenSearch,
-            child: Container(
-              width: 270,
-              height: 36,
-              decoration: BoxDecoration(
-                color: const Color(0xFF141C34).withValues(alpha: 0.85),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0x4464B5F6), width: 1.0),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: Row(
-                children: [
-                  const Icon(Icons.search_rounded, color: Color(0xFF00E5FF), size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Search galaxy applications...',
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.5),
-                        fontSize: 12,
+          // Quick System Search Trigger Pill. 48dp tall for the Android touch
+          // minimum, and it carries a label: it was a bare GestureDetector, so
+          // a screen reader had nothing to focus here at all.
+          Semantics(
+            button: true,
+            label: 'Search apps',
+            child: GestureDetector(
+              onTap: widget.onOpenSearch,
+              child: Container(
+                width: 270,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF141C34).withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0x4464B5F6), width: 1.0),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Row(
+                  children: [
+                    const Icon(Icons.search_rounded, color: Color(0xFF00E5FF), size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Search galaxy applications...',
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.5),
+                          fontSize: 12,
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
+          ),
           ),
         ],
       ),
@@ -469,9 +480,11 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
       ),
       child: Column(
         children: [
-          // Sector Selector Chips Row
+          // Sector Selector Chips Row. Tall enough for the 48dp touch minimum;
+          // a fixed 36 also clipped these chips once the system font scale
+          // grew the label.
           SizedBox(
-            height: 36,
+            height: 48,
             child: ListView(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),

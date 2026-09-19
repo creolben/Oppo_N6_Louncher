@@ -30,8 +30,9 @@ abstract final class CoverStyle {
   static const double tileRadius = 14;
   static const double dockRadius = 24;
 
-  /// Minimum comfortable touch target for a control on the cover panel.
-  static const double touchTarget = 44;
+  /// Minimum touch target for a control on the cover panel: 48dp, the
+  /// Android baseline, not a round number below it.
+  static const double touchTarget = 48;
 
   /// Height reserved below the scrolling body for the floating cockpit dock.
   static const double dockClearance = 118;
@@ -93,7 +94,22 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 4),
-    )..repeat(reverse: true);
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The stardust breathing is ambient, not informative: honor the system
+    // "remove animations" setting by resting on a single frame.
+    final bool reduceMotion =
+        MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (reduceMotion) {
+      if (_pulseController.isAnimating) _pulseController.stop();
+      _pulseController.value = 0.5;
+    } else if (!_pulseController.isAnimating) {
+      _pulseController.repeat(reverse: true);
+    }
   }
 
   @override
@@ -159,11 +175,15 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             ),
           ),
 
-          // 2. Ambient Stardust Starfield Background
+          // 2. Ambient Stardust Starfield Background. The boundary keeps the
+          // breathing pulse repainting this layer only, instead of dragging
+          // the whole cover subtree (including the scrollable body) with it.
           Positioned.fill(
-            child: CustomPaint(
-              painter: _CoverStardustPainter(
-                animation: _pulseController,
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: _CoverStardustPainter(
+                  animation: _pulseController,
+                ),
               ),
             ),
           ),
@@ -402,7 +422,8 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             onTap: widget.onOpenSearch,
             borderRadius: BorderRadius.circular(23),
             child: Container(
-              height: 46,
+              // 48dp, not 46: it measured 2dp under the Android minimum.
+              height: CoverStyle.touchTarget,
               padding: const EdgeInsets.symmetric(horizontal: 15),
               decoration: BoxDecoration(
                 color: const Color(0x2E10162A),
@@ -580,7 +601,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(
         minWidth: 40,
-        minHeight: 40,
+        minHeight: 48,
       ),
       tooltip: tooltip,
       onPressed: onPressed,
@@ -644,7 +665,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             onTap: onCreate,
             borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
             child: Container(
-              constraints: const BoxConstraints(minHeight: 40),
+              constraints: const BoxConstraints(minHeight: 48),
               padding: const EdgeInsets.symmetric(horizontal: 12),
               alignment: Alignment.center,
               decoration: BoxDecoration(
@@ -699,7 +720,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               curve: Curves.easeOutCubic,
-              constraints: const BoxConstraints(minHeight: 40),
+              constraints: const BoxConstraints(minHeight: 48),
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
                 color: isSelected

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -60,6 +61,23 @@ class _SearchOverlayState extends State<SearchOverlay> {
   bool _filterHiddenOnly = false;
   bool _isGridView = true;
   String? _activeScrubLetter;
+
+  /// Clears the floating scrub letter after a beat.
+  Timer? _scrubFeedbackTimer;
+
+  /// Hit corridor for the A-Z rail. The visible rail is ~20dp wide; the touch
+  /// area is the Android 48dp minimum.
+  static const double _scrubberHitWidth = 48;
+
+  /// Height of one letter row in the rail, and therefore the scrub step.
+  /// Small enough that 27 rows plus the frame always fit the overlay, which
+  /// keeps the drag mapping exact instead of guessing at a fitted row height.
+  static const double _scrubRowHeight = 12;
+
+  /// Padding and hairline border of the rail's frame. Both are part of the
+  /// offset a drag position has to be measured against.
+  static const double _scrubberPadV = 4;
+  static const double _scrubberBorder = 0.8;
 
   static const List<String> _alphabet = [
     '#', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
@@ -172,6 +190,32 @@ class _SearchOverlayState extends State<SearchOverlay> {
     return widget.allApps.where((a) => !hiddenList.contains(a.packageName) && a.category == item.category).length;
   }
 
+  /// A bar height that follows the system text scale.
+  ///
+  /// Scroll views need a bounded cross-axis, so these rows cannot simply use a
+  /// min-height; scaling the height is what keeps their labels from clipping
+  /// when the user turns the font up. Bounded, so a huge scale cannot push the
+  /// list off the screen.
+  static double _scaledBarHeight(BuildContext context, double base) {
+    final double factor =
+        MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.8);
+    return base * factor;
+  }
+
+  /// Maps a drag on the rail to a letter, so scrubbing never needs a precise
+  /// hit on a 9px glyph.
+  void _scrubToLocalY(double localY) {
+    final double rowsHeight = _alphabet.length * _scrubRowHeight;
+    if (rowsHeight <= 0) return;
+    // localY is relative to the rail's frame, so step past its border and
+    // padding to reach the first row.
+    final double withinRows = localY - _scrubberPadV - _scrubberBorder;
+    final int index = (withinRows / rowsHeight * _alphabet.length)
+        .floor()
+        .clamp(0, _alphabet.length - 1);
+    _jumpToLetter(_alphabet[index]);
+  }
+
   void _jumpToLetter(String letter) {
     final apps = _filteredApps;
     if (apps.isEmpty) return;
@@ -210,7 +254,10 @@ class _SearchOverlayState extends State<SearchOverlay> {
         curve: Curves.easeOutCubic,
       );
 
-      Future.delayed(const Duration(milliseconds: 800), () {
+      // Cancellable, and cancelled on dispose: a fire-and-forget delay here
+      // outlived the widget and stranded a timer past teardown.
+      _scrubFeedbackTimer?.cancel();
+      _scrubFeedbackTimer = Timer(const Duration(milliseconds: 800), () {
         if (mounted && _activeScrubLetter == letter) {
           setState(() => _activeScrubLetter = null);
         }
@@ -271,6 +318,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
 
   @override
   void dispose() {
+    _scrubFeedbackTimer?.cancel();
     _controller.dispose();
     _focusNode.dispose();
     _scrollController.dispose();
@@ -296,7 +344,8 @@ class _SearchOverlayState extends State<SearchOverlay> {
                   children: [
                     Expanded(
                       child: Container(
-                        height: 50,
+                        // Grows with the system font instead of clipping it.
+                        constraints: const BoxConstraints(minHeight: 50),
                         decoration: BoxDecoration(
                           color: const Color(0xFF141A30).withValues(alpha: 0.90),
                           borderRadius: BorderRadius.circular(25),
@@ -378,9 +427,11 @@ class _SearchOverlayState extends State<SearchOverlay> {
                 ),
               ),
 
-              // Category Sector Filter Bar
+              // Category Sector Filter Bar. A fixed 44 clipped the chip labels
+              // as soon as the system font grew them, and a horizontal list
+              // needs a bounded height, so the bar is sized from the scale.
               SizedBox(
-                height: 44,
+                height: _scaledBarHeight(context, 48),
                 child: Builder(builder: (context) {
                   final categories = _availableCategories;
                   return ListView.separated(
@@ -554,47 +605,74 @@ class _SearchOverlayState extends State<SearchOverlay> {
                             ? _buildGridView(filtered)
                             : _buildListView(filtered)),
 
-                    // A-Z Scrubber Rail on right edge
+                    // A-Z Scrubber Rail on right edge.
+                    //
+                    // One drag surface rather than 27 ~13px taps: the whole
+                    // rail maps a vertical position to a letter, so a finger
+                    // can scrub without aiming, and the corridor is 48dp wide
+                    // for the Android touch minimum while the visible rail
+                    // stays narrow. Letters stay individually tappable, so a
+                    // screen reader keeps letter-level buttons.
                     if (filtered.isNotEmpty)
                       Positioned(
-                        right: 2,
+                        right: 0,
                         top: 4,
                         bottom: 4,
+                        width: _scrubberHitWidth,
                         child: Center(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-                            decoration: BoxDecoration(
-                              color: const Color(0x330C1020),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: const Color(0x1800E5FF),
-                                width: 0.8,
-                              ),
-                            ),
-                            child: SingleChildScrollView(
-                              physics: const NeverScrollableScrollPhysics(),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: _alphabet.map((letter) {
-                                  final isActive = _activeScrubLetter == letter;
-                                  return GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTap: () => _jumpToLetter(letter),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(vertical: 1.0, horizontal: 3.5),
-                                      child: Text(
-                                        letter,
-                                        style: TextStyle(
-                                          color: isActive
-                                              ? const Color(0xFF00E5FF)
-                                              : Colors.white.withValues(alpha: 0.45),
-                                          fontSize: 9.0,
-                                          fontWeight: isActive ? FontWeight.bold : FontWeight.w500,
-                                        ),
-                                      ),
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTapDown: (d) => _scrubToLocalY(d.localPosition.dy),
+                            onVerticalDragUpdate: (d) =>
+                                _scrubToLocalY(d.localPosition.dy),
+                            child: SizedBox(
+                              width: _scrubberHitWidth,
+                              child: Center(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: _scrubberPadV, horizontal: 2),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0x330C1020),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: const Color(0x1800E5FF),
+                                      width: _scrubberBorder,
                                     ),
-                                  );
-                                }).toList(),
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: _alphabet.map((letter) {
+                                      final isActive =
+                                          _activeScrubLetter == letter;
+                                      return GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: () => _jumpToLetter(letter),
+                                        child: SizedBox(
+                                          height: _scrubRowHeight,
+                                          child: Center(
+                                            child: Text(
+                                              letter,
+                                              style: TextStyle(
+                                                color: isActive
+                                                    ? const Color(0xFF00E5FF)
+                                                    : Colors.white
+                                                        .withValues(alpha: 0.45),
+                                                fontSize: 9.0,
+                                                // Pin the line box so a row is
+                                                // exactly _scrubRowHeight and
+                                                // the drag mapping stays true.
+                                                height: 1.0,
+                                                fontWeight: isActive
+                                                    ? FontWeight.bold
+                                                    : FontWeight.w500,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                ),
                               ),
                             ),
                           ),

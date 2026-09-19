@@ -80,7 +80,12 @@ class CosmicRipple {
 
 /// Physics engine governing 2D circular collisions, boundary bounces,
 /// ambient cosmic drifts, and explosive shake dispersion.
-class BouncingPhysicsEngine {
+/// Physics simulation for the lock screen's bouncing app bubbles.
+///
+/// A [ChangeNotifier] so the painter can repaint from it directly
+/// (`CustomPainter(repaint: engine)`): the widget tree stays still while the
+/// canvas repaints, instead of the whole lock screen rebuilding per frame.
+class BouncingPhysicsEngine extends ChangeNotifier {
   final List<AppBubble> bubbles = [];
   final List<BubbleSpark> sparks = [];
   final List<CosmicRipple> ripples = [];
@@ -155,11 +160,14 @@ class BouncingPhysicsEngine {
         ),
       );
     }
+
+    notifyListeners();
   }
 
   void resize(Size newSize, {EdgeInsets? padding}) {
     _viewportSize = newSize;
     if (padding != null) _safePadding = padding;
+    notifyListeners();
   }
 
   void update(double dt) {
@@ -310,6 +318,9 @@ class BouncingPhysicsEngine {
       ripple.update(clampedDt);
       if (ripple.isDead) ripples.removeAt(i);
     }
+
+    // The painter listens to this and repaints only its own layer.
+    notifyListeners();
   }
 
   /// Explosively scatter all app bubbles outwards when the phone is shaken.
@@ -365,7 +376,16 @@ class BouncingPhysicsEngine {
       // Spawn trail of sparks per bubble
       _spawnCollisionSparks(bubble.position, bubble.color, const Color(0xFF00E5FF), 1.0, count: 5);
     }
+
+    notifyListeners();
   }
+
+  /// Asks the painter to redraw without simulating a step.
+  ///
+  /// Direct manipulation (a drag moving a bubble) changes what is on screen
+  /// without going through [update], so it has to repaint even when the
+  /// simulation ticker is stopped for reduce-motion.
+  void markDirty() => notifyListeners();
 
   AppBubble? findBubbleAt(Offset screenPos) {
     for (int i = bubbles.length - 1; i >= 0; i--) {

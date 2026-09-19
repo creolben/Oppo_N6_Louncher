@@ -5,10 +5,17 @@ import 'bouncing_physics_engine.dart';
 
 /// High-performance CustomPainter rendering cosmic glassmorphic bouncing app spheres,
 /// constellation filaments, impact contact sparks, and shake shockwaves.
+///
+/// Repaints are driven by the physics engine's [ChangeNotifier] (`repaint:
+/// physics`), so a simulation frame costs one canvas repaint — not a rebuild
+/// of the lock screen widget tree around it.
 class BouncingAppsPainter extends CustomPainter {
   final BouncingPhysicsEngine physics;
-  final double animationProgress; // Ticker driver
   final AppBubble? draggedBubble;
+
+  /// Ambient system text scale, so painted app labels grow with the setting the
+  /// same way widget text does.
+  final TextScaler textScaler;
 
   // Statically allocated Paint objects to prevent GC pressure at 60/120 FPS
   static final Paint _filamentPaint = Paint()
@@ -39,9 +46,9 @@ class BouncingAppsPainter extends CustomPainter {
 
   BouncingAppsPainter({
     required this.physics,
-    required this.animationProgress,
     this.draggedBubble,
-  });
+    this.textScaler = TextScaler.noScaling,
+  }) : super(repaint: physics);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -270,7 +277,7 @@ class BouncingAppsPainter extends CustomPainter {
 
   void _drawAppLabel(Canvas canvas, AppBubble bubble) {
     final app = bubble.app;
-    app.ensurePainters(bubble.radius);
+    app.ensurePainters(bubble.radius, textScaler: textScaler);
 
     if (app.labelPainter != null) {
       final double labelX = bubble.position.dx - (app.labelPainter!.width / 2);
@@ -314,6 +321,11 @@ class BouncingAppsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant BouncingAppsPainter oldDelegate) {
-    return true; // Continuously animated via physics ticker
+    // Simulation frames arrive through the engine's repaint listenable, so a
+    // rebuild only needs to repaint when what the painter reads from the tree
+    // actually changed.
+    return oldDelegate.draggedBubble != draggedBubble ||
+        oldDelegate.physics != physics ||
+        oldDelegate.textScaler != textScaler;
   }
 }
