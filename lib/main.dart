@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'models/app_entry.dart';
+import 'models/constellation.dart';
 import 'core/launcher_bridge.dart';
 import 'core/foldable_controller.dart';
 import 'core/galaxy_layout_engine.dart';
@@ -10,10 +11,18 @@ import 'canvas/galaxy_interactive_canvas.dart';
 import 'ui/widgets/foldable_cockpit_bar.dart';
 import 'ui/widgets/search_overlay.dart';
 import 'ui/widgets/app_action_dialog.dart';
+import 'ui/widgets/constellation_editor_modal.dart';
+import 'ui/widgets/create_constellation_modal.dart';
+import 'core/galaxy_storage_service.dart';
 import 'features/lockscreen/cosmic_lock_screen.dart';
+import 'ui/screens/folded_cover_screen.dart';
+import 'ui/screens/tabletop_cockpit_view.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -52,7 +61,8 @@ class ChronoFoldHomeScreen extends StatefulWidget {
   State<ChronoFoldHomeScreen> createState() => _ChronoFoldHomeScreenState();
 }
 
-class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
+class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
+    with WidgetsBindingObserver {
   late final FoldableController _foldable;
   late final CameraController _camera;
   late final GalaxyLayoutEngine _layoutEngine;
@@ -60,20 +70,89 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
   List<AppEntry> _apps = [];
   bool _isLoading = true;
   bool _isSearchOpen = false;
-  bool _isLocked = false;
+  bool _isLocked = true;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _foldable = FoldableController();
     _camera = CameraController();
     _layoutEngine = GalaxyLayoutEngine();
 
+    LauncherBridge.setScreenLockListener(() {
+      if (mounted) {
+        setState(() => _isLocked = true);
+      }
+    });
+
+    LauncherBridge.setPackageChangeListener(() {
+      if (mounted) {
+        _loadApplications();
+      }
+    });
+
+    LauncherBridge.setHomeButtonListener(() {
+      if (mounted) {
+        if (_isSearchOpen) {
+          setState(() => _isSearchOpen = false);
+        }
+        _camera.resetView();
+      }
+    });
+
     _loadApplications();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      if (mounted) {
+        setState(() => _isLocked = true);
+      }
+    }
+  }
+
+
   Future<void> _loadApplications() async {
     final apps = await LauncherBridge.getInstalledApps();
+    
+    // Load persisted galaxy configuration
+    final config = await GalaxyStorageService.loadConfig();
+    if (config.isNotEmpty) {
+      final customList = (config['customConstellations'] ?? config['customGalaxies']) as List?;
+      if (customList != null) {
+        for (final raw in customList) {
+          if (raw is Map<String, dynamic>) {
+            final customConfig = CustomConstellationConfig.fromJson(raw);
+            _layoutEngine.createCustomConstellation(
+              id: customConfig.id,
+              name: customConfig.name,
+              primaryColor: Color(customConfig.primaryColorValue),
+              emblemIcon: customConfig.icon,
+              packageNames: customConfig.packageNames,
+            );
+          }
+        }
+      }
+      if (config.containsKey('coreAppPackageNames') && config['coreAppPackageNames'] is List) {
+        final corePkgs = List<String>.from(config['coreAppPackageNames'] as List);
+        _layoutEngine.setCorePackageNames(corePkgs);
+      }
+      if (config.containsKey('constellationAppOverrides') && config['constellationAppOverrides'] is Map) {
+        final rawOverrides = config['constellationAppOverrides'] as Map<String, dynamic>;
+        for (final entry in rawOverrides.entries) {
+          if (entry.value is List) {
+            _layoutEngine.constellationAppOverrides[entry.key] = List<String>.from(entry.value as List);
+          }
+        }
+      }
+      if (config.containsKey('hiddenPackageNames') && config['hiddenPackageNames'] is List) {
+        final hiddenPkgs = List<String>.from(config['hiddenPackageNames'] as List);
+        _layoutEngine.setHiddenPackageNames(hiddenPkgs);
+      }
+    }
+
     _layoutEngine.assignApps(apps);
     if (mounted) {
       setState(() {
@@ -91,7 +170,11 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
       barrierColor: Colors.transparent,
       transitionDuration: const Duration(milliseconds: 240),
       pageBuilder: (context, anim1, anim2) {
-        return AppActionDialog(app: app);
+        return AppActionDialog(
+          app: app,
+          layoutEngine: _layoutEngine,
+          onActionCompleted: () => setState(() {}),
+        );
       },
       transitionBuilder: (context, anim, secondaryAnim, child) {
         return FadeTransition(
@@ -107,8 +190,71 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
     );
   }
 
+  void _openConstellationEditorModal(Constellation constellation) {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'ConstellationEditor',
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 260),
+      pageBuilder: (context, anim1, anim2) {
+        return ConstellationEditorModal(
+          constellation: constellation,
+          layoutEngine: _layoutEngine,
+          allApps: _apps,
+          onUpdated: () => setState(() {}),
+        );
+      },
+      transitionBuilder: (context, anim, secondaryAnim, child) {
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.9, end: 1.0).animate(
+              CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
+            ),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+
+  void _openCenterConstellationEditorModal() {
+    final core = _layoutEngine.constellations.firstWhere((c) => c.id == 'core');
+    _openConstellationEditorModal(core);
+  }
+
+  void _openCreateConstellationModal() {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'CreateConstellation',
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 260),
+      pageBuilder: (context, anim1, anim2) {
+        return CreateConstellationModal(
+          layoutEngine: _layoutEngine,
+          allApps: _apps,
+          onCreated: () => setState(() {}),
+        );
+      },
+      transitionBuilder: (context, anim, secondaryAnim, child) {
+        return FadeTransition(
+          opacity: CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
+          child: ScaleTransition(
+            scale: Tween<double>(begin: 0.9, end: 1.0).animate(
+              CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
+            ),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _foldable.dispose();
     _camera.dispose();
     super.dispose();
@@ -118,71 +264,139 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen> {
   Widget build(BuildContext context) {
     _foldable.updateFromMediaQuery(context);
 
-    return Scaffold(
-      body: _isLoading
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_isSearchOpen) {
+          setState(() => _isSearchOpen = false);
+        } else {
+          _camera.resetView();
+        }
+      },
+      child: Scaffold(
+        body: _isLoading
           ? const Center(
               child: CircularProgressIndicator(
                 color: Color(0xFF00E5FF),
                 strokeWidth: 2.0,
               ),
             )
-          : Stack(
-              children: [
-                // 1. Kinetic Galaxy Canvas
-                Positioned.fill(
-                  child: GalaxyInteractiveCanvas(
-                    apps: _apps,
-                    foldable: _foldable,
-                    camera: _camera,
-                    layoutEngine: _layoutEngine,
-                    onAppLongPressed: _openAppLongPressDialog,
-                  ),
-                ),
+          : ListenableBuilder(
+              listenable: _foldable,
+              builder: (context, _) {
+                return Stack(
+                  children: [
+                    // Main Launcher Content (Folded Cover Screen vs Unfolded Cosmic Galaxy)
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 320),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) {
+                        return FadeTransition(
+                          opacity: animation,
+                          child: child,
+                        );
+                      },
+                      child: _foldable.isFolded
+                          ? FoldedCoverScreen(
+                              key: const ValueKey('folded_cover_screen'),
+                              apps: _apps,
+                              foldable: _foldable,
+                              layoutEngine: _layoutEngine,
+                              onOpenSearch: () => setState(() => _isSearchOpen = true),
+                              onOpenSettings: () => LauncherBridge.openHomeSettings(),
+                              onLock: () => setState(() => _isLocked = true),
+                              onAppLongPressed: _openAppLongPressDialog,
+                              onConstellationLongPressed: _openConstellationEditorModal,
+                              onCreateConstellation: _openCreateConstellationModal,
+                              onEditCore: _openCenterConstellationEditorModal,
+                            )
+                          : _foldable.isTabletop
+                              ? TabletopCockpitView(
+                                  key: const ValueKey('tabletop_cockpit_view'),
+                                  apps: _apps,
+                                  foldable: _foldable,
+                                  layoutEngine: _layoutEngine,
+                                  onOpenSearch: () => setState(() => _isSearchOpen = true),
+                                  onOpenSettings: () => LauncherBridge.openHomeSettings(),
+                                  onLock: () => setState(() => _isLocked = true),
+                                  onAppLongPressed: _openAppLongPressDialog,
+                                  onConstellationLongPressed: _openConstellationEditorModal,
+                                  onCreateConstellation: _openCreateConstellationModal,
+                                  onEditCore: _openCenterConstellationEditorModal,
+                                )
+                              : Stack(
+                                  key: const ValueKey('unfolded_galaxy_screen'),
+                                  children: [
+                                    // 1. Kinetic Galaxy Canvas
+                                    Positioned.fill(
+                                      child: GalaxyInteractiveCanvas(
+                                        apps: _apps,
+                                        foldable: _foldable,
+                                        camera: _camera,
+                                        layoutEngine: _layoutEngine,
+                                        onAppLongPressed: _openAppLongPressDialog,
+                                        onConstellationLongPressed: _openConstellationEditorModal,
+                                        onSwipeDown: () => setState(() => _isSearchOpen = true),
+                                      ),
+                                    ),
 
-                // 2. Cosmic HUD Header (Clock, Date & Posture Telemetry)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: CosmicHeaderHud(foldable: _foldable),
-                ),
+                                    // 2. Cosmic HUD Header (Clock, Date & Posture Telemetry)
+                                    Positioned(
+                                      top: 0,
+                                      left: 0,
+                                      right: 0,
+                                      child: CosmicHeaderHud(foldable: _foldable),
+                                    ),
 
-                // 3. Ergonomic Bottom Cockpit Bar
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: FoldableCockpitBar(
-                    foldable: _foldable,
-                    camera: _camera,
-                    layoutEngine: _layoutEngine,
-                    onOpenSearch: () => setState(() => _isSearchOpen = true),
-                    onOpenSettings: () => LauncherBridge.openHomeSettings(),
-                    onLock: () => setState(() => _isLocked = true),
-                  ),
-                ),
-
-                // 4. Fullscreen Search HUD
-                if (_isSearchOpen)
-                  Positioned.fill(
-                    child: SearchOverlay(
-                      allApps: _apps,
-                      camera: _camera,
-                      onClose: () => setState(() => _isSearchOpen = false),
+                                    // 3. Ergonomic Bottom Cockpit Bar
+                                    Positioned(
+                                      bottom: 0,
+                                      left: 0,
+                                      right: 0,
+                                      child: FoldableCockpitBar(
+                                        foldable: _foldable,
+                                        camera: _camera,
+                                        layoutEngine: _layoutEngine,
+                                        onOpenSearch: () => setState(() => _isSearchOpen = true),
+                                        onOpenSettings: () => LauncherBridge.openHomeSettings(),
+                                        onLock: () => setState(() => _isLocked = true),
+                                        onCreateConstellation: _openCreateConstellationModal,
+                                        onEditCore: _openCenterConstellationEditorModal,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                     ),
-                  ),
 
-                // 5. Celestial Foldable Lock Screen
-                if (_isLocked)
-                  Positioned.fill(
-                    child: CosmicLockScreen(
-                      foldable: _foldable,
-                      apps: _apps,
-                      onUnlock: () => setState(() => _isLocked = false),
-                    ),
-                  ),
-              ],
-            ),
+                    // Fullscreen Search HUD & Categorized Celestial Library
+                    if (_isSearchOpen)
+                      Positioned.fill(
+                        child: SearchOverlay(
+                          allApps: _apps,
+                          camera: _camera,
+                          layoutEngine: _layoutEngine,
+                          onAppLongPressed: _openAppLongPressDialog,
+                          onClose: () => setState(() => _isSearchOpen = false),
+                          onOpenSettings: () => LauncherBridge.openHomeSettings(),
+                        ),
+                      ),
+
+                    // Celestial Foldable Lock Screen
+                    if (_isLocked)
+                      Positioned.fill(
+                        child: CosmicLockScreen(
+                          foldable: _foldable,
+                          apps: _apps,
+                          onUnlock: () => setState(() => _isLocked = false),
+                        ),
+                      ),
+                  ],
+                  );
+                },
+              ),
+      ),
     );
   }
 }

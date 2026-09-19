@@ -2,13 +2,19 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../../models/app_entry.dart';
 import '../../core/launcher_bridge.dart';
+import '../../core/galaxy_storage_service.dart';
+import '../../core/galaxy_layout_engine.dart';
 
 class AppActionDialog extends StatelessWidget {
   final AppEntry app;
+  final GalaxyLayoutEngine? layoutEngine;
+  final VoidCallback? onActionCompleted;
 
   const AppActionDialog({
     super.key,
     required this.app,
+    this.layoutEngine,
+    this.onActionCompleted,
   });
 
   @override
@@ -85,6 +91,80 @@ class AppActionDialog extends StatelessWidget {
                     LauncherBridge.launchApp(app);
                   },
                 ),
+
+                // Center Constellation Pin/Unpin
+                if (layoutEngine != null) ...[
+                  Builder(builder: (context) {
+                    final core = layoutEngine!.constellations.firstWhere((c) => c.id == 'core');
+                    final isInCore = core.apps.any((a) => a.packageName == app.packageName);
+
+                    return _actionTile(
+                      context,
+                      icon: isInCore ? Icons.star_border_rounded : Icons.star_rounded,
+                      label: isInCore ? 'Remove from Center Constellation' : 'Pin to Center Constellation',
+                      color: const Color(0xFFFFD54F),
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        if (isInCore) {
+                          layoutEngine!.removeAppFromCore(app.packageName);
+                          GalaxyStorageService.saveConfig(
+                            coreAppPackageNames: layoutEngine!.coreAppPackageNames,
+                            customConstellations: layoutEngine!.customConstellations,
+                            constellationAppOverrides: layoutEngine!.constellationAppOverrides,
+                            hiddenPackageNames: layoutEngine!.hiddenPackageNames,
+                          );
+                          onActionCompleted?.call();
+                        } else {
+                          final success = layoutEngine!.addAppToCore(app);
+                          if (!success) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Center Constellation is full (Max 6 apps). Remove an app first.'),
+                                backgroundColor: Color(0xFF161B30),
+                              ),
+                            );
+                          } else {
+                            GalaxyStorageService.saveConfig(
+                              coreAppPackageNames: layoutEngine!.coreAppPackageNames,
+                              customConstellations: layoutEngine!.customConstellations,
+                              constellationAppOverrides: layoutEngine!.constellationAppOverrides,
+                              hiddenPackageNames: layoutEngine!.hiddenPackageNames,
+                            );
+                            onActionCompleted?.call();
+                          }
+                        }
+                      },
+                    );
+                  }),
+
+                  // Hide / Unhide from Galaxy
+                  Builder(builder: (context) {
+                    final isHidden = layoutEngine!.hiddenPackageNames.contains(app.packageName);
+
+                    return _actionTile(
+                      context,
+                      icon: isHidden ? Icons.visibility_rounded : Icons.visibility_off_rounded,
+                      label: isHidden ? 'Unhide in Galaxy' : 'Hide from Galaxy',
+                      color: isHidden ? const Color(0xFF69F0AE) : const Color(0xFFFF8A80),
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        if (isHidden) {
+                          layoutEngine!.unhideApp(app.packageName);
+                        } else {
+                          layoutEngine!.hideApp(app.packageName);
+                        }
+                        GalaxyStorageService.saveConfig(
+                          coreAppPackageNames: layoutEngine!.coreAppPackageNames,
+                          customConstellations: layoutEngine!.customConstellations,
+                          constellationAppOverrides: layoutEngine!.constellationAppOverrides,
+                          hiddenPackageNames: layoutEngine!.hiddenPackageNames,
+                        );
+                        onActionCompleted?.call();
+                      },
+                    );
+                  }),
+                ],
+
                 _actionTile(
                   context,
                   icon: Icons.info_outline_rounded,

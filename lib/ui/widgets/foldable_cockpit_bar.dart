@@ -11,6 +11,9 @@ class FoldableCockpitBar extends StatefulWidget {
   final VoidCallback onOpenSearch;
   final VoidCallback onOpenSettings;
   final VoidCallback onLock;
+  final VoidCallback? onCreateConstellation;
+  final VoidCallback? onCreateGalaxy;
+  final VoidCallback? onEditCore;
 
   const FoldableCockpitBar({
     super.key,
@@ -20,6 +23,9 @@ class FoldableCockpitBar extends StatefulWidget {
     required this.onOpenSearch,
     required this.onOpenSettings,
     required this.onLock,
+    this.onCreateConstellation,
+    this.onCreateGalaxy,
+    this.onEditCore,
   });
 
   @override
@@ -31,8 +37,23 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
 
   void _jumpToConstellation(String id) {
     if (id == 'core') {
-      widget.layoutEngine.collapseAllExceptCore();
-      widget.camera.flyTo(Offset.zero, targetZoom: 1.25);
+      final core = widget.layoutEngine.constellations.firstWhere(
+        (element) => element.id == 'core',
+      );
+      final activeOuter = widget.layoutEngine.constellations.any(
+        (c) => c.id != 'core' && c.isExpanded,
+      );
+      if (activeOuter) {
+        widget.layoutEngine.expandOnly('core');
+        widget.camera.flyTo(Offset.zero, targetZoom: 1.25);
+      } else {
+        widget.layoutEngine.toggleCore();
+        if (core.isExpanded) {
+          widget.camera.flyTo(Offset.zero, targetZoom: 1.25);
+        } else {
+          widget.camera.flyTo(Offset.zero, targetZoom: 1.05);
+        }
+      }
     } else {
       final c = widget.layoutEngine.constellations.firstWhere(
         (element) => element.id == id,
@@ -154,7 +175,6 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                     ],
                   ),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       _cockpitIconButton(
                         icon: Icons.search_rounded,
@@ -168,14 +188,59 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                         child: SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
                           physics: const BouncingScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(horizontal: 4.0),
                           child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              _constellationChip('Core', const Color(0xFFFFD54F), () => _jumpToConstellation('core')),
-                              _constellationChip('Social', const Color(0xFFF06292), () => _jumpToConstellation('social')),
-                              _constellationChip('Work', const Color(0xFF4DD0E1), () => _jumpToConstellation('productivity')),
-                              _constellationChip('Media', const Color(0xFF81C784), () => _jumpToConstellation('media')),
-                              _constellationChip('Tools', const Color(0xFFFFB74D), () => _jumpToConstellation('tools')),
+                              // Render dynamic chips for all active constellations
+                              ...widget.layoutEngine.constellations.map((c) {
+                                return GestureDetector(
+                                  onLongPress: c.id == 'core'
+                                      ? widget.onEditCore
+                                      : null,
+                                  child: _constellationChip(
+                                    c.name,
+                                    c.primaryColor,
+                                    () => _jumpToConstellation(c.id),
+                                  ),
+                                );
+                              }),
+
+                              // + Button to create a new Constellation
+                              if (widget.onCreateConstellation != null || widget.onCreateGalaxy != null)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 3.0),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: widget.onCreateConstellation ?? widget.onCreateGalaxy,
+                                      borderRadius: BorderRadius.circular(16),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF00E5FF).withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(16),
+                                          border: Border.all(color: const Color(0xFF00E5FF).withValues(alpha: 0.5)),
+                                        ),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.add_rounded, size: 14, color: Color(0xFF00E5FF)),
+                                            SizedBox(width: 2),
+                                            Text(
+                                              'Constellation',
+                                              style: TextStyle(
+                                                color: Color(0xFF00E5FF),
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
@@ -191,19 +256,21 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                         },
                       ),
 
-                      _cockpitIconButton(
-                        icon: Icons.splitscreen_rounded,
-                        color: _showFoldControls ? const Color(0xFF00E5FF) : Colors.white70,
-                        tooltip: 'Foldable simulator',
-                        onTap: () => setState(() => _showFoldControls = !_showFoldControls),
-                      ),
+                      if (!widget.foldable.isFolded)
+                        _cockpitIconButton(
+                          icon: Icons.splitscreen_rounded,
+                          color: _showFoldControls ? const Color(0xFF00E5FF) : Colors.white70,
+                          tooltip: 'Foldable simulator',
+                          onTap: () => setState(() => _showFoldControls = !_showFoldControls),
+                        ),
 
-                      _cockpitIconButton(
-                        icon: Icons.lock_outline_rounded,
-                        color: Colors.white70,
-                        tooltip: 'Lock screen',
-                        onTap: widget.onLock,
-                      ),
+                      if (!widget.foldable.isFolded)
+                        _cockpitIconButton(
+                          icon: Icons.lock_outline_rounded,
+                          color: Colors.white70,
+                          tooltip: 'Lock screen',
+                          onTap: widget.onLock,
+                        ),
 
                       _cockpitIconButton(
                         icon: Icons.settings_outlined,
@@ -228,11 +295,16 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
     required String tooltip,
     required VoidCallback onTap,
   }) {
-    return IconButton(
-      icon: Icon(icon, color: color, size: 21),
-      tooltip: tooltip,
-      splashRadius: 22,
-      onPressed: onTap,
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: IconButton(
+        icon: Icon(icon, color: color, size: 19),
+        tooltip: tooltip,
+        padding: EdgeInsets.zero,
+        splashRadius: 18,
+        onPressed: onTap,
+      ),
     );
   }
 

@@ -21,7 +21,16 @@ class Constellation {
   TextPainter? titlePainter;
   TextPainter? countBadgePainter;
   TextPainter? iconPainter;
+  final bool isCustom;
+  final List<String> customPackageNames;
   int _lastAppCount = -1;
+
+  void invalidatePainters() {
+    titlePainter = null;
+    countBadgePainter = null;
+    iconPainter = null;
+    _lastAppCount = -1;
+  }
 
   void ensurePainters() {
     titlePainter ??= TextPainter(
@@ -85,8 +94,11 @@ class Constellation {
     this.radius = 160.0,
     this.rotation = 0.0,
     this.isExpanded = false,
+    this.isCustom = false,
+    List<String>? customPackageNames,
     double? initialProgress,
     List<AppEntry>? apps,
-  })  : expansionProgress = initialProgress ?? (isExpanded ? 1.0 : 0.0),
+  })  : customPackageNames = customPackageNames ?? [],
+        expansionProgress = initialProgress ?? (isExpanded ? 1.0 : 0.0),
         apps = apps ?? [];
 }

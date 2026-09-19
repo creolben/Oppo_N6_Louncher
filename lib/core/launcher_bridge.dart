@@ -9,6 +9,61 @@ import '../models/app_entry.dart';
 class LauncherBridge {
   static const MethodChannel _appsChannel =
       MethodChannel('com.launcher.chronofold/apps');
+  static const EventChannel _shakeChannel =
+      EventChannel('com.launcher.chronofold/shake');
+
+  static Stream<Map<String, dynamic>>? _shakeStream;
+
+  static VoidCallback? _onLockScreenListener;
+  static VoidCallback? _onPackageChangeListener;
+  static VoidCallback? _onHomeButtonListener;
+  static bool _handlerInitialized = false;
+
+  static void _ensureHandlerInitialized() {
+    if (_handlerInitialized) return;
+    _handlerInitialized = true;
+    _appsChannel.setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'lockScreen':
+          _onLockScreenListener?.call();
+          break;
+        case 'onPackagesChanged':
+          _onPackageChangeListener?.call();
+          break;
+        case 'onHomePressed':
+          _onHomeButtonListener?.call();
+          break;
+      }
+    });
+  }
+
+  static void setScreenLockListener(VoidCallback onLock) {
+    _onLockScreenListener = onLock;
+    _ensureHandlerInitialized();
+  }
+
+  static void setPackageChangeListener(VoidCallback onPackageChange) {
+    _onPackageChangeListener = onPackageChange;
+    _ensureHandlerInitialized();
+  }
+
+  static void setHomeButtonListener(VoidCallback onHomePressed) {
+    _onHomeButtonListener = onHomePressed;
+    _ensureHandlerInitialized();
+  }
+
+  static Stream<Map<String, dynamic>> getShakeStream() {
+    if (_shakeStream == null) {
+      if (!kIsWeb && Platform.isAndroid) {
+        _shakeStream = _shakeChannel
+            .receiveBroadcastStream()
+            .map((event) => Map<String, dynamic>.from(event as Map));
+      } else {
+        _shakeStream = const Stream.empty();
+      }
+    }
+    return _shakeStream!;
+  }
 
   /// Fetches installed apps from Android native PackageManager,
   /// or returns rich mock apps when running on desktop / emulator without packages.
@@ -76,6 +131,49 @@ class LauncherBridge {
     }
   }
 
+  static Future<bool> authenticate({String? appName}) async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? success = await _appsChannel.invokeMethod('authenticate', {
+          'appName': appName,
+        });
+        return success ?? false;
+      } catch (e) {
+        debugPrint('Biometric authentication failed or canceled: $e');
+        return false;
+      }
+    } else {
+      debugPrint('Simulating biometric authentication success for $appName');
+      return true;
+    }
+  }
+
+  static Future<bool> isDefaultLauncher() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? isDefault = await _appsChannel.invokeMethod('isDefaultLauncher');
+        return isDefault ?? false;
+      } catch (e) {
+        debugPrint('Check default launcher failed: $e');
+        return false;
+      }
+    }
+    return false;
+  }
+
+  static Future<bool> requestDefaultLauncher() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? success = await _appsChannel.invokeMethod('requestDefaultLauncher');
+        return success ?? false;
+      } catch (e) {
+        debugPrint('Request default launcher failed: $e');
+        return false;
+      }
+    }
+    return false;
+  }
+
   static Future<bool> launchApp(AppEntry app) async {
     if (!kIsWeb && Platform.isAndroid) {
       try {
@@ -132,18 +230,50 @@ class LauncherBridge {
     }
   }
 
+  static Future<String?> getFilesDirPath() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        return await _appsChannel.invokeMethod<String>('getFilesDirPath');
+      } catch (e) {
+        debugPrint('Get files dir path failed: $e');
+      }
+    }
+    return null;
+  }
+
   static AppCategory _mapCategory(int cat, String pkg, String label) {
     final lower = '$pkg $label'.toLowerCase();
+
+    // 1. Explicit Core Essentials (Phone, Messages, Camera, Primary Browser)
+    final isCoreApp = (lower.contains('dialer') ||
+            lower.contains('phone') ||
+            lower.contains('contact')) &&
+        !lower.contains('paybyphone') &&
+        !lower.contains('manager');
+    final isSms = lower.contains('mms') ||
+        lower.contains('messaging') ||
+        lower.contains('securesms') ||
+        lower.contains('textnow');
+    final isCamera = lower.contains('camera') && !lower.contains('extensions');
+    final isMainBrowser = lower.contains('chrome') ||
+        lower.contains('sbrowser') ||
+        lower.contains('brave') ||
+        lower.contains('firefox');
+
+    if (isCoreApp || isSms || isCamera || isMainBrowser) {
+      return AppCategory.core;
+    }
+
     if (lower.contains('message') ||
         lower.contains('chat') ||
-        lower.contains('contact') ||
-        lower.contains('phone') ||
         lower.contains('social') ||
         lower.contains('discord') ||
         lower.contains('whatsapp') ||
         lower.contains('telegram') ||
         lower.contains('twitter') ||
-        lower.contains('instagram')) {
+        lower.contains('instagram') ||
+        lower.contains('reddit') ||
+        lower.contains('bluesky')) {
       return AppCategory.social;
     }
     if (lower.contains('doc') ||
@@ -161,7 +291,6 @@ class LauncherBridge {
         lower.contains('audio') ||
         lower.contains('video') ||
         lower.contains('photo') ||
-        lower.contains('camera') ||
         lower.contains('gallery') ||
         lower.contains('youtube') ||
         lower.contains('spotify') ||
@@ -175,11 +304,10 @@ class LauncherBridge {
         lower.contains('calc') ||
         lower.contains('file') ||
         lower.contains('setting') ||
-        lower.contains('browser') ||
-        lower.contains('chrome')) {
+        lower.contains('browser')) {
       return AppCategory.tools;
     }
-    return AppCategory.core;
+    return AppCategory.tools;
   }
 
   static Color _getCategoryColor(AppCategory category) {
