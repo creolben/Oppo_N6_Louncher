@@ -6,10 +6,13 @@ import '../../models/constellation.dart';
 import '../../core/launcher_bridge.dart';
 import '../../core/foldable_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
+import '../../canvas/camera_controller.dart';
+import '../../canvas/galaxy_interactive_canvas.dart';
 
 class TabletopCockpitView extends StatefulWidget {
   final List<AppEntry> apps;
   final FoldableController foldable;
+  final CameraController? camera;
   final GalaxyLayoutEngine layoutEngine;
   final VoidCallback onOpenSearch;
   final VoidCallback onOpenSettings;
@@ -18,11 +21,13 @@ class TabletopCockpitView extends StatefulWidget {
   final Function(Constellation constellation)? onConstellationLongPressed;
   final VoidCallback? onCreateConstellation;
   final VoidCallback? onEditCore;
+  final VoidCallback? onToggleFullscreen;
 
   const TabletopCockpitView({
     super.key,
     required this.apps,
     required this.foldable,
+    this.camera,
     required this.layoutEngine,
     required this.onOpenSearch,
     required this.onOpenSettings,
@@ -31,6 +36,7 @@ class TabletopCockpitView extends StatefulWidget {
     this.onConstellationLongPressed,
     this.onCreateConstellation,
     this.onEditCore,
+    this.onToggleFullscreen,
   });
 
   @override
@@ -41,10 +47,19 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
   late Timer _timer;
   DateTime _now = DateTime.now();
   String? _selectedSectorId;
+  late final CameraController _activeCamera;
+  bool _ownsCamera = false;
 
   @override
   void initState() {
     super.initState();
+    if (widget.camera != null) {
+      _activeCamera = widget.camera!;
+      _ownsCamera = false;
+    } else {
+      _activeCamera = CameraController();
+      _ownsCamera = true;
+    }
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
         setState(() => _now = DateTime.now());
@@ -55,6 +70,9 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
   @override
   void dispose() {
     _timer.cancel();
+    if (_ownsCamera) {
+      _activeCamera.dispose();
+    }
     super.dispose();
   }
 
@@ -74,10 +92,35 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
       child: SafeArea(
         child: Column(
           children: [
-            // TOP HALF: Ambient Cosmic HUD Display (Upright Screen)
+            // TOP HALF: Ambient Cosmic Constellation Viewport (Upright Screen)
             Expanded(
               flex: 5,
-              child: _buildTopHudPanel(),
+              child: ClipRect(
+                child: Stack(
+                  children: [
+                    // 1. Live Interactive Constellation & Starfield Canvas
+                    Positioned.fill(
+                      child: GalaxyInteractiveCanvas(
+                        apps: widget.apps,
+                        foldable: widget.foldable,
+                        camera: _activeCamera,
+                        layoutEngine: widget.layoutEngine,
+                        onAppLongPressed: widget.onAppLongPressed,
+                        onConstellationLongPressed: widget.onConstellationLongPressed,
+                        onSwipeDown: widget.onOpenSearch,
+                      ),
+                    ),
+
+                    // 2. Cosmic HUD Overlay (Clock, Date, Search Trigger & Telemetry)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: _buildTopHudPanel(),
+                    ),
+                  ],
+                ),
+              ),
             ),
 
             // CREASE ILLUMINATION DIVIDER (Hinge Boundary)
@@ -102,112 +145,157 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       decoration: BoxDecoration(
-        gradient: RadialGradient(
-          center: Alignment.center,
-          radius: 1.2,
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
           colors: [
-            const Color(0xFF101938).withValues(alpha: 0.65),
+            const Color(0xFF020306).withValues(alpha: 0.75),
             Colors.transparent,
           ],
         ),
       ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Device Hinge Telemetry Badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-            decoration: BoxDecoration(
-              color: const Color(0x3300E5FF),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0x6600E5FF), width: 1.0),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x2200E5FF),
-                  blurRadius: 10,
-                  spreadRadius: 1,
-                ),
-              ],
-            ),
+          // Top Row: Hinge Telemetry Badge & Optional Fullscreen Toggle
+          FittedBox(
+            fit: BoxFit.scaleDown,
             child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0x3300E5FF),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0x6600E5FF), width: 1.0),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x2200E5FF),
+                      blurRadius: 8,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Color(0xFF00E5FF),
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                    Text(
+                      'OPPO N6 FLEX MODE • ${widget.foldable.hingeAngle.round()}°',
+                      style: const TextStyle(
+                        color: Color(0xFF00E5FF),
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (widget.onToggleFullscreen != null)
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: widget.onToggleFullscreen,
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0x22141A2E),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0x4464B5F6), width: 0.8),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.fullscreen_rounded, color: Color(0xFF00E5FF), size: 14),
+                          SizedBox(width: 4),
+                          Text(
+                            'FULLSCREEN',
+                            style: TextStyle(
+                              color: Color(0xFF00E5FF),
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.0,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+
+          // Luminous Time & Date (IgnorePointer allows dragging celestial canvas beneath)
+          IgnorePointer(
+            child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Color(0xFF00E5FF),
-                  ),
-                ),
-                const SizedBox(width: 8),
                 Text(
-                  'OPPO N6 FLEX MODE • ${widget.foldable.hingeAngle.round()}°',
+                  timeStr,
                   style: const TextStyle(
-                    color: Color(0xFF00E5FF),
+                    color: Colors.white,
+                    fontSize: 52,
+                    fontWeight: FontWeight.w200,
+                    letterSpacing: -1.5,
+                    height: 1.0,
+                    shadows: [
+                      Shadow(color: Color(0x8800E5FF), blurRadius: 24),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  dateStr,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.70),
                     fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.4,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 2.0,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 12),
-
-          // Luminous Time
-          Text(
-            timeStr,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 64,
-              fontWeight: FontWeight.w200,
-              letterSpacing: -2.0,
-              height: 1.05,
-              shadows: [
-                Shadow(color: Color(0x8800E5FF), blurRadius: 28),
-              ],
-            ),
-          ),
-          const SizedBox(height: 4),
-
-          // Date & Celestial Telemetry
-          Text(
-            dateStr,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.65),
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 2.5,
-            ),
-          ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
 
           // Quick System Search Trigger Pill
           GestureDetector(
             onTap: widget.onOpenSearch,
             child: Container(
-              width: 280,
-              height: 40,
+              width: 270,
+              height: 36,
               decoration: BoxDecoration(
-                color: const Color(0xFF141C34).withValues(alpha: 0.8),
-                borderRadius: BorderRadius.circular(20),
+                color: const Color(0xFF141C34).withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(18),
                 border: Border.all(color: const Color(0x4464B5F6), width: 1.0),
               ),
               padding: const EdgeInsets.symmetric(horizontal: 14),
               child: Row(
                 children: [
-                  const Icon(Icons.search_rounded, color: Color(0xFF00E5FF), size: 18),
-                  const SizedBox(width: 10),
+                  const Icon(Icons.search_rounded, color: Color(0xFF00E5FF), size: 16),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Search galaxy applications...',
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.45),
-                        fontSize: 12.5,
+                        color: Colors.white.withValues(alpha: 0.5),
+                        fontSize: 12,
                       ),
                     ),
                   ),
@@ -277,7 +365,10 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                   icon: Icons.star_rounded,
                   color: const Color(0xFFFFD54F),
                   isSelected: _selectedSectorId == null,
-                  onTap: () => setState(() => _selectedSectorId = null),
+                  onTap: () {
+                    setState(() => _selectedSectorId = null);
+                    _activeCamera.resetView();
+                  },
                 ),
                 const SizedBox(width: 8),
                 for (final c in outerConstellations) ...[
@@ -286,7 +377,10 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                     icon: c.emblemIcon,
                     color: c.primaryColor,
                     isSelected: _selectedSectorId == c.id,
-                    onTap: () => setState(() => _selectedSectorId = c.id),
+                    onTap: () {
+                      setState(() => _selectedSectorId = c.id);
+                      _activeCamera.flyTo(c.center, targetZoom: 1.35);
+                    },
                   ),
                   const SizedBox(width: 8),
                 ],
@@ -314,42 +408,45 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           ),
 
           // Bottom Cockpit Controls Row
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _cockpitActionButton(
-                icon: Icons.search_rounded,
-                label: 'Search',
-                color: const Color(0xFF00E5FF),
-                onTap: widget.onOpenSearch,
-              ),
-              if (widget.onCreateConstellation != null)
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
                 _cockpitActionButton(
-                  icon: Icons.add_circle_outline_rounded,
-                  label: 'Create',
-                  color: const Color(0xFF69F0AE),
-                  onTap: widget.onCreateConstellation!,
+                  icon: Icons.search_rounded,
+                  label: 'Search',
+                  color: const Color(0xFF00E5FF),
+                  onTap: widget.onOpenSearch,
                 ),
-              if (widget.onEditCore != null)
+                if (widget.onCreateConstellation != null)
+                  _cockpitActionButton(
+                    icon: Icons.add_circle_outline_rounded,
+                    label: 'Create',
+                    color: const Color(0xFF69F0AE),
+                    onTap: widget.onCreateConstellation!,
+                  ),
+                if (widget.onEditCore != null)
+                  _cockpitActionButton(
+                    icon: Icons.hub_rounded,
+                    label: 'Center Hub',
+                    color: const Color(0xFFFFD54F),
+                    onTap: widget.onEditCore!,
+                  ),
                 _cockpitActionButton(
-                  icon: Icons.hub_rounded,
-                  label: 'Center Hub',
-                  color: const Color(0xFFFFD54F),
-                  onTap: widget.onEditCore!,
+                  icon: Icons.lock_outline_rounded,
+                  label: 'Lock',
+                  color: const Color(0xFFFF8A80),
+                  onTap: widget.onLock,
                 ),
-              _cockpitActionButton(
-                icon: Icons.lock_outline_rounded,
-                label: 'Lock',
-                color: const Color(0xFFFF8A80),
-                onTap: widget.onLock,
-              ),
-              _cockpitActionButton(
-                icon: Icons.tune_rounded,
-                label: 'Settings',
-                color: Colors.white70,
-                onTap: widget.onOpenSettings,
-              ),
-            ],
+                _cockpitActionButton(
+                  icon: Icons.tune_rounded,
+                  label: 'Settings',
+                  color: Colors.white70,
+                  onTap: widget.onOpenSettings,
+                ),
+              ],
+            ),
           ),
         ],
       ),

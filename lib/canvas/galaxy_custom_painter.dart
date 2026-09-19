@@ -1010,6 +1010,7 @@ class GalaxyCustomPainter extends CustomPainter {
           Color(0x4400E5FF),
           Color(0x0000E5FF),
         ],
+        const [0.0, 0.5, 1.0],
       );
       canvas.drawRect(
         Rect.fromLTRB(0, creaseRect.top - 10, size.width, creaseRect.bottom + 10),

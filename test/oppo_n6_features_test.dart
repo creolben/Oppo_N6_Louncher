@@ -7,6 +7,7 @@ import 'package:mylauncher/models/app_entry.dart';
 import 'package:mylauncher/features/lockscreen/bouncing_physics_engine.dart';
 import 'package:mylauncher/ui/widgets/search_overlay.dart';
 import 'package:mylauncher/ui/screens/tabletop_cockpit_view.dart';
+import 'package:mylauncher/canvas/galaxy_interactive_canvas.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -145,7 +146,10 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Verify GalaxyInteractiveCanvas is rendered in the top constellation viewport
+      expect(find.byType(GalaxyInteractiveCanvas), findsOneWidget);
 
       // Verify Telemetry badge
       expect(find.textContaining('OPPO N6 FLEX MODE'), findsOneWidget);

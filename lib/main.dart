@@ -71,6 +71,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   bool _isLoading = true;
   bool _isSearchOpen = false;
   bool _isLocked = true;
+  bool _isFullscreenGalaxy = false;
 
   @override
   void initState() {
@@ -312,11 +313,12 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                               onCreateConstellation: _openCreateConstellationModal,
                               onEditCore: _openCenterConstellationEditorModal,
                             )
-                          : _foldable.isTabletop
+                          : (!_isFullscreenGalaxy)
                               ? TabletopCockpitView(
                                   key: const ValueKey('tabletop_cockpit_view'),
                                   apps: _apps,
                                   foldable: _foldable,
+                                  camera: _camera,
                                   layoutEngine: _layoutEngine,
                                   onOpenSearch: () => setState(() => _isSearchOpen = true),
                                   onOpenSettings: () => LauncherBridge.openHomeSettings(),
@@ -325,6 +327,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                   onConstellationLongPressed: _openConstellationEditorModal,
                                   onCreateConstellation: _openCreateConstellationModal,
                                   onEditCore: _openCenterConstellationEditorModal,
+                                  onToggleFullscreen: () => setState(() => _isFullscreenGalaxy = true),
                                 )
                               : Stack(
                                   key: const ValueKey('unfolded_galaxy_screen'),
@@ -347,7 +350,10 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       top: 0,
                                       left: 0,
                                       right: 0,
-                                      child: CosmicHeaderHud(foldable: _foldable),
+                                      child: CosmicHeaderHud(
+                                        foldable: _foldable,
+                                        onToggleCockpit: () => setState(() => _isFullscreenGalaxy = false),
+                                      ),
                                     ),
 
                                     // 3. Ergonomic Bottom Cockpit Bar
@@ -403,8 +409,13 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
 
 class CosmicHeaderHud extends StatefulWidget {
   final FoldableController foldable;
+  final VoidCallback? onToggleCockpit;
 
-  const CosmicHeaderHud({super.key, required this.foldable});
+  const CosmicHeaderHud({
+    super.key,
+    required this.foldable,
+    this.onToggleCockpit,
+  });
 
   @override
   State<CosmicHeaderHud> createState() => _CosmicHeaderHudState();
@@ -474,52 +485,94 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
               ],
             ),
 
-            // Galaxy Sector Posture Badge
-            ListenableBuilder(
-              listenable: widget.foldable,
-              builder: (context, _) {
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: const Color(0x33101424),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: const Color(0x3364B5F6),
-                      width: 0.8,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Color(0xFF00E5FF),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Color(0xFF00E5FF),
-                              blurRadius: 6,
-                              spreadRadius: 1,
+            // Top Right: Posture Badge & Return to Cockpit Button
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.onToggleCockpit != null) ...[
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: widget.onToggleCockpit,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0x33101424),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: const Color(0x4464B5F6),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.splitscreen_rounded, color: Color(0xFF00E5FF), size: 14),
+                            SizedBox(width: 4),
+                            Text(
+                              'COCKPIT',
+                              style: TextStyle(
+                                color: Color(0xFF00E5FF),
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.0,
+                              ),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        widget.foldable.posture.name.toUpperCase(),
-                        style: const TextStyle(
-                          color: Color(0xFF00E5FF),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                ListenableBuilder(
+                  listenable: widget.foldable,
+                  builder: (context, _) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0x33101424),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: const Color(0x3364B5F6),
+                          width: 0.8,
                         ),
                       ),
-                    ],
-                  ),
-                );
-              },
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Color(0xFF00E5FF),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Color(0xFF00E5FF),
+                                  blurRadius: 6,
+                                  spreadRadius: 1,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            widget.foldable.posture.name.toUpperCase(),
+                            style: const TextStyle(
+                              color: Color(0xFF00E5FF),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
           ],
         ),

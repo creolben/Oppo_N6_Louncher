@@ -32,6 +32,8 @@ class CameraController extends ChangeNotifier {
   Size get viewportSize => _viewportSize;
 
   void init(TickerProvider vsync) {
+    _ticker?.dispose();
+    _flyController?.dispose();
     _ticker = vsync.createTicker(_onTick);
     _flyController = AnimationController(
       vsync: vsync,
