@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/app_entry.dart';
+import '../models/quick_shortcut.dart';
 
 class LauncherBridge {  static const MethodChannel _appsChannel =
       MethodChannel('com.launcher.chronofold/apps');
@@ -270,6 +271,30 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     }
   }
 
+  /// Opens the platform's own handler for a lock-screen shortcut.
+  ///
+  /// Used only when [QuickShortcutResolver] cannot resolve the role from the
+  /// installed app list — the list is filtered to LAUNCHER activities and is
+  /// empty until the first scan finishes. Resolves to false when the platform
+  /// has no unambiguous handler, so the caller can say so rather than pretend
+  /// something opened.
+  static Future<bool> openQuickShortcut(QuickShortcut shortcut) async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? success = await _appsChannel.invokeMethod(
+          'openQuickShortcut',
+          {'shortcut': shortcut.channelName},
+        );
+        return success ?? false;
+      } catch (e) {
+        debugPrint('Open quick shortcut ${shortcut.name} failed: $e');
+        return false;
+      }
+    }
+    debugPrint('Simulating opening the ${shortcut.label} shortcut');
+    return false;
+  }
+
   static Future<void> openAppInfo(AppEntry app) async {
     if (!kIsWeb && Platform.isAndroid) {
       try {
@@ -284,8 +309,69 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     }
   }
 
-  static Future<void> uninstallApp(AppEntry app) async {
+  /// Hands a raw query to the platform's web search handler.
+  ///
+  /// Uses `ACTION_WEB_SEARCH`, an Activity action whose documented output is
+  /// "nothing" — it cannot return results to this app. On the tested ColorOS 16
+  /// build it resolves to the system chooser, so treat this as a handoff and
+  /// consult [describeWebSearchHandoff] before promising a silent launch.
+  static Future<bool> startWebSearch(String query) async {
     if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? success = await _appsChannel.invokeMethod('startWebSearch', {
+          'query': query,
+        });
+        return success ?? false;
+      } catch (e) {
+        debugPrint('Start web search failed: $e');
+        return false;
+      }
+    }
+    debugPrint('Simulating web search for: $query');
+    return true;
+  }
+
+  /// Opens [url] in the user's chosen browser via the BROWSER role holder.
+  ///
+  /// Preferred over [startWebSearch] for anything that is already a URL: it
+  /// launches silently rather than raising a chooser.
+  static Future<bool> openWebUrl(String url) async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? success = await _appsChannel.invokeMethod('openWebUrl', {
+          'url': url,
+        });
+        return success ?? false;
+      } catch (e) {
+        debugPrint('Open web url failed: $e');
+        return false;
+      }
+    }
+    debugPrint('Simulating opening url: $url');
+    return true;
+  }
+
+  /// Probes how `ACTION_WEB_SEARCH` would resolve on this device.
+  ///
+  /// Exists so the UI can label the handoff honestly. On a device with a
+  /// platform default this reports a single handler; where the platform would
+  /// raise a chooser, [WebSearchHandoff.raisesChooser] is true.
+  static Future<WebSearchHandoff> describeWebSearchHandoff() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final raw = await _appsChannel
+            .invokeMethod<Map<Object?, Object?>>('getWebSearchHandlers');
+        if (raw != null) {
+          return WebSearchHandoff.fromMap(Map<String, dynamic>.from(raw));
+        }
+      } catch (e) {
+        debugPrint('Describe web search handoff failed: $e');
+      }
+    }
+    return const WebSearchHandoff.unknown();
+  }
+
+  static Future<void> uninstallApp(AppEntry app) async {    if (!kIsWeb && Platform.isAndroid) {
       try {
         await _appsChannel.invokeMethod('uninstallApp', {
           'packageName': app.packageName,
@@ -597,4 +683,59 @@ class FingerprintCapability {
 
   /// True only when a scan can actually be armed.
   bool get isReady => hardware && enrolled;
+}
+
+/// How `ACTION_WEB_SEARCH` resolves on this device.
+///
+/// The surface uses this to label the handoff truthfully. Verified on ColorOS 16
+/// (CPH2765): seven handlers, no platform default, so the platform raises a
+/// chooser — a fact the UI must not hide from the user.
+class WebSearchHandoff {
+  /// Packages that claim `ACTION_WEB_SEARCH`.
+  final List<String> handlers;
+
+  /// Package the platform resolves `ACTION_WEB_SEARCH` to. `android` means the
+  /// platform's internal ResolverActivity, i.e. a chooser will appear.
+  final String? resolvedPackage;
+
+  /// True when the platform would show a disambiguation chooser.
+  final bool raisesChooser;
+
+  /// Whether *this* app holds the BROWSER role. Not the browser's identity —
+  /// no public API exposes that — so this is diagnostics only.
+  final bool holdsBrowserRole;
+
+  /// True when the platform could not be asked at all (non-Android, or the
+  /// probe failed). Callers should stay neutral rather than claiming either way.
+  final bool isKnown;
+
+  const WebSearchHandoff({
+    required this.handlers,
+    this.resolvedPackage,
+    required this.raisesChooser,
+    this.holdsBrowserRole = false,
+    this.isKnown = true,
+  });
+
+  const WebSearchHandoff.unknown()
+      : handlers = const [],
+        resolvedPackage = null,
+        raisesChooser = false,
+        holdsBrowserRole = false,
+        isKnown = false;
+
+  int get handlerCount => handlers.length;
+
+  factory WebSearchHandoff.fromMap(Map<String, dynamic> map) {
+    return WebSearchHandoff(
+      handlers: (map['handlers'] as List?)
+              ?.map((e) => e?.toString() ?? '')
+              .where((e) => e.isNotEmpty)
+              .toList() ??
+          const [],
+      resolvedPackage: map['resolvedPackage'] as String?,
+      raisesChooser: map['raisesChooser'] as bool? ?? false,
+      holdsBrowserRole: map['holdsBrowserRole'] as bool? ?? false,
+    );
+  }
 }

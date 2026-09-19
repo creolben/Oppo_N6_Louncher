@@ -6,6 +6,7 @@ import '../../canvas/camera_controller.dart';
 import '../../core/launcher_bridge.dart';
 
 import '../../core/galaxy_layout_engine.dart';
+import 'comet_orb.dart';
 
 class CategoryTabItem {
   final String label;
@@ -29,6 +30,13 @@ class SearchOverlay extends StatefulWidget {
   final GalaxyLayoutEngine? layoutEngine;
   final Function(AppEntry app, Offset screenPosition)? onAppLongPressed;
 
+  /// Escalates the current query to the comet web-search surface.
+  ///
+  /// Deliberately not automatic: a miss in app search is a clear signal, but
+  /// silently switching modes would surprise. The user taps, and their query
+  /// carries over rather than being lost.
+  final void Function(String query)? onSearchWeb;
+
   const SearchOverlay({
     super.key,
     required this.allApps,
@@ -37,6 +45,7 @@ class SearchOverlay extends StatefulWidget {
     this.onOpenSettings,
     this.layoutEngine,
     this.onAppLongPressed,
+    this.onSearchWeb,
   });
 
   @override
@@ -212,6 +221,52 @@ class _SearchOverlayState extends State<SearchOverlay> {
   void _flyToAndLaunch(AppEntry app) {
     widget.camera.flyTo(app.worldPosition, targetZoom: 1.6);
     widget.onClose();
+  }
+
+  /// Converts a failed app search into a web search, carrying the query over.
+  Widget _buildCosmosEscalation() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.lightImpact();
+          widget.onSearchWeb!(_controller.text.trim());
+        },
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFB300).withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: const Color(0xFFFFB300).withValues(alpha: 0.45),
+            ),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CometOrb(size: 18),
+              SizedBox(width: 10),
+              Text(
+                'Not in this galaxy — search the cosmos',
+                style: TextStyle(
+                  color: Color(0xFFFFC64D),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.2,
+                ),
+              ),
+              SizedBox(width: 6),
+              Icon(
+                Icons.arrow_forward_rounded,
+                size: 15,
+                color: Color(0xFFFFC64D),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -482,6 +537,16 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                     letterSpacing: 0.8,
                                   ),
                                 ),
+                                // The escalation. A miss in app search is
+                                // exactly when web search is wanted, so the
+                                // affordance appears here rather than only in
+                                // the bar the user has already left behind.
+                                if (!_filterHiddenOnly &&
+                                    widget.onSearchWeb != null &&
+                                    _controller.text.trim().isNotEmpty) ...[
+                                  const SizedBox(height: 20),
+                                  _buildCosmosEscalation(),
+                                ],
                               ],
                             ),
                           )

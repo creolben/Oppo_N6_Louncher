@@ -58,5 +58,27 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Web search handoff. Package-visibility filtering applies on Android
+             11+, so without these declarations resolveActivity() for the web
+             search and browser intents returns null and the handoff fails
+             silently. Verified on ColorOS 16 (CPH2765): ACTION_WEB_SEARCH is
+             answered by 7 installed apps and has no platform default. -->
+        <intent>
+            <action android:name="android.intent.action.WEB_SEARCH"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <category android:name="android.intent.category.BROWSABLE"/>
+            <data android:scheme="https"/>
+        </intent>
+        <!-- Lock-screen quick shortcuts. Package-visibility filtering applies on
+             Android 11+, so resolveActivity() for these returns null without a
+             declaration and the shortcut fallback silently fails. -->
+        <intent>
+            <action android:name="android.intent.action.DIAL"/>
+        </intent>
+        <intent>
+            <action android:name="android.media.action.STILL_IMAGE_CAMERA_SECURE"/>
+        </intent>
     </queries>
 </manifest>

@@ -10,6 +10,9 @@ import 'canvas/camera_controller.dart';
 import 'canvas/galaxy_interactive_canvas.dart';
 import 'ui/widgets/foldable_cockpit_bar.dart';
 import 'ui/widgets/search_overlay.dart';
+import 'ui/widgets/comet_search_surface.dart';
+import 'core/search_coordinator.dart';
+import 'core/search_providers/fixture_search_provider.dart';
 import 'ui/widgets/app_action_dialog.dart';
 import 'ui/widgets/constellation_editor_modal.dart';
 import 'ui/widgets/create_constellation_modal.dart';
@@ -66,12 +69,18 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   late final FoldableController _foldable;
   late final CameraController _camera;
   late final GalaxyLayoutEngine _layoutEngine;
+  late final SearchCoordinator _searchCoordinator;
 
   List<AppEntry> _apps = [];
   bool _isLoading = true;
   bool _isSearchOpen = false;
   bool _isLocked = false;
   bool _isCockpitMode = false;
+
+  /// Whether the comet web-search surface is up, and the query it was opened
+  /// with when escalated from an app-search miss.
+  bool _isCometSearchOpen = false;
+  String? _cometInitialQuery;
 
   @override
   void initState() {
@@ -80,6 +89,11 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     _foldable = FoldableController();
     _camera = CameraController();
     _layoutEngine = GalaxyLayoutEngine();
+    // Fixture-backed for now. Registering an HTTP provider here is the only
+    // change needed to make inline answers live; the surface is provider-blind.
+    _searchCoordinator = SearchCoordinator(
+      providers: [FixtureSearchProvider()],
+    );
 
     LauncherBridge.setScreenLockListener(_lockForScreenOff);
 
@@ -94,11 +108,32 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
         if (_isSearchOpen) {
           setState(() => _isSearchOpen = false);
         }
+        if (_isCometSearchOpen) {
+          setState(() => _isCometSearchOpen = false);
+          // Clear the previous answer too: the home button means "start over",
+          // so reopening must not show a stale result.
+          _searchCoordinator.reset();
+        }
         _camera.resetView();
       }
     });
 
     _loadApplications();
+  }
+
+  /// Opens the comet surface, optionally seeded with a query the user already
+  /// typed in app search, so escalating never costs them a retype.
+  void _openCometSearch([String? query]) {
+    setState(() {
+      _isSearchOpen = false;
+      _cometInitialQuery = query;
+      _isCometSearchOpen = true;
+    });
+  }
+
+  void _closeCometSearch() {
+    setState(() => _isCometSearchOpen = false);
+    _searchCoordinator.reset();
   }
 
   @override
@@ -260,6 +295,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     _foldable.dispose();
     _camera.dispose();
+    _searchCoordinator.dispose();
     super.dispose();
   }
 
@@ -370,6 +406,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                         camera: _camera,
                                         layoutEngine: _layoutEngine,
                                         onOpenSearch: () => setState(() => _isSearchOpen = true),
+                                        onOpenWebSearch: () => _openCometSearch(),
                                         onOpenSettings: () => LauncherBridge.openHomeSettings(),
                                         onLock: () => setState(() => _isLocked = true),
                                         onCreateConstellation: _openCreateConstellationModal,
@@ -390,6 +427,18 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                           onAppLongPressed: _openAppLongPressDialog,
                           onClose: () => setState(() => _isSearchOpen = false),
                           onOpenSettings: () => LauncherBridge.openHomeSettings(),
+                          onSearchWeb: _openCometSearch,
+                        ),
+                      ),
+
+                    // Comet Web Search Surface
+                    if (_isCometSearchOpen)
+                      Positioned.fill(
+                        child: CometSearchSurface(
+                          key: ValueKey('comet_${_cometInitialQuery ?? ''}'),
+                          coordinator: _searchCoordinator,
+                          initialQuery: _cometInitialQuery,
+                          onClose: _closeCometSearch,
                         ),
                       ),
 

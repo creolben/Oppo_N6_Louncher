@@ -231,10 +231,17 @@ void main() {
       expect(unlocked, isTrue);
     });
 
-    testWidgets('Tapping quick phone shortcut invokes unlock and launches app',
+    testWidgets('Tapping quick phone shortcut launches the app',
         (tester) async {
       final foldable = FoldableController();
       bool unlocked = false;
+      final launched = <String>[];
+      final previousDebugPrint = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null && message.startsWith('Simulating launching app:')) {
+          launched.add(message);
+        }
+      };
 
       final apps = [
         AppEntry(
@@ -246,26 +253,36 @@ void main() {
         ),
       ];
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: CosmicLockScreen(
-              foldable: foldable,
-              apps: apps,
-              onUnlock: () => unlocked = true,
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: CosmicLockScreen(
+                foldable: foldable,
+                apps: apps,
+                onUnlock: () => unlocked = true,
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      // Tap the quick action phone icon at the bottom left
-      await tester.tap(find.byIcon(Icons.phone_rounded));
-      for (int i = 0; i < 12; i++) {
-        await tester.pump(const Duration(milliseconds: 40));
+        // Tap the quick action phone icon at the bottom left
+        await tester.tap(find.byIcon(Icons.phone_rounded));
+        for (int i = 0; i < 12; i++) {
+          await tester.pump(const Duration(milliseconds: 40));
+        }
+      } finally {
+        debugPrint = previousDebugPrint;
       }
 
-      // Non-Android/test environment simulates successful authentication, unlocking and launching
-      expect(unlocked, isTrue);
+      // Non-Android/test environment simulates successful authentication and launching.
+      expect(launched, hasLength(1));
+      expect(launched.single, contains('com.android.phone'));
+
+      // The panel stays up: it is what the user returns to when the launched
+      // app is closed. Clearing it here is what dropped them behind the lock
+      // screen instead.
+      expect(unlocked, isFalse);
     });
 
     testWidgets('Draws no fingerprint affordance: the panel is not the reader',

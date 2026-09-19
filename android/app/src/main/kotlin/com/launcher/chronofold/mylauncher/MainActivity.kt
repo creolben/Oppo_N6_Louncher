@@ -2,6 +2,7 @@ package com.launcher.chronofold.mylauncher
 
 import android.content.Context
 import android.content.Intent
+import android.app.SearchManager
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
@@ -26,6 +27,7 @@ import android.hardware.biometrics.BiometricPrompt
 import android.hardware.fingerprint.FingerprintManager
 import android.os.CancellationSignal
 import android.os.PowerManager
+import android.provider.MediaStore
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -177,11 +179,19 @@ class MainActivity : FlutterActivity() {
                         val packageName = call.argument<String>("packageName")
                         val activityName = call.argument<String>("activityName")
                         if (packageName != null) {
-                            val success = launchApplication(packageName, activityName)
-                            result.success(success)
+                            // Resolved only once the keyguard is out of the way
+                            // and the activity has actually been started, so the
+                            // caller knows when it is safe to drop its own
+                            // cover over the lock screen.
+                            launchApplication(packageName, activityName) { success ->
+                                result.success(success)
+                            }
                         } else {
                             result.error("INVALID_ARGS", "packageName is required", null)
                         }
+                    }
+                    "openQuickShortcut" -> {
+                        result.success(openQuickShortcut(call.argument<String>("shortcut")))
                     }
                     "openAppInfo" -> {
                         val packageName = call.argument<String>("packageName")
@@ -191,6 +201,25 @@ class MainActivity : FlutterActivity() {
                         } else {
                             result.error("INVALID_ARGS", "packageName is required", null)
                         }
+                    }
+                    "startWebSearch" -> {
+                        val query = call.argument<String>("query")
+                        if (query.isNullOrBlank()) {
+                            result.error("INVALID_ARGS", "query is required", null)
+                        } else {
+                            result.success(startWebSearch(query))
+                        }
+                    }
+                    "openWebUrl" -> {
+                        val url = call.argument<String>("url")
+                        if (url.isNullOrBlank()) {
+                            result.error("INVALID_ARGS", "url is required", null)
+                        } else {
+                            result.success(openWebUrl(url))
+                        }
+                    }
+                    "getWebSearchHandlers" -> {
+                        result.success(describeWebSearchHandoff())
                     }
                     "uninstallApp" -> {
                         val packageName = call.argument<String>("packageName")
@@ -417,9 +446,70 @@ class MainActivity : FlutterActivity() {
         return stream.toByteArray()
     }
 
-    private fun launchApplication(packageName: String, activityName: String?): Boolean {
+    /**
+     * Starts [intent] once the keyguard is out of the way, then reports whether
+     * it started.
+     *
+     * The launcher draws over the keyguard (`showWhenLocked`), so its lock
+     * overlay is interactive while the device is still locked. An activity
+     * started from that state is placed *behind* the keyguard: the user
+     * authenticates, the overlay clears, and they are shown the system lock
+     * screen with the app they asked for running out of sight.
+     *
+     * [onStarted] is therefore invoked only after the keyguard has actually
+     * gone and the activity is on its way, which is the signal the caller needs
+     * to keep its own cover up for exactly as long as the system lock screen
+     * could otherwise show through — that gap is what made the ColorOS keyguard
+     * flash during the transition.
+     *
+     * `requestDismissKeyguard` only prompts when the device is still locked, so
+     * on the normal path — the power-button reader authenticating the keyguard
+     * itself — it dismisses silently.
+     */
+    private fun startWhenUnlocked(intent: Intent, onStarted: (Boolean) -> Unit) {
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (keyguard == null || !keyguard.isKeyguardLocked) {
+            onStarted(startActivityQuietly(intent))
+            return
+        }
+
+        keyguard.requestDismissKeyguard(
+            this,
+            object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() {
+                    onStarted(startActivityQuietly(intent))
+                }
+
+                override fun onDismissError() {
+                    // The keyguard refused to go; opening behind it would show
+                    // the user a lock screen, so it is not started at all.
+                    onStarted(false)
+                }
+
+                override fun onDismissCancelled() {
+                    // The user backed out of the credential prompt.
+                    onStarted(false)
+                }
+            },
+        )
+    }
+
+    private fun startActivityQuietly(intent: Intent): Boolean {
         return try {
-            val intent = if (activityName != null && activityName.isNotEmpty()) {
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun launchApplication(
+        packageName: String,
+        activityName: String?,
+        onComplete: (Boolean) -> Unit,
+    ) {
+        val intent = try {
+            if (activityName != null && activityName.isNotEmpty()) {
                 Intent().apply {
                     setClassName(packageName, activityName)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
@@ -429,16 +519,47 @@ class MainActivity : FlutterActivity() {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
                 }
             }
-
-            if (intent != null) {
-                startActivity(intent)
-                true
-            } else {
-                false
-            }
         } catch (e: Exception) {
-            false
+            null
         }
+
+        if (intent == null) {
+            onComplete(false)
+            return
+        }
+        startWhenUnlocked(intent, onComplete)
+    }
+
+    /**
+     * Opens the platform's own handler for a lock-screen shortcut.
+     *
+     * The dialer is reached with ACTION_DIAL: every device answers it, it needs
+     * no package name, and it is permitted over the keyguard. It also resolves
+     * to a single activity on the tested ColorOS 16 build
+     * (com.android.contacts/.DialtactsActivityAlias) — the very component the
+     * launcher cannot find by package name, because that package publishes a
+     * second launcher alias for Contacts.
+     *
+     * The camera has no equally unambiguous action: on the same device both
+     * INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE and INTENT_ACTION_STILL_IMAGE_CAMERA
+     * are also claimed by a social app, so the platform raises a chooser. A
+     * chooser is not an answer to "open the camera", so this reports failure and
+     * lets the caller say so instead of surprising the user.
+     */
+    private fun openQuickShortcut(shortcut: String?): Boolean {
+        val intent = when (shortcut) {
+            "phone" -> Intent(Intent.ACTION_DIAL)
+            "camera" -> Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE)
+            else -> return false
+        }
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+
+        val resolved = intent.resolveActivity(packageManager) ?: return false
+        // "android" is the platform's own ResolverActivity, i.e. a chooser.
+        if (resolved.packageName == "android") return false
+
+        startWhenUnlocked(intent) { }
+        return true
     }
 
     private fun openAppInfo(packageName: String) {
@@ -632,5 +753,90 @@ class MainActivity : FlutterActivity() {
         } else {
             callback(true, null)
         }
+    }
+
+    /**
+     * Opens a URL in the user's chosen browser.
+     *
+     * A bare ACTION_VIEW with an https URL is the correct mechanism: the
+     * platform already routes it to the BROWSER role holder, so the launch is
+     * silent and follows the user's preference. Verified on ColorOS 16
+     * (CPH2765): resolves to a single activity (Brave), not a chooser.
+     *
+     * Note deliberately NOT used here: RoleManager.getRoleHolders, which is
+     * platform-internal. The only public query is isRoleHeld, which answers
+     * whether THIS app holds the role and so cannot identify the browser.
+     * There is no public API to read the browser role holder's package.
+     */
+    private fun openWebUrl(url: String): Boolean {
+        return try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            // An unhandled URL throws ActivityNotFoundException. Returning false
+            // lets the surface report it rather than crashing the launcher.
+            false
+        }
+    }
+
+    /**
+     * Hands a raw query to the platform's web search handler.
+     *
+     * ACTION_WEB_SEARCH is an Activity action whose documented output is
+     * "nothing" — it cannot return results. On the tested ColorOS 16 build it
+     * resolves to the system chooser (seven handlers, no default), so callers
+     * should label this action as a handoff rather than an inline answer.
+     */
+    private fun startWebSearch(query: String): Boolean {
+        return try {
+            val intent = Intent(Intent.ACTION_WEB_SEARCH).apply {
+                putExtra(SearchManager.QUERY, query)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Reports how ACTION_WEB_SEARCH would resolve, so the UI can label the
+     * handoff honestly instead of promising a silent launch it cannot deliver.
+     */
+    private fun describeWebSearchHandoff(): Map<String, Any?> {
+        val intent = Intent(Intent.ACTION_WEB_SEARCH)
+        val handlers = packageManager
+            .queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            .map { it.activityInfo.packageName }
+            .distinct()
+
+        // resolveActivity returns the platform's internal ResolverActivity when
+        // no default exists, which is exactly the "a chooser will appear"
+        // signal. On ColorOS 16 (CPH2765) this is the case: 7 handlers, no
+        // default, package "android".
+        val resolved = intent.resolveActivity(packageManager)
+        val raisesChooser = resolved == null || resolved.packageName == "android"
+
+        // Whether this app itself holds the browser role. Not the browser's
+        // identity — that is not publicly readable — but useful for diagnostics.
+        val holdsBrowserRole = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            (getSystemService(Context.ROLE_SERVICE) as? RoleManager)
+                ?.isRoleHeld(RoleManager.ROLE_BROWSER) ?: false
+        } else {
+            false
+        }
+
+        return mapOf(
+            "handlers" to handlers,
+            "handlerCount" to handlers.size,
+            "resolvedPackage" to resolved?.packageName,
+            "raisesChooser" to raisesChooser,
+            "holdsBrowserRole" to holdsBrowserRole,
+        )
     }
 }

@@ -4,6 +4,7 @@ import '../../core/foldable_controller.dart';
 import '../../canvas/camera_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
 import 'foldable_simulation_chip.dart';
+import 'comet_orb.dart';
 
 class FoldableCockpitBar extends StatefulWidget {
   final FoldableController foldable;
@@ -16,6 +17,10 @@ class FoldableCockpitBar extends StatefulWidget {
   final VoidCallback? onCreateGalaxy;
   final VoidCallback? onEditCore;
 
+  /// Summons the comet web-search surface. Optional so the bar can still be
+  /// used by surfaces that have no business opening web search.
+  final VoidCallback? onOpenWebSearch;
+
   const FoldableCockpitBar({
     super.key,
     required this.foldable,
@@ -27,6 +32,7 @@ class FoldableCockpitBar extends StatefulWidget {
     this.onCreateConstellation,
     this.onCreateGalaxy,
     this.onEditCore,
+    this.onOpenWebSearch,
   });
 
   @override
@@ -192,6 +198,28 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                         tooltip: 'Search apps',
                         onTap: widget.onOpenSearch,
                       ),
+
+                      // The comet: the only warm control in a cold bar. It
+                      // borrows the galaxy core's amber, so it reads as the one
+                      // affordance that reaches outside the galaxy.
+                      if (widget.onOpenWebSearch != null)
+                        Semantics(
+                          button: true,
+                          label: 'Search the web',
+                          child: TextButton(
+                            onPressed: widget.onOpenWebSearch,
+                            style: TextButton.styleFrom(
+                              minimumSize: const Size(36, 36),
+                              padding: EdgeInsets.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: const CircleBorder(),
+                            ),
+                            child: const Tooltip(
+                              message: 'Search the web',
+                              child: CometOrb(size: 22),
+                            ),
+                          ),
+                        ),
 
                       // Constellation Jump Shortcuts
                       Expanded(

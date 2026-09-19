@@ -5,9 +5,11 @@ import 'package:flutter/services.dart';
 import '../../core/foldable_controller.dart';
 import '../../models/app_entry.dart';
 import '../../core/launcher_bridge.dart';
+import '../../models/quick_shortcut.dart';
 import '../../ui/widgets/fading_horizontal_scroll.dart';
 import 'bouncing_physics_engine.dart';
 import 'bouncing_apps_painter.dart';
+import 'quick_shortcut_resolver.dart';
 
 class CosmicLockScreen extends StatefulWidget {
   final FoldableController foldable;
@@ -15,12 +17,20 @@ class CosmicLockScreen extends StatefulWidget {
   final List<AppEntry> apps;
   final bool initialAuthenticated;
 
+  /// Platform authentication, defaulting to [LauncherBridge.authenticate].
+  ///
+  /// Injectable because the reader is the side power button: on a real device
+  /// the platform keyguard usually authenticates first and this prompt is
+  /// cancelled, so a test cannot otherwise hold it open to reproduce that race.
+  final Future<bool> Function({String? appName})? authenticate;
+
   const CosmicLockScreen({
     super.key,
     required this.foldable,
     required this.onUnlock,
     required this.apps,
     this.initialAuthenticated = false,
+    this.authenticate,
   });
 
   @override
@@ -83,6 +93,12 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// affordance; a single retry covers a genuinely transient cancellation
   /// without becoming a storm.
   bool _retriedArm = false;
+
+  Future<bool> _authenticate(String? appName) async {
+    final override = widget.authenticate;
+    if (override != null) return override(appName: appName);
+    return LauncherBridge.authenticate(appName: appName);
+  }
 
   @override
   void initState() {
@@ -256,9 +272,14 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.resumed:
+        // Coming back to the front. Usually this panel was cleared by an
+        // unlock, but an app launched from it leaves it up, and that panel is
+        // still on screen — so this starts a fresh lock session and it has to
+        // accept an unlock, and re-arm the reader, all over again.
+        _unlockStarted = false;
+        _unlockedBySensor = false;
         // The panel may or may not be on by now; arming is refused cheaply if
         // it is not, and the screen-on broadcast will arm it for real.
-        if (_unlockedBySensor) return;
         _armFingerprintSensor();
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
@@ -436,15 +457,54 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     }
   }
 
-  void _unlock({VoidCallback? onComplete}) {
+  /// The app a shortcut or bubble asked to open, held until authentication
+  /// finishes — by whichever path gets there first.
+  ///
+  /// The reader is the side power button, so the platform keyguard owns the
+  /// sensor and normally authenticates before this overlay's own prompt does:
+  /// it reports `userPresent`, or a silent sensor success, and both used to
+  /// clear the overlay without launching anything. Remembering the request is
+  /// what makes "open the dialer" survive that ordering — without it the user
+  /// authenticates and lands back on a lock surface with no app opened.
+  AppEntry? _pendingLaunch;
+
+  /// Set while the overlay is unlocking, so a second authentication path
+  /// arriving late can neither unlock twice nor launch twice.
+  bool _unlockStarted = false;
+
+  Future<void> _unlock() async {
+    if (_unlockStarted || _disposed) return;
+    _unlockStarted = true;
     HapticFeedback.lightImpact();
+
+    final pending = _pendingLaunch;
+    _pendingLaunch = null;
+
+    if (pending != null) {
+      // Launch with this panel still up, and leave it up.
+      //
+      // It is the only cover over the ColorOS lock screen, so dropping it
+      // during the handoff exposed the system keyguard — and dropping it at
+      // all meant closing the launched app landed the user behind the panel
+      // instead of back on it. Staying locked is also what a lock-screen
+      // shortcut should do: the app opens, and closing it returns here.
+      final launched = await LauncherBridge.launchApp(pending);
+      if (!mounted) return;
+      if (!launched) {
+        // Nothing opened, so this panel never went anywhere. Make it usable
+        // again and say so.
+        _unlockStarted = false;
+        _showTurbulence('COULD NOT OPEN ${pending.label.toUpperCase()}');
+      }
+      return;
+    }
+
     _slideAnimation = Tween<double>(begin: _dragOffset, end: 900.0).animate(
       CurvedAnimation(parent: _slideController, curve: Curves.easeInCubic),
     );
-    _slideController.forward(from: 0.0).then((_) {
-      widget.onUnlock();
-      onComplete?.call();
-    });
+    await _slideController.forward(from: 0.0);
+    if (!mounted) return;
+    widget.onUnlock();
   }
 
   void _snapBack() {
@@ -458,40 +518,70 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
   Future<void> _unlockAndLaunchApp(AppEntry app) async {
     HapticFeedback.lightImpact();
-    // Prompt biometric authentication for launching this specific app
-    final authenticated = await LauncherBridge.authenticate(appName: app.label);
+    // Record the request before authenticating. The platform keyguard may
+    // answer the touch itself and unlock via _onUserPresent, cancelling this
+    // prompt; the request has to outlive that.
+    _pendingLaunch = app;
+
+    final authenticated = await _authenticate(app.label);
+    // Another path already authenticated and is sliding the overlay away; its
+    // completion owns the pending launch now.
+    if (!mounted || _disposed || _unlockStarted) return;
+
     if (!authenticated) {
-      if (mounted) {
-        setState(() {
-          _turbulenceMessage = 'AUTH REQUIRED TO LAUNCH ${app.label.toUpperCase()}';
-        });
-        _turbulenceTimer?.cancel();
-        _turbulenceTimer = Timer(const Duration(milliseconds: 2500), () {
-          if (mounted) {
-            setState(() {
-              _turbulenceMessage = null;
-            });
-          }
-        });
-      }
+      _pendingLaunch = null;
+      _showTurbulence('AUTH REQUIRED TO LAUNCH ${app.label.toUpperCase()}');
       return;
     }
 
     HapticFeedback.mediumImpact();
-    _unlock(onComplete: () {
-      LauncherBridge.launchApp(app);
-    });
+    _unlock();
   }
 
-  Future<void> _launchQuickApp(String packageName) async {
-    // The shortcut circles render before the app list has loaded, so there may
-    // be nothing to resolve yet.
-    if (widget.apps.isEmpty) return;
-    final app = widget.apps.firstWhere(
-      (a) => a.packageName == packageName,
-      orElse: () => widget.apps.first,
-    );
-    await _unlockAndLaunchApp(app);
+  /// Opens the phone or camera shortcut.
+  ///
+  /// The target is resolved from the installed app list rather than from a
+  /// hard-coded package name: no package name is portable, and the two this
+  /// used to name (`com.android.phone`, `com.android.camera`) are respectively
+  /// not launchable and not installed on the tested device.
+  Future<void> _openQuickShortcut(QuickShortcut shortcut) async {
+    final target = QuickShortcutResolver.resolve(shortcut, widget.apps);
+
+    if (target != null) {
+      debugPrint(
+        'Quick shortcut ${shortcut.name}: ${target.label} '
+        '(${target.packageName}/${target.activityName})',
+      );
+      await _unlockAndLaunchApp(target);
+      return;
+    }
+
+    // The list holds LAUNCHER activities only and is empty until the first
+    // scan finishes, so the shortcut can be tapped before it can be resolved.
+    // Ask the platform for its own handler instead of going dead.
+    debugPrint('Quick shortcut ${shortcut.name}: no app matched, asking platform');
+    if (await LauncherBridge.openQuickShortcut(shortcut)) {
+      HapticFeedback.mediumImpact();
+      _unlock();
+      return;
+    }
+
+    _showTurbulence('NO ${shortcut.label.toUpperCase()} APP FOUND');
+  }
+
+  void _showTurbulence(String message) {
+    if (!mounted) return;
+    setState(() {
+      _turbulenceMessage = message;
+    });
+    _turbulenceTimer?.cancel();
+    _turbulenceTimer = Timer(const Duration(milliseconds: 2500), () {
+      if (mounted) {
+        setState(() {
+          _turbulenceMessage = null;
+        });
+      }
+    });
   }
 
   @override
@@ -817,12 +907,14 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                             _quickActionCircle(
                               icon: Icons.phone_rounded,
                               tooltip: 'Open Phone',
-                              onTap: () => _launchQuickApp('com.android.phone'),
+                              onTap: () =>
+                                  _openQuickShortcut(QuickShortcut.phone),
                             ),
                             _quickActionCircle(
                               icon: Icons.camera_alt_rounded,
                               tooltip: 'Open Camera',
-                              onTap: () => _launchQuickApp('com.android.camera'),
+                              onTap: () =>
+                                  _openQuickShortcut(QuickShortcut.camera),
                             ),
                           ],
                         ),

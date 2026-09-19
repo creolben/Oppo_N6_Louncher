@@ -152,3 +152,96 @@ verified forced revert on this device.
 intent-filter (sufficient for the home role) but also sets `android:screenOrientation="portrait"` and
 `android:resizeableActivity` is not declared — both work against foldable posture handling and Android
 16 large-screen resizability expectations.
+
+---
+
+## 5. Web search APIs — can a launcher use "native" web search?
+
+Probed directly against the Find N6 (CPH2765, ColorOS 16 / Android 16, build
+`CPH2765_16.0.10.500(EX01)`, ROM `V16.1.0`) and AOSP `main` source on 2026-09.
+
+**[V] `Intent.ACTION_WEB_SEARCH` is public, and returns nothing.** Verbatim from
+`core/java/android/content/Intent.java`:
+
+> Activity Action: Perform a web search.
+> Input: `getStringExtra(SearchManager.QUERY)` is the text to search for. If it is a url starts with
+> http or https, the site will be opened. If it is plain text, Google search will be applied.
+> **Output: nothing.**
+
+So it is a one-way handoff. There is no public Android API that returns web search *results* as
+structured data to a third-party app.
+
+**[V] The related query APIs are hidden, not merely restricted.** In
+`core/java/android/app/SearchManager.java`:
+
+- `getSuggestions(...)` — `@hide` + `@UnsupportedAppUsage`, and it returns autocomplete *strings*
+  via a deprecated searchable path, not results.
+- `getWebSearchActivity()` — `@hide` + `@UnsupportedAppUsage`.
+- `getSearchableInfo(ComponentName)` returns the hidden `SearchableInfo` type.
+
+**[V] On this device, `ACTION_WEB_SEARCH` raises a system chooser.** There is no platform default:
+
+```
+$ cmd package query-activities -a android.intent.action.WEB_SEARCH --brief
+7 activities found:  # all isDefault=true, none is the OEM handler
+  com.android.chrome/…searchwidget.SearchActivity
+  com.google.android.googlequicksearchbox/…google.GoogleSearch
+  com.brave.browser/…chrome.IntentDispatcher
+  com.brave.browser/…searchwidget.SearchActivity
+  com.duckduckgo.mobile.android/…SelectedTextSearchActivity
+  com.microsoft.bing/…browser.IntentDispatchActivity
+  com.sec.android.app.sbrowser/.SBrowserMainActivity
+
+$ cmd package resolve-activity -a android.intent.action.WEB_SEARCH
+  name=com.android.internal.app.ResolverActivity   # i.e. a chooser
+```
+
+No OPPO/ColorOS first-party search activity claims it (`pm list packages` shows no such component),
+so the OEM has not supplied one either.
+
+**[V] `ACTION_ASSIST` *also* raises a chooser**, despite the device assistant setting being set:
+
+```
+$ cmd package resolve-activity -a android.intent.action.ASSIST
+  name=com.android.internal.app.ResolverActivity
+$ settings get secure assistant
+  com.google.android.googlequicksearchbox/com.google.android.voiceinteraction.GsaVoiceInteractionService
+```
+
+The assistant setting names a *voice* interaction service, which is why the text-assist intent still
+has no default. Do not assume the assistant setting gives you an assist handler.
+
+**[V] The BROWSER role *is* held, so `ACTION_VIEW` launches silently.**
+
+```
+$ cmd role get-role-holders android.app.role.BROWSER
+  com.brave.browser
+$ cmd package resolve-activity -a android.intent.action.VIEW -c android.intent.category.BROWSABLE -d https://example.com
+  name=com.google.android.apps.chrome.IntentDispatcher
+  packageName=com.brave.browser      # single result, no chooser
+```
+
+Consequence for design: **open URLs via `ACTION_VIEW`, hand raw queries via `ACTION_WEB_SEARCH` and
+label the latter honestly** (it raises a picker on this build).
+
+**[V] `RoleManager.getRoleHolders` is not public API.** `javap` over the compile-SDK
+`android.jar` (platform 36) shows only:
+
+```
+public boolean isRoleHeld(java.lang.String);
+```
+
+There is no public way to read the browser role *holder's* package. `isRoleHeld` answers only whether
+*this* app holds the role. Code that reads the holder must be dropped — it does not compile.
+
+### Local traps found while implementing
+
+- **`INTERNET` is declared only in `android/app/src/debug/AndroidManifest.xml` and
+  `android/app/src/profile/AndroidManifest.xml`.** A debug build therefore has network access and a
+  release build does not. Any HTTP-backed search provider needs `<uses-permission
+  android:name="android.permission.INTERNET"/>` added to the *main* manifest.
+- **`<queries>` declarations are required** for `resolveActivity()` on these intents to work under
+  Android 11+ package-visibility filtering. Both the `WEB_SEARCH` and
+  `VIEW`+`BROWSABLE`+`https` intents are now declared and verified present in the merged manifest and
+  in `dumpsys package … queriesIntents` on device.
+
