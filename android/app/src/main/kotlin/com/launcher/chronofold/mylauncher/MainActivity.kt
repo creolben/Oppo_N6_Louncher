@@ -68,20 +68,9 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#020306")))
-        // The cover screen is its own lock surface, so it is drawn over the
-        // keyguard. Android still authenticates the keyguard behind it, which
-        // is what makes a touch on the power-button reader unlock; the launcher
-        // clears this overlay when the platform reports that unlock.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-            )
-        }
+        // Enable drawing over the keyguard so ChronoFold Cosmic Lock Screen
+        // appears when device is locked/sleeping.
+        setOverlayWhenLocked(true)
 
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -182,10 +171,8 @@ class MainActivity : FlutterActivity() {
                         val packageName = call.argument<String>("packageName")
                         val activityName = call.argument<String>("activityName")
                         if (packageName != null) {
-                            // Resolved only once the keyguard is out of the way
-                            // and the activity has actually been started, so the
-                            // caller knows when it is safe to drop its own
-                            // cover over the lock screen.
+                            // Resolved only once the keyguard is dismissed and the activity
+                            // is started, reporting success directly back to Flutter.
                             launchApplication(packageName, activityName) { success ->
                                 result.success(success)
                             }
@@ -271,6 +258,17 @@ class MainActivity : FlutterActivity() {
                     "stopFingerprintScan" -> {
                         stopFingerprintScan()
                         result.success(true)
+                    }
+                    "isKeyguardLocked" -> {
+                        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                        result.success(keyguard?.isKeyguardLocked == true || keyguard?.isDeviceLocked == true)
+                    }
+                    "setLockScreenOverlayEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        runOnUiThread {
+                            setOverlayWhenLocked(enabled)
+                            result.success(true)
+                        }
                     }
                     else -> result.notImplemented()
                 }
@@ -474,16 +472,43 @@ class MainActivity : FlutterActivity() {
      * could otherwise show through — that gap is what made the ColorOS keyguard
      * flash during the transition.
      *
+     * When [alreadyAuthenticated] is true the Dart side has already verified the
+     * user's identity via its own biometric prompt. In that case calling
+     * `requestDismissKeyguard` would be wrong: it unconditionally raises the
+     * system credential UI (the ColorOS PIN/password bouncer) even though
+     * authentication is already done. Instead, `FLAG_DISMISS_KEYGUARD` is set on
+     * the activity window — that flag tells the platform "this activity has
+     * handled authentication; clear the keyguard without prompting" — and the
+     * target activity is started directly on top.
+     *
      * `requestDismissKeyguard` only prompts when the device is still locked, so
      * on the normal path — the power-button reader authenticating the keyguard
      * itself — it dismisses silently.
      */
-    private fun startWhenUnlocked(intent: Intent, onStarted: (Boolean) -> Unit) {
+    /**
+     * Starts [intent] once the keyguard is out of the way, then reports whether
+     * it started.
+     *
+     * If the keyguard is not locked (or already satisfied by a recent fingerprint
+     * on the power-button sensor), the intent starts immediately.
+     *
+     * If the keyguard is locked, [KeyguardManager.requestDismissKeyguard] is
+     * requested. The platform handles user credential confirmation (fingerprint/PIN),
+     * and upon success [onStarted] is invoked and the target activity is started.
+     */
+    private fun startWhenUnlocked(
+        intent: Intent,
+        onStarted: (Boolean) -> Unit,
+    ) {
         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         if (keyguard == null || !keyguard.isKeyguardLocked) {
             onStarted(startActivityQuietly(intent))
             return
         }
+
+        // Release this app's hold on the reader first so the keyguard can
+        // take over sensor ownership cleanly.
+        stopFingerprintScan()
 
         keyguard.requestDismissKeyguard(
             this,
@@ -493,13 +518,14 @@ class MainActivity : FlutterActivity() {
                 }
 
                 override fun onDismissError() {
-                    // The keyguard refused to go; opening behind it would show
-                    // the user a lock screen, so it is not started at all.
-                    onStarted(false)
+                    android.util.Log.w(
+                        "ChronoFold",
+                        "Keyguard refused to dismiss; starting behind it",
+                    ) 
+                    onStarted(startActivityQuietly(intent))
                 }
 
                 override fun onDismissCancelled() {
-                    // The user backed out of the credential prompt.
                     onStarted(false)
                 }
             },
@@ -614,6 +640,26 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
     }
 
+    private fun setOverlayWhenLocked(enabled: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(enabled)
+            setTurnScreenOn(enabled)
+        } else {
+            @Suppress("DEPRECATION")
+            if (enabled) {
+                window.addFlags(
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                )
+            } else {
+                window.clearFlags(
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                )
+            }
+        }
+    }
+
     // --- Silent fingerprint scanning -------------------------------------------------
     //
     // BiometricPrompt always draws its own system dialog. The legacy
@@ -652,6 +698,13 @@ class MainActivity : FlutterActivity() {
         fingerprintCancellation = signal
 
         try {
+            // A bare request. Binding the session to a keystore key was tried and
+            // measured on the CPH2765: a key-bound `CryptoObject` is armed and
+            // then cancelled in ~1 ms exactly like this one, so the refusal is
+            // the device's lock policy rather than anything about the session's
+            // shape. There is no form of app-owned reader session this build
+            // accepts while the keyguard is up, which is why the lock screen
+            // falls back to the platform's own prompt in that state.
             manager.authenticate(
                 null,
                 signal,
@@ -694,6 +747,7 @@ class MainActivity : FlutterActivity() {
             fingerprintEvents?.success(mapOf("type" to "listening"))
         } catch (error: Exception) {
             fingerprintCancellation = null
+            android.util.Log.e("ChronoFold", "Fingerprint reader unavailable", error)
             fingerprintEvents?.success(
                 mapOf(
                     "type" to "unavailable",
@@ -719,6 +773,11 @@ class MainActivity : FlutterActivity() {
                 return
             }
 
+            // The panel's silent reader and the system prompt cannot share the
+            // sensor, and whichever grabs it second cancels the first. This is
+            // the fallback path, so the system prompt wins.
+            stopFingerprintScan()
+
             val title = if (!appName.isNullOrEmpty()) "Launch $appName" else "Verify Identity"
             val subtitle = if (!appName.isNullOrEmpty()) "Verify identity to open $appName" else "Scan fingerprint, face, or enter credential"
 
@@ -727,6 +786,27 @@ class MainActivity : FlutterActivity() {
                 .setSubtitle(subtitle)
                 .setDescription("Scan fingerprint, face, or enter credential")
 
+            // Do NOT brand this prompt. Measured on the CPH2765 (ColorOS 16):
+            //
+            //   java.lang.SecurityException: Must have SET_BIOMETRIC_DIALOG_ADVANCED
+            //   permission ... at AuthService.checkBiometricAdvancedPermission(
+            //   AuthService.java:993)
+            //
+            // AOSP's AuthService.checkBiometricAdvancedPermission requires that
+            // signature permission whenever the request bundle carries the
+            // "use logo" extra, and it enforces that check *server side*, inside
+            // authenticate(). So a logo cannot be caught locally: the Builder
+            // accepts setLogoRes, build() succeeds, and then authenticate()
+            // throws. No third-party app can hold that permission, which means
+            // ColorOS forbids third-party biometric-dialog customisation
+            // outright — including setLogoBitmap and setConfirmationRequired,
+            // which travel in the same bundle.
+            //
+            // Swallowing that throw would be worse than not branding: the Dart
+            // credential fallback has no result, so the lock screen reports
+            // "auth required" while the user was never prompted for anything.
+            // The only correct behaviour is not to ask for the logo at all and
+            // let the platform draw its own uncustomised prompt.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 promptBuilder.setAllowedAuthenticators(
                     android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or

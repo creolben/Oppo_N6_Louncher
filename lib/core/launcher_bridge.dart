@@ -64,6 +64,11 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     _ensureHandlerInitialized();
   }
 
+  @visibleForTesting
+  static void dispatchUserPresentForTesting() {
+    _onUserPresentListener?.call();
+  }
+
   /// Fires when the panel turns on, i.e. the moment the platform will let an
   /// app hold the fingerprint reader again.
   static void setScreenOnListener(VoidCallback? onScreenOn) {
@@ -222,7 +227,30 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         });
         return success ?? false;
       } catch (e) {
-        debugPrint('Biometric authentication failed or canceled: $e');
+        // Two very different failures collapse into `false` here, and the
+        // difference matters: a user dismissing the prompt is a real "no", but
+        // a prompt that never opened is a platform refusal, and reporting it as
+        // a plain denial is what makes it look like the user did nothing.
+        //
+        // Measured on ColorOS 16 (CPH2765): branding the BiometricPrompt with a
+        // logo made authenticate() throw
+        //   SecurityException: Must have SET_BIOMETRIC_DIALOG_ADVANCED permission
+        // server-side, so every app tapped on the lock screen produced "auth
+        // required" without any prompt being shown. Nothing in the UI could
+        // distinguish that from a cancel. Name it explicitly so the next
+        // occurrence is one line of log rather than a device investigation.
+        final text = e.toString();
+        final refusedByPlatform = text.contains('SecurityException') ||
+            text.contains('permission') ||
+            text.contains('SET_BIOMETRIC_DIALOG_ADVANCED');
+        if (refusedByPlatform) {
+          debugPrint(
+            'Biometric prompt was REFUSED by the platform and never opened '
+            '(this is not a user cancel): $e',
+          );
+        } else {
+          debugPrint('Biometric authentication failed or canceled: $e');
+        }
         return false;
       }
     } else {
@@ -309,6 +337,47 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return false;
   }
 
+  /// Whether the Android Keyguard (lock screen) is currently locked.
+  static Future<bool> isKeyguardLocked() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? locked = await _appsChannel.invokeMethod('isKeyguardLocked');
+        return locked ?? false;
+      } catch (e) {
+        debugPrint('Check keyguard locked failed: $e');
+        return false;
+      }
+    }
+    // On non-Android test environments, simulate locked keyguard for lockscreen fixtures.
+    return true;
+  }
+
+  /// Enables or disables drawing MainActivity over the lock screen.
+  /// In Native Mode, this is false so ColorOS handles the lockscreen.
+  static Future<bool> setLockScreenOverlayEnabled(bool enabled) async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? success = await _appsChannel.invokeMethod('setLockScreenOverlayEnabled', {
+          'enabled': enabled,
+        });
+        return success ?? false;
+      } catch (e) {
+        debugPrint('Set lock screen overlay enabled failed: $e');
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Launches [app].
+  ///
+  /// The platform decides how to get past the keyguard, and the distinction
+  /// matters: while the keyguard is locked the activity must be launched *with*
+  /// the keyguard dismissed, because a plain start places it behind the lock
+  /// screen — running but invisible, which reads as the app never opening. That
+  /// dismiss is what makes the app visible, and on a keyguard an earlier
+  /// authentication has already satisfied it dismisses silently rather than
+  /// asking again.
   static Future<bool> launchApp(AppEntry app) async {
     if (!kIsWeb && Platform.isAndroid) {
       try {

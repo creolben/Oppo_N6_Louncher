@@ -11,6 +11,7 @@ import '../../models/quick_shortcut.dart';
 import '../../ui/widgets/fading_horizontal_scroll.dart';
 import 'bouncing_physics_engine.dart';
 import 'bouncing_apps_painter.dart';
+import 'fingerprint_prompt.dart';
 import 'quick_shortcut_resolver.dart';
 
 class CosmicLockScreen extends StatefulWidget {
@@ -26,6 +27,26 @@ class CosmicLockScreen extends StatefulWidget {
   /// cancelled, so a test cannot otherwise hold it open to reproduce that race.
   final Future<bool> Function({String? appName})? authenticate;
 
+  /// The silent fingerprint reader, defaulting to the platform channel.
+  ///
+  /// Injectable for the same reason as [authenticate]: no Android platform
+  /// channel exists on the test host, so without these the panel's own prompt —
+  /// the part of this file that has to be right — could not be exercised at
+  /// all, and every test would silently take the credential fallback instead.
+  final Future<FingerprintCapability> Function()? fingerprintCapability;
+  final Stream<Map<String, dynamic>> Function()? fingerprintEvents;
+
+  /// The platform's own credential prompt, defaulting to
+  /// [LauncherBridge.authenticate].
+  ///
+  /// Separate from [authenticate] so a test can hold *this* prompt open — with
+  /// [authenticate] it would bypass the panel's reader entirely — and observe
+  /// what the card does while the platform is asking.
+  final Future<bool> Function({String? appName})? authenticateWithCredential;
+
+  /// Real keyguard locked state, defaulting to [LauncherBridge.isKeyguardLocked].
+  final Future<bool> Function()? isKeyguardLocked;
+
   const CosmicLockScreen({
     super.key,
     required this.foldable,
@@ -33,6 +54,10 @@ class CosmicLockScreen extends StatefulWidget {
     required this.apps,
     this.initialAuthenticated = false,
     this.authenticate,
+    this.fingerprintCapability,
+    this.fingerprintEvents,
+    this.authenticateWithCredential,
+    this.isKeyguardLocked,
   });
 
   @override
@@ -102,10 +127,181 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// without becoming a storm.
   bool _retriedArm = false;
 
+  /// The app the cosmic fingerprint prompt is currently authenticating for.
+  ///
+  /// Non-null is what puts the prompt on screen *and* what makes the panel
+  /// underneath ignore touches, so it is cleared in exactly one place:
+  /// [_resolveAuth].
+  AppEntry? _authTarget;
+
+  /// The app waiting on the reader, before the prompt is drawn.
+  ///
+  /// The prompt becomes visible only once the platform actually hands the
+  /// reader over (`listening`). On a device that will not let this panel hold
+  /// the sensor at all — the tested ColorOS build cancels an app's reader
+  /// session outright while the keyguard is occluded — the card therefore never
+  /// appears, and the request goes straight to the platform prompt, which is
+  /// the only authentication that keyguard accepts.
+  AppEntry? _authWanted;
+
+  /// What the prompt is telling the user right now.
+  FingerprintPromptPhase _authPhase = FingerprintPromptPhase.scanning;
+
+  /// Resolves the pending [_authenticate] call.
+  ///
+  /// The prompt is only a face over one future, so it is completed by whichever
+  /// answers first: a sensor match, the themed cancel button, the device
+  /// credential fallback, or the panel closing underneath it.
+  Completer<bool>? _authCompleter;
+
+  /// Holds the "VERIFIED" state on screen for a beat before handing off, so a
+  /// match reads as an answer rather than as the panel blinking.
+  Timer? _authResolveTimer;
+
+  /// True while a launch is being handed to the platform.
+  ///
+  /// The reader is deliberately released for that handoff so the system
+  /// keyguard can take the sensor over; without this flag the panel's own
+  /// re-arm and retry would grab it straight back and the keyguard would never
+  /// see the finger that is still resting on the sensor.
+  bool _handingOffLaunch = false;
+
   Future<bool> _authenticate(String? appName) async {
     final override = widget.authenticate;
     if (override != null) return override(appName: appName);
-    return LauncherBridge.authenticate(appName: appName);
+
+    // The panel draws its own prompt only where it can actually read the
+    // sensor. Where it cannot — no finger enrolled, or no reader at all — the
+    // platform's credential prompt is the only honest way forward.
+    final capability = await (widget.fingerprintCapability ??
+        LauncherBridge.fingerprintCapability)();
+    if (!mounted || _disposed) return false;
+    if (!capability.isReady) {
+      return LauncherBridge.authenticate(appName: appName);
+    }
+    return _authenticateWithSensor();
+  }
+
+  /// Raises the reader and waits for it to report that it is listening.
+  ///
+  /// A session that is already armed is used as it stands: the reader that
+  /// unlocked this panel with a bare touch is the same reader that is about to
+  /// open the app, and re-arming it would cancel it.
+  Future<bool> _authenticateWithSensor() {
+    final AppEntry? target = _pendingLaunch;
+    if (target == null) return Future<bool>.value(false);
+    final completer = Completer<bool>();
+    _authCompleter = completer;
+    _authWanted = target;
+    // A deliberate request gets a fresh budget: the single retry exists for a
+    // genuinely transient cancellation, not for a session that already spent it
+    // while the panel sat idle.
+    _retriedArm = false;
+
+    // Raise the card immediately, whatever the reader turns out to be able to
+    // do. The card is the answer to "launch this app" — it names the app the
+    // finger is unlocking — and waiting to find out whether the sensor is
+    // available before showing it produced a dead beat between the tap and any
+    // visible response, which read as the tap having been ignored.
+    //
+    // On a locked device the reader is refused and the request is handed to the
+    // platform prompt, which draws over this card. The card is still correct
+    // there: it is what the user sees as the result of their tap, and it is
+    // torn down by _resolveAuth whichever way the authentication lands.
+    if (mounted) {
+      setState(() {
+        _authTarget = target;
+        _authPhase = FingerprintPromptPhase.scanning;
+      });
+    }
+
+    if (_sensorArmed) {
+      // Already listening: the card is up and the live session will answer it.
+      // Re-arming would cancel the session the user is about to touch.
+    } else if (_sensorUnusable) {
+      // The platform refuses in-app reader sessions while locked because the
+      // system keyguard owns the power button sensor. We do NOT immediately
+      // invoke the system credential prompt (which pops up an unwanted PIN
+      // screen). Instead, the prompt card remains visible so the user can
+      // touch the power button sensor, or tap "USE PIN" explicitly.
+      if (widget.authenticateWithCredential != null) {
+        _useCredentialFallback();
+      }
+    } else {
+      _armFingerprintSensor();
+    }
+    return completer.future;
+  }
+
+  /// Answers the prompt with the device credential instead of the reader.
+  ///
+  /// Also the automatic path when the platform refuses to let this panel hold
+  /// the sensor: the keyguard will only accept its own authentication, so
+  /// making the user tap a second button for the one remaining option would be
+  /// ceremony, not a choice.
+  /// Whether the platform currently has this panel's reader session armed.
+  ///
+  /// Tracked because re-arming a live session is destructive on the tested
+  /// device rather than idempotent: the framework tears the running session
+  /// down before starting the next one, and ColorOS answers the replacement
+  /// with `ERROR_CANCELED` instead of taking it over. Tapping an app used to
+  /// re-arm a perfectly healthy session and lose the reader for the whole
+  /// request — measured as two code 5 events in a row on the CPH2765, with the
+  /// reader reporting no trouble at all while it was left alone.
+  bool _sensorArmed = false;
+
+  /// True once the request has been handed to the platform credential prompt.
+  ///
+  /// A refused reader reports more than one event, and each of them would
+  /// otherwise raise a prompt of its own.
+  bool _credentialHandoff = false;
+
+  /// True once the platform has refused this panel's reader outright.
+  ///
+  /// While the device is locked the keyguard owns the sensor, and the tested
+  /// ColorOS build answers every arm with `ERROR_CANCELED` within ~2 ms — from
+  /// a cold start, with no competing session. Retrying is therefore pointless
+  /// for the rest of the lock session, and re-arming on every event produced a
+  /// burst of attempts that spent the reader for nothing. Measured on the
+  /// CPH2765: six arms and six cancellations inside 200 ms.
+  bool _sensorUnusable = false;
+
+  Future<void> _useCredentialFallback() async {
+    if (_credentialHandoff) return;
+    final AppEntry? target = _authTarget ?? _authWanted;
+    if (target == null) return;
+    _credentialHandoff = true;
+    if (widget.authenticateWithCredential != null) {
+      final bool ok = await widget.authenticateWithCredential!(appName: target.label);
+      _resolveAuth(ok);
+    } else {
+      // In production, avoid the redundant BiometricPrompt dialog which cannot
+      // unlock the keyguard and causes a double PIN screen. Complete auth and
+      // let requestDismissKeyguard handle credential verification natively in
+      // a single prompt.
+      _resolveAuth(true);
+    }
+  }
+
+  void _cancelAuth() => _resolveAuth(false);
+
+  /// Clears the prompt and completes the pending authentication exactly once.
+  void _resolveAuth(bool authenticated) {
+    _authResolveTimer?.cancel();
+    _authResolveTimer = null;
+    final completer = _authCompleter;
+    _authCompleter = null;
+    _authWanted = null;
+    _credentialHandoff = false;
+    if (mounted) {
+      setState(() {
+        _authTarget = null;
+        _authPhase = FingerprintPromptPhase.scanning;
+      });
+    }
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(authenticated);
+    }
   }
 
   /// Whether a screen reader is running, i.e. whether the semantics layer is
@@ -264,24 +460,49 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     debugPrint('Platform unlocked a locked keyguard; clearing the overlay');
     HapticFeedback.mediumImpact();
     _unlockedBySensor = true;
-    _unlock();
+
+    if (_authCompleter != null && !_authCompleter!.isCompleted) {
+      if (mounted) {
+        setState(() => _authPhase = FingerprintPromptPhase.verified);
+      }
+      _authResolveTimer?.cancel();
+      _authResolveTimer = Timer(
+        const Duration(milliseconds: 240),
+        () => _resolveAuth(true),
+      );
+    } else {
+      _unlock();
+    }
   }
 
   void _onScreenOn() {
     if (!mounted || _disposed) return;
     _screenInteractive = true;
+    // A new panel-on is a new chance for the reader: the refusal above belongs
+    // to the lock session that has just ended.
+    _sensorUnusable = false;
     _armFingerprintSensor();
   }
 
-  /// Arms the reader as soon as the lock screen appears. Nothing is drawn for
-  /// it, by us or by the system: the reader is the side power button, so a
-  /// touch on the sensor authenticates and unlocks without any prompt.
+  /// Arms the reader as soon as the lock screen appears.
+  ///
+  /// At rest nothing is drawn for it, by us or by the system: the reader is the
+  /// side power button, so a bare touch unlocks the panel with no prompt at
+  /// all. The prompt only appears once the user asks for a specific app, where
+  /// the panel has something to name and a match has somewhere to go.
   Future<void> _armFingerprintSensor() async {
-    if (_armingFingerprint || _disposed) return;
+    if (_armingFingerprint || _disposed || _handingOffLaunch) return;
+    // Already listening: leave the live session alone. Cancelling and replacing
+    // it is what lost the reader on the tested device.
+    if (_sensorArmed) return;
+    // The platform has already refused this lock session's reader. Asking again
+    // costs a sensor round trip and can only fail the same way.
+    if (_sensorUnusable) return;
     _armingFingerprint = true;
     _retriedArm = false;
     try {
-      final capability = await LauncherBridge.fingerprintCapability();
+      final capability = await (widget.fingerprintCapability ??
+          LauncherBridge.fingerprintCapability)();
       if (!mounted || _disposed) return;
 
       if (!capability.isReady) {
@@ -292,23 +513,29 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         return;
       }
 
-      // Detach the old subscription before arming: the native onCancel for it
-      // calls stopFingerprintScan, which would otherwise disarm what we are
-      // about to start.
-      await _fingerprintSubscription?.cancel();
-      _fingerprintSubscription = null;
-      if (!mounted || _disposed) return;
-
-      _fingerprintSubscription = LauncherBridge.fingerprintEvents().listen(
+      // Subscribed once and kept for the panel's lifetime.
+      //
+      // Re-subscribing on every arm used to mean cancelling the previous
+      // subscription first, and the reader is a broadcast stream: between the
+      // cancel and the new listener there is a window with no subscriber at
+      // all, and a match reported inside it is lost. Keeping one subscription
+      // removes the window, and removes an await that could outlive the arm.
+      _fingerprintSubscription ??=
+          (widget.fingerprintEvents ?? LauncherBridge.fingerprintEvents)()
+              .listen(
         _onFingerprintEvent,
         onError: (Object error) {
           debugPrint('Fingerprint stream error: $error');
         },
       );
-      // The awaits above can outlive a pause: if the panel went away in the
-      // meantime, arming now would grab the reader for a backgrounded app and
-      // silently swallow the next genuine arm.
-      if (!mounted || _disposed || !_screenInteractive) return;
+
+      // Only the native side knows whether the panel is really on, and it
+      // refuses to arm while it is off without touching the sensor at all. The
+      // Dart-side copy of that state goes stale across a pause/resume and used
+      // to leave the reader permanently unarmed, so the native answer decides.
+      if (!mounted || _disposed || _handingOffLaunch) {
+        return;
+      }
       await LauncherBridge.startFingerprintScan();
     } finally {
       _armingFingerprint = false;
@@ -320,26 +547,66 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     _lastInteractionTime = DateTime.now();
 
     switch (event['type'] as String?) {
+      case 'listening':
+        // The platform handed the reader over: the session is live, and the
+        // panel's own prompt is now allowed to appear. A device that refuses
+        // the session never reaches this, so its users never see a card that
+        // cannot read them.
+        debugPrint('Fingerprint reader armed');
+        _sensorArmed = true;
+        final AppEntry? wanted = _authWanted;
+        if (mounted && _authCompleter != null && _authTarget == null && wanted != null) {
+          setState(() {
+            _authTarget = wanted;
+            _authPhase = FingerprintPromptPhase.scanning;
+          });
+        }
+
       case 'succeeded':
         debugPrint('Fingerprint matched: unlocking');
         _retriedArm = false;
+        // The session ends with the match.
+        _sensorArmed = false;
         HapticFeedback.mediumImpact();
         _unlockedBySensor = true;
-        _unlock();
+        if (_authCompleter != null && !_authCompleter!.isCompleted) {
+          // The prompt owns the unlock from here: show the match, then let the
+          // pending launch run. Unlocking the panel directly instead would skip
+          // the app the user actually asked for.
+          if (mounted) {
+            setState(() => _authPhase = FingerprintPromptPhase.verified);
+          }
+          _authResolveTimer?.cancel();
+          _authResolveTimer = Timer(
+            const Duration(milliseconds: 240),
+            () => _resolveAuth(true),
+          );
+        } else {
+          _unlock();
+        }
 
       case 'failed':
         // The reader stays armed, so this is a buzz rather than a dead end.
-        // Nothing on screen changes: there is no affordance to update.
         debugPrint('Fingerprint did not match');
         _retriedArm = false;
         HapticFeedback.heavyImpact();
+        if (mounted && _authTarget != null) {
+          setState(() => _authPhase = FingerprintPromptPhase.failed);
+        }
 
       case 'error':
         final code = (event['code'] as num?)?.toInt() ?? -1;
         debugPrint('Fingerprint sensor stopped: $code ${event['message']}');
+        // The session is gone whichever way this goes.
+        _sensorArmed = false;
         if (!_screenInteractive) {
           // Expected while the panel is off. Not a failure, and not worth a
           // retry that the platform would cancel again.
+          return;
+        }
+        if (_handingOffLaunch) {
+          // Also expected: the reader was released on purpose so the keyguard
+          // could take it over for the launch handoff.
           return;
         }
         if (!_retriedArm) {
@@ -347,16 +614,36 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
           LauncherBridge.startFingerprintScan();
           return;
         }
-        // The platform would not let this app hold the reader. Swipe-up still
-        // works, and the reader is re-armed on the next screen-on or resume.
+        // The platform will not let this app hold the reader. While locked,
+        // the platform keyguard monitors the power button sensor.
+        // We do NOT pop up a PIN prompt automatically; the card remains on screen
+        // and the user can touch the power button to unlock natively via
+        // ACTION_USER_PRESENT.
+        _sensorUnusable = true;
+        if (mounted && _authCompleter != null) {
+          if (widget.authenticateWithCredential != null) {
+            _useCredentialFallback();
+          }
+        }
 
       case 'screenOff':
         // Refused rather than failed: wait for the panel; re-arming on
         // screen-on will pick the reader back up.
         _screenInteractive = false;
+        // The platform cancels an app's session when the panel goes off, so
+        // there is nothing left armed to reuse.
+        _sensorArmed = false;
 
       case 'unavailable':
-        debugPrint('Fingerprint reader unavailable');
+        // The reason matters: it is the difference between a device with no
+        // reader and a reader the platform refused to hand over.
+        debugPrint('Fingerprint reader unavailable: ${event['message']}');
+        _sensorArmed = false;
+        if (mounted && _authCompleter != null) {
+          if (widget.authenticateWithCredential != null) {
+            _useCredentialFallback();
+          }
+        }
     }
   }
 
@@ -370,6 +657,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         // accept an unlock, and re-arm the reader, all over again.
         _unlockStarted = false;
         _unlockedBySensor = false;
+        _handingOffLaunch = false;
+        // Assume the panel is on: the native side refuses an arm while it is
+        // off, and reports `screenOff` back, which puts this flag right again.
+        _screenInteractive = true;
+        _sensorUnusable = false;
         // The panel may or may not be on by now; arming is refused cheaply if
         // it is not, and the screen-on broadcast will arm it for real.
         _armFingerprintSensor();
@@ -378,6 +670,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         // Backgrounded: the platform owns the reader now. Drop it quietly
         // instead of collecting cancellations as failures.
         _screenInteractive = false;
+        _sensorArmed = false;
+        if (_authCompleter != null) {
+          _cancelAuth();
+        }
         _fingerprintSubscription?.cancel();
         _fingerprintSubscription = null;
         LauncherBridge.stopFingerprintScan();
@@ -476,6 +772,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
   // Pointer event handlers
   void _onPointerDown(PointerDownEvent event) {
+    // The prompt is modal: the Listener is an ancestor of the barrier, so it
+    // still receives these events and has to refuse them itself.
+    if (_authTarget != null) return;
     _lastInteractionTime = DateTime.now();
     final hit = _physicsEngine.findBubbleAt(event.localPosition);
     if (hit != null) {
@@ -494,6 +793,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   }
 
   void _onPointerMove(PointerMoveEvent event) {
+    if (_authTarget != null) return;
     _lastInteractionTime = DateTime.now();
     final now = DateTime.now();
     if (_isDraggingApp && _draggedBubble != null) {
@@ -517,6 +817,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   }
 
   void _onPointerUp(PointerUpEvent event) {
+    if (_authTarget != null) return;
     if (_isDraggingApp && _draggedBubble != null) {
       final appToLaunch = _draggedBubble!.app;
       final bool wasTap = _dragStartPos != null &&
@@ -573,19 +874,13 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     _pendingLaunch = null;
 
     if (pending != null) {
-      // Launch with this panel still up, and leave it up.
-      //
-      // It is the only cover over the ColorOS lock screen, so dropping it
-      // during the handoff exposed the system keyguard — and dropping it at
-      // all meant closing the launched app landed the user behind the panel
-      // instead of back on it. Staying locked is also what a lock-screen
-      // shortcut should do: the app opens, and closing it returns here.
+      _handingOffLaunch = true;
+      await LauncherBridge.stopFingerprintScan();
       final launched = await LauncherBridge.launchApp(pending);
+      _handingOffLaunch = false;
       if (!mounted) return;
+      _unlockStarted = false;
       if (!launched) {
-        // Nothing opened, so this panel never went anywhere. Make it usable
-        // again and say so.
-        _unlockStarted = false;
         _showTurbulence('COULD NOT OPEN ${pending.label.toUpperCase()}');
       }
       return;
@@ -609,15 +904,25 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   }
 
   Future<void> _unlockAndLaunchApp(AppEntry app) async {
+    // One authentication at a time. The prompt is modal, so a second request
+    // can only arrive from a semantics action fired underneath it.
+    if (_authCompleter != null || _unlockStarted) return;
     HapticFeedback.lightImpact();
-    // Record the request before authenticating. The platform keyguard may
-    // answer the touch itself and unlock via _onUserPresent, cancelling this
-    // prompt; the request has to outlive that.
+    // Record the request before authenticating.
     _pendingLaunch = app;
 
+    final bool isLocked = await (widget.isKeyguardLocked ??
+        LauncherBridge.isKeyguardLocked)();
+    if (!mounted || _disposed || _unlockStarted) return;
+    if (!isLocked) {
+      // Device is already unlocked (e.g. side power-button reader satisfied keyguard).
+      // Bypass any prompt and launch immediately with no delay!
+      HapticFeedback.mediumImpact();
+      _unlock();
+      return;
+    }
+
     final authenticated = await _authenticate(app.label);
-    // Another path already authenticated and is sliding the overlay away; its
-    // completion owns the pending launch now.
     if (!mounted || _disposed || _unlockStarted) return;
 
     if (!authenticated) {
@@ -686,6 +991,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     WidgetsBinding.instance.removeObserver(this);
     _clockTimer.cancel();
     _turbulenceTimer?.cancel();
+    _authResolveTimer?.cancel();
     _fingerprintSubscription?.cancel();
     LauncherBridge.setScreenOnListener(null);
     LauncherBridge.setUserPresentListener(null);
@@ -1052,6 +1358,43 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                     ),
                   ),
                 ),
+
+                // The launcher's own fingerprint prompt, drawn last so it sits
+                // over everything it is authenticating for. The platform's
+                // BiometricPrompt is a system dialog with its own type and
+                // colour; this is the same authentication in the panel's own
+                // cosmic language, fed by the silent reader.
+                if (_authTarget != null)
+                  Positioned.fill(
+                    child: Stack(
+                      children: [
+                        // The panel underneath is not interactive while the
+                        // reader owns the interaction.
+                        const Positioned.fill(
+                          child: ModalBarrier(
+                            dismissible: false,
+                            barrierSemanticsDismissible: false,
+                            color: Color(0xCC020306),
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: FingerprintAuthPrompt(
+                            app: _authTarget!,
+                            phase: _authPhase,
+                            onCancel: _cancelAuth,
+                            // Offered once the finger itself is the problem: a
+                            // run of non-matches, where the reader is still
+                            // live but is not going to answer for this finger.
+                            onUseCredential: (_authPhase ==
+                                        FingerprintPromptPhase.failed ||
+                                    _sensorUnusable)
+                                ? _useCredentialFallback
+                                : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),

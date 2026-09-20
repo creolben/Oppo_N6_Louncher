@@ -22,6 +22,7 @@
             android:turnScreenOn="true"
             android:showOnLockScreen="true"
             android:screenOrientation="portrait"
+            android:resizeableActivity="true"
             android:clearTaskOnLaunch="true"
             android:stateNotNeeded="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"

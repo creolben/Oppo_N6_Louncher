@@ -107,6 +107,7 @@ class GalaxyStorageService {
     List<CustomGalaxyConfig>? customGalaxies,
     Map<String, List<String>>? constellationAppOverrides,
     List<String>? hiddenPackageNames,
+    bool? nativeLauncherMode,
   }) async {
     try {
       final file = await _getFile();
@@ -118,6 +119,7 @@ class GalaxyStorageService {
           'customGalaxies': constellations.map((g) => g.toJson()).toList(),
           'constellationAppOverrides': ?constellationAppOverrides,
           'hiddenPackageNames': ?hiddenPackageNames,
+          'nativeLauncherMode': ?nativeLauncherMode,
         };
         await file.writeAsString(jsonEncode(data), flush: true);
       }

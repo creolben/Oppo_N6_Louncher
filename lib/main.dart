@@ -76,6 +76,8 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   bool _isSearchOpen = false;
   bool _isLocked = false;
   bool _isCockpitMode = false;
+  bool _nativeMode = false;
+  bool _isDefaultLauncher = true;
 
   /// Whether the comet web-search surface is up, and the query it was opened
   /// with when escalated from an app-search miss.
@@ -96,6 +98,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     );
 
     LauncherBridge.setScreenLockListener(_lockForScreenOff);
+    _checkDefaultLauncherStatus();
 
     LauncherBridge.setPackageChangeListener(() {
       if (mounted) {
@@ -121,6 +124,36 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     _loadApplications();
   }
 
+  Future<void> _checkDefaultLauncherStatus() async {
+    final isDefault = await LauncherBridge.isDefaultLauncher();
+    if (mounted) {
+      setState(() => _isDefaultLauncher = isDefault);
+    }
+  }
+
+  Future<void> _requestDefaultLauncher() async {
+    await LauncherBridge.requestDefaultLauncher();
+    await _checkDefaultLauncherStatus();
+  }
+
+  Future<void> _toggleNativeMode() async {
+    final newMode = !_nativeMode;
+    setState(() {
+      _nativeMode = newMode;
+      if (_nativeMode) {
+        _isLocked = false;
+      }
+    });
+    await LauncherBridge.setLockScreenOverlayEnabled(!_nativeMode);
+    await GalaxyStorageService.saveConfig(
+      coreAppPackageNames: _layoutEngine.corePackageNames,
+      customConstellations: _layoutEngine.customConstellations,
+      constellationAppOverrides: _layoutEngine.constellationAppOverrides,
+      hiddenPackageNames: _layoutEngine.hiddenPackageNames,
+      nativeLauncherMode: _nativeMode,
+    );
+  }
+
   /// Opens the comet surface, optionally seeded with a query the user already
   /// typed in app search, so escalating never costs them a retype.
   void _openCometSearch([String? query]) {
@@ -138,16 +171,16 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
-      _lockForScreenOff();
+    if (state == AppLifecycleState.resumed) {
+      _checkDefaultLauncherStatus();
     }
+    // In Native Launcher Mode, switching or opening apps never locks the launcher.
   }
 
-  /// Raises the cover-screen lock when the panel goes off or the launcher is
-  /// backgrounded. The platform keyguard authenticates a touch on the reader
-  /// behind it and hands the unlock back, which is what clears this overlay.
+  /// Raises the cover-screen lock when the panel goes off.
+  /// In Native Mode, ColorOS manages the lock screen directly.
   void _lockForScreenOff() {
-    if (!mounted) return;
+    if (!mounted || _nativeMode) return;
     setState(() => _isLocked = true);
   }
 
@@ -189,6 +222,12 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
         final hiddenPkgs = List<String>.from(config['hiddenPackageNames'] as List);
         _layoutEngine.setHiddenPackageNames(hiddenPkgs);
       }
+      if (config.containsKey('nativeLauncherMode')) {
+        _nativeMode = config['nativeLauncherMode'] as bool? ?? false;
+      } else {
+        _nativeMode = false;
+      }
+      LauncherBridge.setLockScreenOverlayEnabled(!_nativeMode);
     }
 
     _layoutEngine.assignApps(apps);
@@ -393,18 +432,23 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       ),
                                     ),
 
-                                    // 2. Cosmic HUD Header (Clock, Date & Posture Telemetry)
-                                    Positioned(
-                                      top: 0,
-                                      left: 0,
-                                      right: 0,
-                                      child: CosmicHeaderHud(
-                                        foldable: _foldable,
-                                        onToggleCockpit: _foldable.isTabletop
-                                            ? () => setState(() => _isCockpitMode = true)
-                                            : null,
-                                      ),
-                                    ),
+                                     // 2. Cosmic HUD Header (Clock, Date & Posture Telemetry)
+                                     Positioned(
+                                       top: 0,
+                                       left: 0,
+                                       right: 0,
+                                       child: CosmicHeaderHud(
+                                         foldable: _foldable,
+                                         isDefaultLauncher: _isDefaultLauncher,
+                                         onSetDefaultLauncher: _requestDefaultLauncher,
+                                         nativeMode: _nativeMode,
+                                         onToggleNativeMode: _toggleNativeMode,
+                                         onLockScreen: () => setState(() => _isLocked = true),
+                                         onToggleCockpit: _foldable.isTabletop
+                                             ? () => setState(() => _isCockpitMode = true)
+                                             : null,
+                                       ),
+                                     ),
 
                                     // 3. Ergonomic Bottom Cockpit Bar
                                     Positioned(
@@ -474,11 +518,21 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
 class CosmicHeaderHud extends StatefulWidget {
   final FoldableController foldable;
   final VoidCallback? onToggleCockpit;
+  final bool isDefaultLauncher;
+  final VoidCallback? onSetDefaultLauncher;
+  final bool nativeMode;
+  final VoidCallback? onToggleNativeMode;
+  final VoidCallback? onLockScreen;
 
   const CosmicHeaderHud({
     super.key,
     required this.foldable,
     this.onToggleCockpit,
+    this.isDefaultLauncher = true,
+    this.onSetDefaultLauncher,
+    this.nativeMode = false,
+    this.onToggleNativeMode,
+    this.onLockScreen,
   });
 
   @override
@@ -549,10 +603,152 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
               ],
             ),
 
-            // Top Right: Posture Badge & Return to Cockpit Button
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+            // Top Right: Badges & Controls
+            Flexible(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                reverse: true,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                // Set as Default Home App (prominent when not default)
+                if (!widget.isDefaultLauncher && widget.onSetDefaultLauncher != null) ...[
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: widget.onSetDefaultLauncher,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0x3300E5FF),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: const Color(0xFF00E5FF),
+                            width: 1.0,
+                          ),
+                          boxShadow: const [
+                            BoxShadow(color: Color(0x2200E5FF), blurRadius: 8),
+                          ],
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.home_rounded, color: Color(0xFF00E5FF), size: 13),
+                            SizedBox(width: 4),
+                            Text(
+                              'SET DEFAULT',
+                              style: TextStyle(
+                                color: Color(0xFF00E5FF),
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.0,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+
+                // Native Mode vs Cosmic Lock toggle
+                if (widget.onToggleNativeMode != null) ...[
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: widget.onToggleNativeMode,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: widget.nativeMode
+                              ? const Color(0x2A00E5FF)
+                              : const Color(0x2A7C4DFF),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: widget.nativeMode
+                                ? const Color(0x6600E5FF)
+                                : const Color(0x66B388FF),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              widget.nativeMode
+                                  ? Icons.shield_outlined
+                                  : Icons.lock_outline_rounded,
+                              color: widget.nativeMode
+                                  ? const Color(0xFF00E5FF)
+                                  : const Color(0xFFB388FF),
+                              size: 13,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              widget.nativeMode ? 'NATIVE' : 'COSMIC',
+                              style: TextStyle(
+                                color: widget.nativeMode
+                                    ? const Color(0xFF00E5FF)
+                                    : const Color(0xFFB388FF),
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.0,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+
+                // Quick Lock Screen button (available in Cosmic mode)
+                if (!widget.nativeMode && widget.onLockScreen != null) ...[
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: widget.onLockScreen,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0x2A7C4DFF),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: const Color(0x66B388FF),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.lock_rounded,
+                              color: Color(0xFFB388FF),
+                              size: 13,
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'LOCK',
+                              style: TextStyle(
+                                color: Color(0xFFB388FF),
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.0,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+
                 if (widget.onToggleCockpit != null) ...[
                   Material(
                     color: Colors.transparent,
@@ -638,8 +834,10 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                 ),
               ],
             ),
-          ],
+          ),
         ),
+      ],
+    ),
       ),
     );
   }
