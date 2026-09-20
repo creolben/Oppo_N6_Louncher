@@ -200,6 +200,12 @@ void main() {
               apps: apps,
               onUnlock: () => unlocked = true,
               initialAuthenticated: true,
+              // This test is about rendering and the shake trigger, and it ends
+              // with a swipe. The swipe only clears the panel for someone the
+              // platform has authenticated, so the device is reported unlocked
+              // here to keep the assertion about the gesture rather than about
+              // the keyguard. The keyguard contract has its own tests.
+              isKeyguardLocked: () async => false,
             ),
           ),
         ),
@@ -251,6 +257,9 @@ void main() {
               foldable: foldable,
               apps: apps,
               onUnlock: () => unlocked = true,
+              // See the note above: the swipe at the end of this test is not the
+              // subject, so the device is reported already unlocked.
+              isKeyguardLocked: () async => false,
             ),
           ),
         ),
@@ -264,11 +273,94 @@ void main() {
       expect(find.text('TAP APP TO LAUNCH • SWIPE UP TO ENTER'), findsOneWidget);
       expect(find.text('LOCKED'), findsOneWidget);
 
-      // Swipe up allows direct access to launcher
+      // Swipe up enters the launcher once the device is not locked
       await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
       for (int i = 0; i < 12; i++) {
         await tester.pump(const Duration(milliseconds: 40));
       }
+      expect(unlocked, isTrue);
+    });
+
+    testWidgets('Swipe up does NOT enter the launcher while the device is locked',
+        (tester) async {
+      // The panel is drawn over the keyguard in COSMIC mode, so a swipe that
+      // cleared it unconditionally exposed the launcher — the full app
+      // inventory, search over every app name, and the editors that persist
+      // layout — on a locked device. The panel cannot authenticate anyone
+      // itself, so it must ask the platform and honour the answer.
+      bool unlocked = false;
+      var dismissalRequested = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CosmicLockScreen(
+              foldable: FoldableController(),
+              apps: [
+                AppEntry(
+                  packageName: 'com.test.bank',
+                  label: 'Bank',
+                  category: AppCategory.core,
+                  accentColor: Colors.green,
+                  fallbackIcon: Icons.account_balance,
+                ),
+              ],
+              onUnlock: () => unlocked = true,
+              isKeyguardLocked: () async => true,
+              // The user backs out of the platform's bouncer.
+              dismissKeyguard: () async {
+                dismissalRequested = true;
+                return false;
+              },
+            ),
+          ),
+        ),
+      );
+
+      await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
+      for (int i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+
+      expect(dismissalRequested, isTrue,
+          reason: 'the swipe must ask the platform to authenticate');
+      expect(unlocked, isFalse,
+          reason: 'a declined platform prompt must leave the panel up');
+      expect(find.text('UNLOCK TO ENTER THE LAUNCHER'), findsOneWidget);
+    });
+
+    testWidgets('Swipe up enters the launcher when the platform authenticates',
+        (tester) async {
+      bool unlocked = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CosmicLockScreen(
+              foldable: FoldableController(),
+              apps: [
+                AppEntry(
+                  packageName: 'com.test.bank',
+                  label: 'Bank',
+                  category: AppCategory.core,
+                  accentColor: Colors.green,
+                  fallbackIcon: Icons.account_balance,
+                ),
+              ],
+              onUnlock: () => unlocked = true,
+              isKeyguardLocked: () async => true,
+              // The platform raised its bouncer and the user passed it.
+              dismissKeyguard: () async => true,
+            ),
+          ),
+        ),
+      );
+
+      await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
+      for (int i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+
       expect(unlocked, isTrue);
     });
 

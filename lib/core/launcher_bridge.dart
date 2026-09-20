@@ -352,6 +352,28 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return true;
   }
 
+  /// Asks the platform to authenticate the user and clear the keyguard, without
+  /// launching anything.
+  ///
+  /// The launcher's own lock panel cannot authenticate anyone — while the device
+  /// is locked only the keyguard may use the fingerprint sensor — so this is the
+  /// only mechanism by which that panel can honestly let someone in. On a secure
+  /// keyguard the platform raises its own bouncer and the result reports what
+  /// the user did.
+  ///
+  /// Returns false on a non-Android host: a surface that cannot ask the platform
+  /// to authenticate must not behave as though the platform agreed.
+  static Future<bool> dismissKeyguard() async {
+    if (kIsWeb || !Platform.isAndroid) return false;
+    try {
+      final bool? dismissed = await _appsChannel.invokeMethod('dismissKeyguard');
+      return dismissed ?? false;
+    } catch (e) {
+      debugPrint('Keyguard dismissal request failed: $e');
+      return false;
+    }
+  }
+
   /// Enables or disables drawing MainActivity over the lock screen.
   /// In Native Mode, this is false so ColorOS handles the lockscreen.
   static Future<bool> setLockScreenOverlayEnabled(bool enabled) async {
@@ -367,6 +389,20 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
       }
     }
     return true;
+  }
+
+  /// Tells Android that Flutter has produced a new launcher frame after a
+  /// foreground return. The native return bridge remains opaque until this
+  /// acknowledgement, preventing the system task compositor from flashing
+  /// ColorOS content between the external app and the cover screen.
+  static Future<void> notifyLauncherFrameReady() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        await _appsChannel.invokeMethod('launcherFrameReady');
+      } catch (e) {
+        debugPrint('Could not acknowledge launcher frame: $e');
+      }
+    }
   }
 
   /// Launches [app].

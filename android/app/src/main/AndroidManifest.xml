@@ -12,19 +12,26 @@
         android:label="ChronoFold"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- No showWhenLocked / showOnLockScreen / turnScreenOn here, and that
+             absence is deliberate: ColorOS owns the lock screen (Native mode).
+             Drawing over the keyguard is what made the launcher's own lock
+             surface reachable while the device was locked, and it is also why
+             the platform refuses this app an owned fingerprint session — while
+             the device is locked, only the keyguard may use the sensor.
+
+             The COSMIC lock surface is opt-in at runtime instead, through the
+             `setLockScreenOverlayEnabled` channel method, so the occlusion
+             exists only while the user has explicitly asked for it rather than
+             from the moment the process starts. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true"
-            android:showOnLockScreen="true"
             android:screenOrientation="portrait"
             android:resizeableActivity="true"
             android:clearTaskOnLaunch="true"
-            android:stateNotNeeded="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">

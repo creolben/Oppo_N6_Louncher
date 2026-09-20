@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
+
 import '../../core/foldable_controller.dart';
 import '../../models/app_entry.dart';
 import '../../core/launcher_bridge.dart';
@@ -13,6 +15,32 @@ import 'bouncing_physics_engine.dart';
 import 'bouncing_apps_painter.dart';
 import 'fingerprint_prompt.dart';
 import 'quick_shortcut_resolver.dart';
+
+/// What an authentication attempt on this panel actually established.
+///
+/// This used to be a bare `bool`, and the bool was not true. Where the platform
+/// refuses this panel the reader — which on a locked device is everywhere, since
+/// only the keyguard may use the sensor — the code completed the attempt with
+/// `true` and relied on the native `requestDismissKeyguard` at launch time to do
+/// the real checking. That arrangement works, but it reports verification that
+/// never happened, so nothing downstream can tell a verified user from an
+/// unverified one, and the single real gate sits a layer below the code that
+/// claims to be the gate.
+///
+/// [deferToPlatform] names that case instead of hiding it.
+enum AuthOutcome {
+  /// Someone was actually authenticated here: the reader matched, or the
+  /// platform reported a genuine unlock of a locked keyguard.
+  verified,
+
+  /// Nothing was verified on this panel. The request may proceed only because
+  /// launching goes through the platform keyguard, which will do the
+  /// authenticating itself. Never treat this as an unlock.
+  deferToPlatform,
+
+  /// The user declined, or the attempt failed.
+  denied,
+}
 
 class CosmicLockScreen extends StatefulWidget {
   final FoldableController foldable;
@@ -47,6 +75,14 @@ class CosmicLockScreen extends StatefulWidget {
   /// Real keyguard locked state, defaulting to [LauncherBridge.isKeyguardLocked].
   final Future<bool> Function()? isKeyguardLocked;
 
+  /// Asks the platform to authenticate the user and clear the keyguard,
+  /// defaulting to [LauncherBridge.dismissKeyguard].
+  ///
+  /// Injectable so a test can exercise both answers to swipe-to-enter on a
+  /// locked device: the platform authenticating the user, and the user backing
+  /// out of the platform's bouncer.
+  final Future<bool> Function()? dismissKeyguard;
+
   const CosmicLockScreen({
     super.key,
     required this.foldable,
@@ -58,6 +94,7 @@ class CosmicLockScreen extends StatefulWidget {
     this.fingerprintEvents,
     this.authenticateWithCredential,
     this.isKeyguardLocked,
+    this.dismissKeyguard,
   });
 
   @override
@@ -68,6 +105,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _slideController;
   late Animation<double> _slideAnimation;
+
   /// How far the panel has been pulled up, by drag or by the unlock slide.
   ///
   /// A [ValueNotifier] on purpose: the only thing this value moves is a
@@ -152,7 +190,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// The prompt is only a face over one future, so it is completed by whichever
   /// answers first: a sensor match, the themed cancel button, the device
   /// credential fallback, or the panel closing underneath it.
-  Completer<bool>? _authCompleter;
+  Completer<AuthOutcome>? _authCompleter;
 
   /// Holds the "VERIFIED" state on screen for a beat before handing off, so a
   /// match reads as an answer rather than as the panel blinking.
@@ -166,18 +204,29 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// see the finger that is still resting on the sensor.
   bool _handingOffLaunch = false;
 
-  Future<bool> _authenticate(String? appName) async {
+  /// Suppresses clearing the overlay on userPresent for a short window when
+  /// returning to the lock screen after an app launch.
+  DateTime? _suppressUserPresentUntil;
+
+  Future<AuthOutcome> _authenticate(String? appName) async {
     final override = widget.authenticate;
-    if (override != null) return override(appName: appName);
+    if (override != null) {
+      return await override(appName: appName)
+          ? AuthOutcome.verified
+          : AuthOutcome.denied;
+    }
 
     // The panel draws its own prompt only where it can actually read the
     // sensor. Where it cannot — no finger enrolled, or no reader at all — the
     // platform's credential prompt is the only honest way forward.
-    final capability = await (widget.fingerprintCapability ??
-        LauncherBridge.fingerprintCapability)();
-    if (!mounted || _disposed) return false;
+    final capability =
+        await (widget.fingerprintCapability ??
+            LauncherBridge.fingerprintCapability)();
+    if (!mounted || _disposed) return AuthOutcome.denied;
     if (!capability.isReady) {
-      return LauncherBridge.authenticate(appName: appName);
+      return await LauncherBridge.authenticate(appName: appName)
+          ? AuthOutcome.verified
+          : AuthOutcome.denied;
     }
     return _authenticateWithSensor();
   }
@@ -187,10 +236,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// A session that is already armed is used as it stands: the reader that
   /// unlocked this panel with a bare touch is the same reader that is about to
   /// open the app, and re-arming it would cancel it.
-  Future<bool> _authenticateWithSensor() {
+  Future<AuthOutcome> _authenticateWithSensor() {
     final AppEntry? target = _pendingLaunch;
-    if (target == null) return Future<bool>.value(false);
-    final completer = Completer<bool>();
+    if (target == null) return Future<AuthOutcome>.value(AuthOutcome.denied);
+    final completer = Completer<AuthOutcome>();
     _authCompleter = completer;
     _authWanted = target;
     // A deliberate request gets a fresh budget: the single retry exists for a
@@ -272,21 +321,26 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     if (target == null) return;
     _credentialHandoff = true;
     if (widget.authenticateWithCredential != null) {
-      final bool ok = await widget.authenticateWithCredential!(appName: target.label);
-      _resolveAuth(ok);
+      final bool ok = await widget.authenticateWithCredential!(
+        appName: target.label,
+      );
+      _resolveAuth(ok ? AuthOutcome.verified : AuthOutcome.denied);
     } else {
-      // In production, avoid the redundant BiometricPrompt dialog which cannot
-      // unlock the keyguard and causes a double PIN screen. Complete auth and
-      // let requestDismissKeyguard handle credential verification natively in
-      // a single prompt.
-      _resolveAuth(true);
+      // Raising BiometricPrompt here would ask the user twice: it cannot
+      // dismiss the keyguard, so the native `requestDismissKeyguard` at launch
+      // time prompts again. Deferring to that single native prompt is the right
+      // behaviour — but it is a deferral, not an authentication, and saying so
+      // is the whole point of [AuthOutcome.deferToPlatform]. Completing with
+      // `verified` here is what previously let this panel report an unlock it
+      // had not performed.
+      _resolveAuth(AuthOutcome.deferToPlatform);
     }
   }
 
-  void _cancelAuth() => _resolveAuth(false);
+  void _cancelAuth() => _resolveAuth(AuthOutcome.denied);
 
   /// Clears the prompt and completes the pending authentication exactly once.
-  void _resolveAuth(bool authenticated) {
+  void _resolveAuth(AuthOutcome outcome) {
     _authResolveTimer?.cancel();
     _authResolveTimer = null;
     final completer = _authCompleter;
@@ -300,7 +354,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       });
     }
     if (completer != null && !completer.isCompleted) {
-      completer.complete(authenticated);
+      completer.complete(outcome);
     }
   }
 
@@ -325,7 +379,8 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
               center: bubble.position,
               radius: bubble.radius * 1.3,
             );
-            final target = rect.width >= _minSemanticTarget &&
+            final target =
+                rect.width >= _minSemanticTarget &&
                     rect.height >= _minSemanticTarget
                 ? rect
                 : Rect.fromCenter(
@@ -365,7 +420,8 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// under a reader's finger and the node rectangles do not need rebuilding
   /// every frame. Drags still repaint, because they go through [markDirty].
   void _syncPhysicsLoop() {
-    final bool holdStill = (MediaQuery.maybeDisableAnimationsOf(context) ?? false) ||
+    final bool holdStill =
+        (MediaQuery.maybeDisableAnimationsOf(context) ?? false) ||
         _screenReaderActive;
     if (holdStill) {
       if (_physicsTicker.isActive) _physicsTicker.stop();
@@ -396,20 +452,22 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       duration: const Duration(milliseconds: 360),
     );
 
-    _slideAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
-    )..addListener(() {
-        // The slide moves one transform; pushing it through the notifier keeps
-        // ~330 lines of lock screen from rebuilding per animation frame.
-        _panelOffset.value = _slideAnimation.value;
-      });
+    _slideAnimation =
+        Tween<double>(begin: 0.0, end: 1.0).animate(
+          CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
+        )..addListener(() {
+          // The slide moves one transform; pushing it through the notifier keeps
+          // ~330 lines of lock screen from rebuilding per animation frame.
+          _panelOffset.value = _slideAnimation.value;
+        });
 
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       // Hours and minutes are all this renders: repaint when the visible
       // minute rolls over rather than once a second.
       final now = DateTime.now();
       if (!mounted ||
-          (now.minute == _currentTime.minute && now.hour == _currentTime.hour)) {
+          (now.minute == _currentTime.minute &&
+              now.hour == _currentTime.hour)) {
         return;
       }
       setState(() => _currentTime = now);
@@ -457,20 +515,38 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   void _onUserPresent() {
     if (!mounted || _disposed) return;
     if (_unlockedBySensor) return;
-    debugPrint('Platform unlocked a locked keyguard; clearing the overlay');
-    HapticFeedback.mediumImpact();
-    _unlockedBySensor = true;
+    if (_handingOffLaunch) {
+      debugPrint('Ignoring userPresent while handing off app launch');
+      return;
+    }
+    if (_suppressUserPresentUntil != null &&
+        DateTime.now().isBefore(_suppressUserPresentUntil!)) {
+      debugPrint(
+        'Ignoring userPresent during resume transition from launched app',
+      );
+      return;
+    }
 
     if (_authCompleter != null && !_authCompleter!.isCompleted) {
+      debugPrint(
+        'Platform unlocked a locked keyguard; completing pending auth',
+      );
+      HapticFeedback.mediumImpact();
+      _unlockedBySensor = true;
       if (mounted) {
         setState(() => _authPhase = FingerprintPromptPhase.verified);
       }
       _authResolveTimer?.cancel();
       _authResolveTimer = Timer(
         const Duration(milliseconds: 240),
-        () => _resolveAuth(true),
+        () => _resolveAuth(AuthOutcome.verified),
       );
     } else {
+      debugPrint(
+        'Platform unlocked a locked keyguard; clearing the overlay or launching pending',
+      );
+      HapticFeedback.mediumImpact();
+      _unlockedBySensor = true;
       _unlock();
     }
   }
@@ -478,6 +554,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   void _onScreenOn() {
     if (!mounted || _disposed) return;
     _screenInteractive = true;
+    _suppressUserPresentUntil = null;
     // A new panel-on is a new chance for the reader: the refusal above belongs
     // to the lock session that has just ended.
     _sensorUnusable = false;
@@ -501,8 +578,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     _armingFingerprint = true;
     _retriedArm = false;
     try {
-      final capability = await (widget.fingerprintCapability ??
-          LauncherBridge.fingerprintCapability)();
+      final capability =
+          await (widget.fingerprintCapability ??
+              LauncherBridge.fingerprintCapability)();
       if (!mounted || _disposed) return;
 
       if (!capability.isReady) {
@@ -523,11 +601,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       _fingerprintSubscription ??=
           (widget.fingerprintEvents ?? LauncherBridge.fingerprintEvents)()
               .listen(
-        _onFingerprintEvent,
-        onError: (Object error) {
-          debugPrint('Fingerprint stream error: $error');
-        },
-      );
+                _onFingerprintEvent,
+                onError: (Object error) {
+                  debugPrint('Fingerprint stream error: $error');
+                },
+              );
 
       // Only the native side knows whether the panel is really on, and it
       // refuses to arm while it is off without touching the sensor at all. The
@@ -555,7 +633,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         debugPrint('Fingerprint reader armed');
         _sensorArmed = true;
         final AppEntry? wanted = _authWanted;
-        if (mounted && _authCompleter != null && _authTarget == null && wanted != null) {
+        if (mounted &&
+            _authCompleter != null &&
+            _authTarget == null &&
+            wanted != null) {
           setState(() {
             _authTarget = wanted;
             _authPhase = FingerprintPromptPhase.scanning;
@@ -579,7 +660,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
           _authResolveTimer?.cancel();
           _authResolveTimer = Timer(
             const Duration(milliseconds: 240),
-            () => _resolveAuth(true),
+            () => _resolveAuth(AuthOutcome.verified),
           );
         } else {
           _unlock();
@@ -658,6 +739,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         _unlockStarted = false;
         _unlockedBySensor = false;
         _handingOffLaunch = false;
+        // When returning to the lock screen from a launched app, suppress any
+        // trailing or queued userPresent events so the lock screen remains active.
+        _suppressUserPresentUntil = DateTime.now().add(
+          const Duration(milliseconds: 800),
+        );
         // Assume the panel is on: the native side refuses an arm while it is
         // off, and reports `screenOff` back, which puts this flag right again.
         _screenInteractive = true;
@@ -693,7 +779,8 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     _lastElapsed = elapsed;
 
     // Idle Battery Saver: After 12s without touch or active movement, throttle to 30 FPS
-    final isIdle = DateTime.now().difference(_lastInteractionTime).inSeconds > 12;
+    final isIdle =
+        DateTime.now().difference(_lastInteractionTime).inSeconds > 12;
     _physicsFrameCount++;
     if (isIdle && (_physicsFrameCount % 3 != 0)) {
       return;
@@ -710,7 +797,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     if (_selectedCategory == null) {
       return widget.apps;
     }
-    final filtered = widget.apps.where((a) => a.category == _selectedCategory).toList();
+    final filtered = widget.apps
+        .where((a) => a.category == _selectedCategory)
+        .toList();
     return filtered.isNotEmpty ? filtered : widget.apps;
   }
 
@@ -798,7 +887,8 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     final now = DateTime.now();
     if (_isDraggingApp && _draggedBubble != null) {
       if (_lastPointerPos != null && _lastPointerTime != null) {
-        final double dt = (now.difference(_lastPointerTime!).inMicroseconds) / 1000000.0;
+        final double dt =
+            (now.difference(_lastPointerTime!).inMicroseconds) / 1000000.0;
         if (dt > 0.002) {
           _pointerVelocity = (event.localPosition - _lastPointerPos!) / dt;
         }
@@ -812,7 +902,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     } else if (!_isDraggingApp) {
       // Swiping up on background. The notifier drives the transform, so a
       // finger drag does not rebuild the tree per pointer move.
-      _panelOffset.value = (_panelOffset.value - event.delta.dy).clamp(0.0, 600.0);
+      _panelOffset.value = (_panelOffset.value - event.delta.dy).clamp(
+        0.0,
+        600.0,
+      );
     }
   }
 
@@ -820,7 +913,8 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     if (_authTarget != null) return;
     if (_isDraggingApp && _draggedBubble != null) {
       final appToLaunch = _draggedBubble!.app;
-      final bool wasTap = _dragStartPos != null &&
+      final bool wasTap =
+          _dragStartPos != null &&
           (event.localPosition - _dragStartPos!).distance < 12.0;
 
       _draggedBubble!.isBeingDragged = false;
@@ -836,18 +930,61 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       // Thrown / fling momentum
       if (_pointerVelocity.distance > 80.0) {
         final double speed = _pointerVelocity.distance.clamp(100.0, 1500.0);
-        _draggedBubble!.velocity = (_pointerVelocity / _pointerVelocity.distance) * speed;
+        _draggedBubble!.velocity =
+            (_pointerVelocity / _pointerVelocity.distance) * speed;
       }
       _draggedBubble = null;
       _isDraggingApp = false;
     } else if (!_isDraggingApp) {
       if (_panelOffset.value > 140.0) {
-        // Anyone can swipe up to enter the launcher
-        _unlock();
+        _enterLauncher();
       } else {
         _snapBack();
       }
     }
+  }
+
+  /// Clears the panel in response to a swipe, for someone the platform has
+  /// actually authenticated.
+  ///
+  /// This gesture used to clear the panel unconditionally — the comment here
+  /// read "Anyone can swipe up to enter the launcher", and it was literally
+  /// true. Because the panel is drawn over the keyguard while COSMIC mode is on,
+  /// a swipe on a locked device exposed the launcher behind it: the whole app
+  /// inventory, search across every installed app name, and the editors that
+  /// persist layout changes to disk. App launches were still gated natively, so
+  /// the exposure was disclosure and tampering rather than arbitrary app access
+  /// — but the surface drew a padlock and the word LOCKED while enforcing
+  /// nothing.
+  ///
+  /// The panel cannot authenticate anyone itself: while the device is locked only
+  /// the keyguard may use the sensor. So it asks the platform to authenticate,
+  /// and clears only if the platform reports that it did.
+  Future<void> _enterLauncher() async {
+    if (_unlockStarted || _disposed) return;
+
+    final bool isLocked =
+        await (widget.isKeyguardLocked ?? LauncherBridge.isKeyguardLocked)();
+    if (!mounted || _disposed || _unlockStarted) return;
+
+    if (!isLocked) {
+      _unlock();
+      return;
+    }
+
+    final bool dismissed =
+        await (widget.dismissKeyguard ?? LauncherBridge.dismissKeyguard)();
+    if (!mounted || _disposed || _unlockStarted) return;
+
+    if (dismissed) {
+      _unlock();
+      return;
+    }
+
+    // The user declined the platform's prompt, or it could not be raised.
+    // Put the panel back rather than leaving it half-pulled.
+    _snapBack();
+    _showTurbulence('UNLOCK TO ENTER THE LAUNCHER');
   }
 
   /// The app a shortcut or bubble asked to open, held until authentication
@@ -880,24 +1017,35 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       _handingOffLaunch = false;
       if (!mounted) return;
       _unlockStarted = false;
-      if (!launched) {
+      if (launched) {
+        // The native handoff already removes `showWhenLocked` before the
+        // target starts. Keep the Dart side in sync so its return reveals the
+        // folded cover screen rather than recreating a fingerprint surface.
+        unawaited(LauncherBridge.setLockScreenOverlayEnabled(false));
+        widget.onUnlock();
+      } else {
         _showTurbulence('COULD NOT OPEN ${pending.label.toUpperCase()}');
       }
       return;
     }
 
-    _slideAnimation = Tween<double>(begin: _panelOffset.value, end: 900.0).animate(
-      CurvedAnimation(parent: _slideController, curve: Curves.easeInCubic),
-    );
+    _slideAnimation = Tween<double>(begin: _panelOffset.value, end: 900.0)
+        .animate(
+          CurvedAnimation(parent: _slideController, curve: Curves.easeInCubic),
+        );
     await _slideController.forward(from: 0.0);
     if (!mounted) return;
+    // An ordinary unlock also needs to stop MainActivity behaving like a
+    // keyguard overlay until the next genuine screen-off event.
+    unawaited(LauncherBridge.setLockScreenOverlayEnabled(false));
     widget.onUnlock();
   }
 
   void _snapBack() {
-    _slideAnimation = Tween<double>(begin: _panelOffset.value, end: 0.0).animate(
-      CurvedAnimation(parent: _slideController, curve: Curves.easeOutBack),
-    );
+    _slideAnimation = Tween<double>(begin: _panelOffset.value, end: 0.0)
+        .animate(
+          CurvedAnimation(parent: _slideController, curve: Curves.easeOutBack),
+        );
     _slideController.forward(from: 0.0).then((_) {
       _panelOffset.value = 0.0;
     });
@@ -911,8 +1059,8 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     // Record the request before authenticating.
     _pendingLaunch = app;
 
-    final bool isLocked = await (widget.isKeyguardLocked ??
-        LauncherBridge.isKeyguardLocked)();
+    final bool isLocked =
+        await (widget.isKeyguardLocked ?? LauncherBridge.isKeyguardLocked)();
     if (!mounted || _disposed || _unlockStarted) return;
     if (!isLocked) {
       // Device is already unlocked (e.g. side power-button reader satisfied keyguard).
@@ -922,16 +1070,23 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       return;
     }
 
-    final authenticated = await _authenticate(app.label);
+    final outcome = await _authenticate(app.label);
     if (!mounted || _disposed || _unlockStarted) return;
 
-    if (!authenticated) {
+    if (outcome == AuthOutcome.denied) {
       _pendingLaunch = null;
       _showTurbulence('AUTH REQUIRED TO LAUNCH ${app.label.toUpperCase()}');
       return;
     }
 
-    HapticFeedback.mediumImpact();
+    // Only [AuthOutcome.verified] is an authentication, and only it gets the
+    // confirming haptic. [AuthOutcome.deferToPlatform] continues for a
+    // different reason: the launch itself runs through the platform keyguard,
+    // which prompts before the activity can be seen. Buzzing for that would
+    // tell the user they had been recognised when they had not.
+    if (outcome == AuthOutcome.verified) {
+      HapticFeedback.mediumImpact();
+    }
     _unlock();
   }
 
@@ -956,7 +1111,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     // The list holds LAUNCHER activities only and is empty until the first
     // scan finishes, so the shortcut can be tapped before it can be resolved.
     // Ask the platform for its own handler instead of going dead.
-    debugPrint('Quick shortcut ${shortcut.name}: no app matched, asking platform');
+    debugPrint(
+      'Quick shortcut ${shortcut.name}: no app matched, asking platform',
+    );
     if (await LauncherBridge.openQuickShortcut(shortcut)) {
       HapticFeedback.mediumImpact();
       _unlock();
@@ -1028,164 +1185,180 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         );
       },
       child: Listener(
-          behavior: HitTestBehavior.opaque,
-          onPointerDown: _onPointerDown,
-          onPointerMove: _onPointerMove,
-          onPointerUp: _onPointerUp,
-          child: Container(
-            width: double.infinity,
-            height: double.infinity,
-            decoration: const BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment(0.0, -0.2),
-                radius: 1.3,
-                colors: [
-                  Color(0xFF0D1426), // Deep cosmic glow
-                  Color(0xFF070A14), // Dark indigo void
-                  Color(0xFF020306), // Pitch black OLED
-                ],
-                stops: [0.0, 0.55, 1.0],
-              ),
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: _onPointerDown,
+        onPointerMove: _onPointerMove,
+        onPointerUp: _onPointerUp,
+        child: Container(
+          width: double.infinity,
+          height: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: RadialGradient(
+              center: Alignment(0.0, -0.2),
+              radius: 1.3,
+              colors: [
+                Color(0xFF0D1426), // Deep cosmic glow
+                Color(0xFF070A14), // Dark indigo void
+                Color(0xFF020306), // Pitch black OLED
+              ],
+              stops: [0.0, 0.55, 1.0],
             ),
-            child: Stack(
-              children: [
-                // Ambient Celestial Halo
-                Positioned(
-                  top: screenSize.height * 0.12,
-                  left: screenSize.width * 0.5 - 150,
-                  child: IgnorePointer(
-                    child: Container(
-                      width: 300,
-                      height: 300,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: RadialGradient(
-                          colors: [
-                            Color(0x3300E5FF),
-                            Color(0x1564B5F6),
-                            Colors.transparent,
-                          ],
-                          stops: [0.0, 0.45, 1.0],
-                        ),
+          ),
+          child: Stack(
+            children: [
+              // Ambient Celestial Halo
+              Positioned(
+                top: screenSize.height * 0.12,
+                left: screenSize.width * 0.5 - 150,
+                child: IgnorePointer(
+                  child: Container(
+                    width: 300,
+                    height: 300,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          Color(0x3300E5FF),
+                          Color(0x1564B5F6),
+                          Colors.transparent,
+                        ],
+                        stops: [0.0, 0.45, 1.0],
                       ),
                     ),
                   ),
                 ),
+              ),
 
-                // CustomPaint canvas rendering bouncing apps. The boundary
-                // gives the physics layer its own repaint scope: simulation
-                // frames repaint this canvas alone, and HUD state changes
-                // never repaint the bubbles.
+              // CustomPaint canvas rendering bouncing apps. The boundary
+              // gives the physics layer its own repaint scope: simulation
+              // frames repaint this canvas alone, and HUD state changes
+              // never repaint the bubbles.
+              Positioned.fill(
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: BouncingAppsPainter(
+                      physics: _physicsEngine,
+                      draggedBubble: _draggedBubble,
+                      textScaler: MediaQuery.textScalerOf(context),
+                    ),
+                  ),
+                ),
+              ),
+
+              // Screen reader targets for the bubbles, which are painted into
+              // the canvas and would otherwise be unreachable — the same
+              // defect the galaxy home screen had. They are never wrapped in
+              // IgnorePointer: that sets isBlockingUserActions and would strip
+              // the tap action back off them. Each is a bare SizedBox, so it
+              // takes no touch and the panel gestures below still work.
+              if (_screenReaderActive)
                 Positioned.fill(
-                  child: RepaintBoundary(
-                    child: CustomPaint(
-                      painter: BouncingAppsPainter(
-                        physics: _physicsEngine,
-                        draggedBubble: _draggedBubble,
-                        textScaler: MediaQuery.textScalerOf(context),
+                  child: ListenableBuilder(
+                    listenable: _physicsEngine,
+                    builder: (context, _) => _buildBubbleSemantics(),
+                  ),
+                ),
+
+              // Scrim: keeps the unlock cluster and gesture hints readable
+              // while bouncing bubbles keep moving behind them.
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 260,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          const Color(0xFF020306).withValues(alpha: 0.0),
+                          const Color(0xFF020306).withValues(alpha: 0.72),
+                          const Color(0xFF020306),
+                        ],
+                        stops: const [0.0, 0.5, 1.0],
                       ),
                     ),
                   ),
                 ),
+              ),
 
-                // Screen reader targets for the bubbles, which are painted into
-                // the canvas and would otherwise be unreachable — the same
-                // defect the galaxy home screen had. They are never wrapped in
-                // IgnorePointer: that sets isBlockingUserActions and would strip
-                // the tap action back off them. Each is a bare SizedBox, so it
-                // takes no touch and the panel gestures below still work.
-                if (_screenReaderActive)
-                  Positioned.fill(
-                    child: ListenableBuilder(
-                      listenable: _physicsEngine,
-                      builder: (context, _) => _buildBubbleSemantics(),
-                    ),
+              // Foreground HUD (Telemetry, Clock, Hints, and Quick Docks)
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24.0,
+                    vertical: 14.0,
                   ),
-
-                // Scrim: keeps the unlock cluster and gesture hints readable
-                // while bouncing bubbles keep moving behind them.
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  height: 260,
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            const Color(0xFF020306).withValues(alpha: 0.0),
-                            const Color(0xFF020306).withValues(alpha: 0.72),
-                            const Color(0xFF020306),
-                          ],
-                          stops: const [0.0, 0.5, 1.0],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-
-                // Foreground HUD (Telemetry, Clock, Hints, and Quick Docks)
-                SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 14.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        // Top Telemetry Bar with interactive Shake Trigger Button
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.lock_outline_rounded,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // Top Telemetry Bar with interactive Shake Trigger Button
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.lock_outline_rounded,
+                                color: Color(0xFF00E5FF),
+                                size: 16,
+                              ),
+                              SizedBox(width: 6),
+                              Text(
+                                'LOCKED',
+                                style: TextStyle(
                                   color: Color(0xFF00E5FF),
-                                  size: 16,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.5,
                                 ),
-                                SizedBox(width: 6),
-                                Text(
-                                  'LOCKED',
-                                  style: TextStyle(
-                                    color: Color(0xFF00E5FF),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 1.5,
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
+                          ),
 
-                            // Interactive Shake / Scatter Button. It carried no
-                            // button trait, so a reader heard the word "SHAKE"
-                            // without being told it was actionable. The action
-                            // is declared here rather than left to the gesture
-                            // detector, so the node a reader lands on is the one
-                            // that carries both the label and the action.
-                            Semantics(
-                              container: true,
-                              button: true,
-                              label: 'Scatter apps',
+                          // Interactive Shake / Scatter Button. It carried no
+                          // button trait, so a reader heard the word "SHAKE"
+                          // without being told it was actionable. The action
+                          // is declared here rather than left to the gesture
+                          // detector, so the node a reader lands on is the one
+                          // that carries both the label and the action.
+                          Semantics(
+                            container: true,
+                            button: true,
+                            label: 'Scatter apps',
+                            onTap: () => _triggerShakeScatter(),
+                            child: GestureDetector(
                               onTap: () => _triggerShakeScatter(),
-                              child: GestureDetector(
-                                onTap: () => _triggerShakeScatter(),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
                                 decoration: BoxDecoration(
                                   color: const Color(0x3300E5FF),
                                   borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(color: const Color(0x6600E5FF), width: 1.0),
+                                  border: Border.all(
+                                    color: const Color(0x6600E5FF),
+                                    width: 1.0,
+                                  ),
                                   boxShadow: const [
-                                    BoxShadow(color: Color(0x2200E5FF), blurRadius: 8),
+                                    BoxShadow(
+                                      color: Color(0x2200E5FF),
+                                      blurRadius: 8,
+                                    ),
                                   ],
                                 ),
                                 child: const Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(Icons.vibration_rounded, color: Color(0xFF00E5FF), size: 14),
+                                    Icon(
+                                      Icons.vibration_rounded,
+                                      color: Color(0xFF00E5FF),
+                                      size: 14,
+                                    ),
                                     SizedBox(width: 4),
                                     Text(
                                       'SHAKE',
@@ -1200,206 +1373,227 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                                 ),
                               ),
                             ),
-                            ),
-
-                            Row(
-                              children: [
-                                const Icon(Icons.battery_charging_full_rounded, color: Colors.white70, size: 16),
-                                const SizedBox(width: 4),
-                                Text(
-                                  '92%',
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.8),
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 12),
-
-                        // Centerpiece Cosmic Clock HUD (wrapped in IgnorePointer to allow bubble interaction)
-                        IgnorePointer(
-                          child: Column(
-                            children: [
-                              Text(
-                                '$timeHour:$timeMinute',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: isTabletop ? 52 : (isUnfolded ? 76 : 64),
-                                  fontWeight: FontWeight.w100,
-                                  letterSpacing: -2.0,
-                                  height: 1.0,
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
-                                  shadows: const [
-                                    Shadow(color: Color(0x6600E5FF), blurRadius: 26),
-                                    Shadow(color: Colors.black, blurRadius: 12),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                dateFormatted.toUpperCase(),
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.8),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 2.8,
-                                  shadows: const [
-                                    Shadow(color: Colors.black, blurRadius: 8),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              if (_turbulenceMessage != null)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xCC7C4DFF),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(color: const Color(0xFFB388FF), width: 1.0),
-                                    boxShadow: const [
-                                      BoxShadow(color: Color(0x667C4DFF), blurRadius: 16),
-                                    ],
-                                  ),
-                                  child: Text(
-                                    _turbulenceMessage!,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      letterSpacing: 1.0,
-                                    ),
-                                  ),
-                                ),
-                            ],
                           ),
-                        ),
 
-                        const SizedBox(height: 12),
-                        // Interactive Curated Category Chips Bar
-                        FadingHorizontalScroll(
-                          center: true,
-                          fadeColor: const Color(0xFF090D1A),
-                          children: [
-                            _categoryFilterChip('★ Featured', null),
-                            const SizedBox(width: 8),
-                            _categoryFilterChip('Core', AppCategory.core),
-                            const SizedBox(width: 8),
-                            _categoryFilterChip('Social', AppCategory.social),
-                            const SizedBox(width: 8),
-                            _categoryFilterChip('Media', AppCategory.entertainment),
-                            const SizedBox(width: 8),
-                            _categoryFilterChip('Work', AppCategory.productivity),
-                            const SizedBox(width: 8),
-                            _categoryFilterChip('Tools', AppCategory.tools),
-                          ],
-                        ),
-
-                        const Spacer(),
-
-                        // Secondary gesture hints: the reader is the side power
-                        // button, so no fingerprint affordance is drawn here or
-                        // anywhere else on the panel.
-                        IgnorePointer(
-                          child: Column(
+                          Row(
                             children: [
                               const Icon(
-                                Icons.keyboard_arrow_up_rounded,
-                                color: Color(0xFF00E5FF),
-                                size: 22,
+                                Icons.battery_charging_full_rounded,
+                                color: Colors.white70,
+                                size: 16,
                               ),
+                              const SizedBox(width: 4),
                               Text(
-                                'TAP APP TO LAUNCH • SWIPE UP TO ENTER',
-                                textAlign: TextAlign.center,
+                                '92%',
                                 style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.72),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 1.6,
-                                  shadows: const [
-                                    Shadow(color: Colors.black, blurRadius: 6),
-                                  ],
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                             ],
                           ),
-                        ),
+                        ],
+                      ),
 
-                        const SizedBox(height: 14),
+                      const SizedBox(height: 12),
 
-                        // Quick shortcuts: phone on the left, camera on the
-                        // right. Nothing sits between them, so the swipe-up
-                        // gesture has clear panel to travel across.
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      // Centerpiece Cosmic Clock HUD (wrapped in IgnorePointer to allow bubble interaction)
+                      IgnorePointer(
+                        child: Column(
                           children: [
-                            _quickActionCircle(
-                              icon: Icons.phone_rounded,
-                              tooltip: 'Open Phone',
-                              onTap: () =>
-                                  _openQuickShortcut(QuickShortcut.phone),
+                            Text(
+                              '$timeHour:$timeMinute',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: isTabletop
+                                    ? 52
+                                    : (isUnfolded ? 76 : 64),
+                                fontWeight: FontWeight.w100,
+                                letterSpacing: -2.0,
+                                height: 1.0,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
+                                shadows: const [
+                                  Shadow(
+                                    color: Color(0x6600E5FF),
+                                    blurRadius: 26,
+                                  ),
+                                  Shadow(color: Colors.black, blurRadius: 12),
+                                ],
+                              ),
                             ),
-                            _quickActionCircle(
-                              icon: Icons.camera_alt_rounded,
-                              tooltip: 'Open Camera',
-                              onTap: () =>
-                                  _openQuickShortcut(QuickShortcut.camera),
+                            const SizedBox(height: 6),
+                            Text(
+                              dateFormatted.toUpperCase(),
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.8),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 2.8,
+                                shadows: const [
+                                  Shadow(color: Colors.black, blurRadius: 8),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            if (_turbulenceMessage != null)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xCC7C4DFF),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: const Color(0xFFB388FF),
+                                    width: 1.0,
+                                  ),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      color: Color(0x667C4DFF),
+                                      blurRadius: 16,
+                                    ),
+                                  ],
+                                ),
+                                child: Text(
+                                  _turbulenceMessage!,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1.0,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 12),
+                      // Interactive Curated Category Chips Bar
+                      FadingHorizontalScroll(
+                        center: true,
+                        fadeColor: const Color(0xFF090D1A),
+                        children: [
+                          _categoryFilterChip('★ Featured', null),
+                          const SizedBox(width: 8),
+                          _categoryFilterChip('Core', AppCategory.core),
+                          const SizedBox(width: 8),
+                          _categoryFilterChip('Social', AppCategory.social),
+                          const SizedBox(width: 8),
+                          _categoryFilterChip(
+                            'Media',
+                            AppCategory.entertainment,
+                          ),
+                          const SizedBox(width: 8),
+                          _categoryFilterChip('Work', AppCategory.productivity),
+                          const SizedBox(width: 8),
+                          _categoryFilterChip('Tools', AppCategory.tools),
+                        ],
+                      ),
+
+                      const Spacer(),
+
+                      // Secondary gesture hints: the reader is the side power
+                      // button, so no fingerprint affordance is drawn here or
+                      // anywhere else on the panel.
+                      IgnorePointer(
+                        child: Column(
+                          children: [
+                            const Icon(
+                              Icons.keyboard_arrow_up_rounded,
+                              color: Color(0xFF00E5FF),
+                              size: 22,
+                            ),
+                            Text(
+                              'TAP APP TO LAUNCH • SWIPE UP TO ENTER',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.72),
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.6,
+                                shadows: const [
+                                  Shadow(color: Colors.black, blurRadius: 6),
+                                ],
+                              ),
                             ),
                           ],
                         ),
-                      ],
-                    ),
+                      ),
+
+                      const SizedBox(height: 14),
+
+                      // Quick shortcuts: phone on the left, camera on the
+                      // right. Nothing sits between them, so the swipe-up
+                      // gesture has clear panel to travel across.
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _quickActionCircle(
+                            icon: Icons.phone_rounded,
+                            tooltip: 'Open Phone',
+                            onTap: () =>
+                                _openQuickShortcut(QuickShortcut.phone),
+                          ),
+                          _quickActionCircle(
+                            icon: Icons.camera_alt_rounded,
+                            tooltip: 'Open Camera',
+                            onTap: () =>
+                                _openQuickShortcut(QuickShortcut.camera),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
+              ),
 
-                // The launcher's own fingerprint prompt, drawn last so it sits
-                // over everything it is authenticating for. The platform's
-                // BiometricPrompt is a system dialog with its own type and
-                // colour; this is the same authentication in the panel's own
-                // cosmic language, fed by the silent reader.
-                if (_authTarget != null)
-                  Positioned.fill(
-                    child: Stack(
-                      children: [
-                        // The panel underneath is not interactive while the
-                        // reader owns the interaction.
-                        const Positioned.fill(
-                          child: ModalBarrier(
-                            dismissible: false,
-                            barrierSemanticsDismissible: false,
-                            color: Color(0xCC020306),
-                          ),
+              // The launcher's own fingerprint prompt, drawn last so it sits
+              // over everything it is authenticating for. The platform's
+              // BiometricPrompt is a system dialog with its own type and
+              // colour; this is the same authentication in the panel's own
+              // cosmic language, fed by the silent reader.
+              if (_authTarget != null)
+                Positioned.fill(
+                  child: Stack(
+                    children: [
+                      // The panel underneath is not interactive while the
+                      // reader owns the interaction.
+                      const Positioned.fill(
+                        child: ModalBarrier(
+                          dismissible: false,
+                          barrierSemanticsDismissible: false,
+                          color: Color(0xCC020306),
                         ),
-                        Positioned.fill(
-                          child: FingerprintAuthPrompt(
-                            app: _authTarget!,
-                            phase: _authPhase,
-                            onCancel: _cancelAuth,
-                            // Offered once the finger itself is the problem: a
-                            // run of non-matches, where the reader is still
-                            // live but is not going to answer for this finger.
-                            onUseCredential: (_authPhase ==
-                                        FingerprintPromptPhase.failed ||
-                                    _sensorUnusable)
-                                ? _useCredentialFallback
-                                : null,
-                          ),
+                      ),
+                      Positioned.fill(
+                        child: FingerprintAuthPrompt(
+                          app: _authTarget!,
+                          phase: _authPhase,
+                          onCancel: _cancelAuth,
+                          // Offered once the finger itself is the problem: a
+                          // run of non-matches, where the reader is still
+                          // live but is not going to answer for this finger.
+                          onUseCredential:
+                              (_authPhase == FingerprintPromptPhase.failed ||
+                                  _sensorUnusable)
+                              ? _useCredentialFallback
+                              : null,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
         ),
-      );
+      ),
+    );
   }
 
   Widget _quickActionCircle({
@@ -1423,10 +1617,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: const Color(0x8A11172A),
-                border: Border.all(
-                  color: const Color(0x4DFFFFFF),
-                  width: 1.0,
-                ),
+                border: Border.all(color: const Color(0x4DFFFFFF), width: 1.0),
                 boxShadow: const [
                   BoxShadow(
                     color: Color(0x66000000),
@@ -1443,8 +1634,6 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     );
   }
 
-
-
   Widget _categoryFilterChip(String label, AppCategory? category) {
     final bool isSelected = _selectedCategory == category;
     return Semantics(
@@ -1458,10 +1647,14 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
           padding: const EdgeInsets.symmetric(horizontal: 12),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0x3D00E5FF) : const Color(0x3310172C),
+            color: isSelected
+                ? const Color(0x3D00E5FF)
+                : const Color(0x3310172C),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: isSelected ? const Color(0xFF00E5FF) : const Color(0x2EFFFFFF),
+              color: isSelected
+                  ? const Color(0xFF00E5FF)
+                  : const Color(0x2EFFFFFF),
               width: isSelected ? 1.2 : 0.8,
             ),
             boxShadow: isSelected
@@ -1489,14 +1682,32 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   }
 
   String _weekdayName(int day) {
-    const names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const names = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
     return names[(day - 1) % 7];
   }
 
   String _monthName(int month) {
     const names = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
     ];
     return names[(month - 1) % 12];
   }

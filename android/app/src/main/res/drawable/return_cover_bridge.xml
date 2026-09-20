@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Opaque native handoff surface shown while an external app returns to Home. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="#0D1426"
+                android:centerColor="#070A14"
+                android:endColor="#020306" />
+        </shape>
+    </item>
+</layer-list>

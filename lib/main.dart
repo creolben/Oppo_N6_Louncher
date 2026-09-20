@@ -76,6 +76,14 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   bool _isSearchOpen = false;
   bool _isLocked = false;
   bool _isCockpitMode = false;
+
+  /// Whether ColorOS owns the lock screen instead of ChronoFold's Cosmic
+  /// surface.
+  ///
+  /// Fresh and legacy installs default to Cosmic so screen-off events mount
+  /// the launcher lock screen. A persisted explicit Native selection overrides
+  /// this default in [_loadApplications]. Authentication still delegates to the
+  /// platform keyguard before the Cosmic surface reveals or launches anything.
   bool _nativeMode = false;
   bool _isDefaultLauncher = true;
 
@@ -173,6 +181,17 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _checkDefaultLauncherStatus();
+      if (mounted) {
+        // Force a new root frame, then tell Android it is safe to remove the
+        // native return bridge. The bridge hides with a short fade, so Flutter
+        // is already visibly presenting the launcher beneath it.
+        setState(() {});
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            unawaited(LauncherBridge.notifyLauncherFrameReady());
+          }
+        });
+      }
     }
     // In Native Launcher Mode, switching or opening apps never locks the launcher.
   }
@@ -181,6 +200,10 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   /// In Native Mode, ColorOS manages the lock screen directly.
   void _lockForScreenOff() {
     if (!mounted || _nativeMode) return;
+    // Re-enable the native window flag only for a real screen-off event.
+    // Successful lock-screen app launches disable it so their return exposes
+    // the cover screen rather than reviving a fingerprint/keyguard overlay.
+    unawaited(LauncherBridge.setLockScreenOverlayEnabled(true));
     setState(() => _isLocked = true);
   }
 
@@ -222,13 +245,14 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
         final hiddenPkgs = List<String>.from(config['hiddenPackageNames'] as List);
         _layoutEngine.setHiddenPackageNames(hiddenPkgs);
       }
-      if (config.containsKey('nativeLauncherMode')) {
-        _nativeMode = config['nativeLauncherMode'] as bool? ?? false;
-      } else {
-        _nativeMode = false;
-      }
-      LauncherBridge.setLockScreenOverlayEnabled(!_nativeMode);
+      _nativeMode = config['nativeLauncherMode'] as bool? ?? false;
     }
+
+    // Pushed unconditionally, including on a first run with no stored config.
+    // Previously this lived inside the `config.isNotEmpty` branch, so a fresh
+    // install never told the platform anything and the overlay state was
+    // whatever the activity happened to start with.
+    await LauncherBridge.setLockScreenOverlayEnabled(!_nativeMode);
 
     _layoutEngine.assignApps(apps);
     if (mounted) {

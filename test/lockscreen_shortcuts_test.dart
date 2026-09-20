@@ -53,8 +53,9 @@ class _LaunchSpy {
     return null;
   }
 
-  static final RegExp _launchPattern =
-      RegExp(r'^Simulating launching app: (.*) \(([^()]*)\)$');
+  static final RegExp _launchPattern = RegExp(
+    r'^Simulating launching app: (.*) \(([^()]*)\)$',
+  );
 }
 
 /// The launchable phone/camera entries the Fold N6 (CPH2765, ColorOS 16)
@@ -70,56 +71,61 @@ class _LaunchSpy {
 /// `com.android.contacts` appears twice, as Phone and as Contacts, which is why
 /// matching on package name alone cannot pick the dialer.
 List<AppEntry> _deviceApps() => [
-      // Sorted by ResolveInfo order, so an unrelated app legitimately leads.
-      AppEntry(
-        packageName: 'com.android.chrome',
-        activityName: 'com.google.android.apps.chrome.Main',
-        label: 'Chrome',
-        category: AppCategory.core,
-        fallbackIcon: Icons.language_rounded,
-      ),
-      AppEntry(
-        packageName: 'com.android.contacts',
-        activityName: 'com.android.contacts.DialtactsActivityAlias',
-        label: 'Phone',
-        category: AppCategory.core,
-        fallbackIcon: Icons.phone_in_talk_rounded,
-      ),
-      AppEntry(
-        packageName: 'com.android.contacts',
-        activityName: 'com.android.contacts.PeopleActivityAlias',
-        label: 'Contacts',
-        category: AppCategory.core,
-        fallbackIcon: Icons.contacts_rounded,
-      ),
-      AppEntry(
-        packageName: 'com.oplus.camera',
-        activityName: 'com.oplus.camera.Camera',
-        label: 'Camera',
-        category: AppCategory.core,
-        fallbackIcon: Icons.camera_alt_rounded,
-      ),
-      AppEntry(
-        packageName: 'com.oplus.phonemanager',
-        activityName: 'com.oplus.phonemanager.FakeActivity',
-        label: 'Phone Manager',
-        category: AppCategory.tools,
-        fallbackIcon: Icons.tune_rounded,
-      ),
-      AppEntry(
-        packageName: 'com.paybyphone',
-        activityName: 'com.paybyphone.MainActivity',
-        label: 'PayByPhone',
-        category: AppCategory.tools,
-        fallbackIcon: Icons.local_parking_rounded,
-      ),
-    ];
+  // Sorted by ResolveInfo order, so an unrelated app legitimately leads.
+  AppEntry(
+    packageName: 'com.android.chrome',
+    activityName: 'com.google.android.apps.chrome.Main',
+    label: 'Chrome',
+    category: AppCategory.core,
+    fallbackIcon: Icons.language_rounded,
+  ),
+  AppEntry(
+    packageName: 'com.android.contacts',
+    activityName: 'com.android.contacts.DialtactsActivityAlias',
+    label: 'Phone',
+    category: AppCategory.core,
+    fallbackIcon: Icons.phone_in_talk_rounded,
+  ),
+  AppEntry(
+    packageName: 'com.android.contacts',
+    activityName: 'com.android.contacts.PeopleActivityAlias',
+    label: 'Contacts',
+    category: AppCategory.core,
+    fallbackIcon: Icons.contacts_rounded,
+  ),
+  AppEntry(
+    packageName: 'com.oplus.camera',
+    activityName: 'com.oplus.camera.Camera',
+    label: 'Camera',
+    category: AppCategory.core,
+    fallbackIcon: Icons.camera_alt_rounded,
+  ),
+  AppEntry(
+    packageName: 'com.oplus.phonemanager',
+    activityName: 'com.oplus.phonemanager.FakeActivity',
+    label: 'Phone Manager',
+    category: AppCategory.tools,
+    fallbackIcon: Icons.tune_rounded,
+  ),
+  AppEntry(
+    packageName: 'com.paybyphone',
+    activityName: 'com.paybyphone.MainActivity',
+    label: 'PayByPhone',
+    category: AppCategory.tools,
+    fallbackIcon: Icons.local_parking_rounded,
+  ),
+];
 
 Future<void> _pumpLockScreen(
   WidgetTester tester,
   List<AppEntry> apps, {
   Future<bool> Function({String? appName})? authenticate,
   VoidCallback? onUnlock,
+
+  /// How the platform answers a swipe-to-enter on a locked device. The panel
+  /// cannot authenticate anyone itself, so this is what decides whether a swipe
+  /// may clear it.
+  Future<bool> Function()? dismissKeyguard,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -129,6 +135,7 @@ Future<void> _pumpLockScreen(
           apps: apps,
           onUnlock: onUnlock ?? () {},
           authenticate: authenticate,
+          dismissKeyguard: dismissKeyguard,
         ),
       ),
     ),
@@ -141,10 +148,10 @@ Future<void> _pumpLockScreen(
 Future<void> _deliverPlatformCall(String method) async {
   await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .handlePlatformMessage(
-    'com.launcher.chronofold/apps',
-    const StandardMethodCodec().encodeMethodCall(MethodCall(method)),
-    (_) {},
-  );
+        'com.launcher.chronofold/apps',
+        const StandardMethodCodec().encodeMethodCall(MethodCall(method)),
+        (_) {},
+      );
 }
 
 /// Advances past the 360 ms unlock slide so the queued launch actually fires.
@@ -156,33 +163,44 @@ Future<void> _settleUnlock(WidgetTester tester) async {
 
 void main() {
   group('QuickShortcutResolver', () {
-    AppEntry app(String pkg, String? activity, String label) => AppEntry(
-          packageName: pkg,
-          activityName: activity,
-          label: label,
-        );
+    AppEntry app(String pkg, String? activity, String label) =>
+        AppEntry(packageName: pkg, activityName: activity, label: label);
 
     test('picks the dialer over the contacts alias in the same package', () {
       final apps = [
-        app('com.android.contacts',
-            'com.android.contacts.PeopleActivityAlias', 'Contacts'),
-        app('com.android.contacts',
-            'com.android.contacts.DialtactsActivityAlias', 'Phone'),
+        app(
+          'com.android.contacts',
+          'com.android.contacts.PeopleActivityAlias',
+          'Contacts',
+        ),
+        app(
+          'com.android.contacts',
+          'com.android.contacts.DialtactsActivityAlias',
+          'Phone',
+        ),
       ];
 
       final target = QuickShortcutResolver.phone(apps);
 
-      expect(target?.activityName,
-          equals('com.android.contacts.DialtactsActivityAlias'));
+      expect(
+        target?.activityName,
+        equals('com.android.contacts.DialtactsActivityAlias'),
+      );
     });
 
     test('ignores packages that merely contain a phone keyword', () {
       final apps = [
-        app('com.oplus.phonemanager', 'com.oplus.phonemanager.FakeActivity',
-            'Phone Manager'),
+        app(
+          'com.oplus.phonemanager',
+          'com.oplus.phonemanager.FakeActivity',
+          'Phone Manager',
+        ),
         app('com.paybyphone', 'com.paybyphone.MainActivity', 'PayByPhone'),
-        app('com.coloros.backuprestore',
-            'com.oplus.phoneclone.PhoneCloneMainActivity', 'Phone Clone'),
+        app(
+          'com.coloros.backuprestore',
+          'com.oplus.phoneclone.PhoneCloneMainActivity',
+          'Phone Clone',
+        ),
       ];
 
       expect(QuickShortcutResolver.phone(apps), isNull);
@@ -190,34 +208,52 @@ void main() {
 
     test('finds the dialer by package when the activity name is unhelpful', () {
       final apps = [
-        app('com.oplus.phonemanager', 'com.oplus.phonemanager.FakeActivity',
-            'Phone Manager'),
-        app('com.google.android.dialer',
-            'com.android.dialer.main.impl.MainActivity', 'Phone'),
+        app(
+          'com.oplus.phonemanager',
+          'com.oplus.phonemanager.FakeActivity',
+          'Phone Manager',
+        ),
+        app(
+          'com.google.android.dialer',
+          'com.android.dialer.main.impl.MainActivity',
+          'Phone',
+        ),
       ];
 
-      expect(QuickShortcutResolver.phone(apps)?.packageName,
-          equals('com.google.android.dialer'));
+      expect(
+        QuickShortcutResolver.phone(apps)?.packageName,
+        equals('com.google.android.dialer'),
+      );
     });
 
     test('picks the camera app and not camera extensions', () {
       final apps = [
-        app('com.android.cameraextensions',
-            'com.android.cameraextensions.CameraExtensionsActivity',
-            'Camera Extensions'),
+        app(
+          'com.android.cameraextensions',
+          'com.android.cameraextensions.CameraExtensionsActivity',
+          'Camera Extensions',
+        ),
         app('com.oplus.camera', 'com.oplus.camera.Camera', 'Camera'),
       ];
 
-      expect(QuickShortcutResolver.camera(apps)?.packageName,
-          equals('com.oplus.camera'));
+      expect(
+        QuickShortcutResolver.camera(apps)?.packageName,
+        equals('com.oplus.camera'),
+      );
     });
 
     test('does not offer a gallery or photo editor as the camera', () {
       final apps = [
-        app('com.google.android.apps.photos',
-            'com.google.android.apps.photos.home.HomeActivity', 'Photos'),
-        app('com.coloros.gallery3d', 'com.coloros.gallery3d.app.Gallery',
-            'Gallery'),
+        app(
+          'com.google.android.apps.photos',
+          'com.google.android.apps.photos.home.HomeActivity',
+          'Photos',
+        ),
+        app(
+          'com.coloros.gallery3d',
+          'com.coloros.gallery3d.app.Gallery',
+          'Gallery',
+        ),
       ];
 
       expect(QuickShortcutResolver.camera(apps), isNull);
@@ -225,8 +261,11 @@ void main() {
 
     test('returns null rather than a wrong app when nothing matches', () {
       final apps = [
-        app('com.android.chrome', 'com.google.android.apps.chrome.Main',
-            'Chrome'),
+        app(
+          'com.android.chrome',
+          'com.google.android.apps.chrome.Main',
+          'Chrome',
+        ),
         app('com.spotify.music', 'com.spotify.music.MainActivity', 'Spotify'),
       ];
 
@@ -245,8 +284,9 @@ void main() {
 
     setUp(() => spy = _LaunchSpy());
 
-    testWidgets('Phone shortcut opens the dialer on a real device app list',
-        (tester) async {
+    testWidgets('Phone shortcut opens the dialer on a real device app list', (
+      tester,
+    ) async {
       await _pumpLockScreen(tester, _deviceApps());
 
       await spy.capture(() async {
@@ -260,8 +300,9 @@ void main() {
       expect(spy.launchedLabel, equals('Phone'));
     });
 
-    testWidgets('Camera shortcut opens the camera on a real device app list',
-        (tester) async {
+    testWidgets('Camera shortcut opens the camera on a real device app list', (
+      tester,
+    ) async {
       await _pumpLockScreen(tester, _deviceApps());
 
       await spy.capture(() async {
@@ -273,8 +314,9 @@ void main() {
       expect(spy.launchedLabel, equals('Camera'));
     });
 
-    testWidgets('A shortcut never falls back to an unrelated app',
-        (tester) async {
+    testWidgets('A shortcut never falls back to an unrelated app', (
+      tester,
+    ) async {
       await _pumpLockScreen(tester, _deviceApps());
 
       await spy.capture(() async {
@@ -287,62 +329,64 @@ void main() {
     });
 
     testWidgets(
-        'Phone still opens when the platform keyguard wins the auth race',
-        (tester) async {
-      // The reader is the side power button, so the platform keyguard answers
-      // the touch and reports userPresent while this overlay's own prompt is
-      // still open. Hold the prompt open to reproduce that ordering.
-      final prompt = Completer<bool>();
-      await _pumpLockScreen(
-        tester,
-        _deviceApps(),
-        authenticate: ({String? appName}) => prompt.future,
-      );
+      'Phone still opens when the platform keyguard wins the auth race',
+      (tester) async {
+        // The reader is the side power button, so the platform keyguard answers
+        // the touch and reports userPresent while this overlay's own prompt is
+        // still open. Hold the prompt open to reproduce that ordering.
+        final prompt = Completer<bool>();
+        await _pumpLockScreen(
+          tester,
+          _deviceApps(),
+          authenticate: ({String? appName}) => prompt.future,
+        );
 
-      await spy.capture(() async {
-        await tester.tap(find.byIcon(Icons.phone_rounded));
-        await tester.pump();
+        await spy.capture(() async {
+          await tester.tap(find.byIcon(Icons.phone_rounded));
+          await tester.pump();
 
-        // The keyguard authenticates and the platform unlocks the device.
-        await _deliverPlatformCall('userPresent');
-        for (int i = 0; i < 4; i++) {
-          await tester.pump(const Duration(milliseconds: 40));
-        }
+          // The keyguard authenticates and the platform unlocks the device.
+          await _deliverPlatformCall('userPresent');
+          for (int i = 0; i < 4; i++) {
+            await tester.pump(const Duration(milliseconds: 40));
+          }
 
-        // The overlay's own prompt is then cancelled, as it is on device.
-        prompt.complete(false);
-        await _settleUnlock(tester);
-      });
+          // The overlay's own prompt is then cancelled, as it is on device.
+          prompt.complete(false);
+          await _settleUnlock(tester);
+        });
 
-      expect(spy.launchedPackage, equals('com.android.contacts'));
-      expect(spy.launchedLabel, equals('Phone'));
-    });
+        expect(spy.launchedPackage, equals('com.android.contacts'));
+        expect(spy.launchedLabel, equals('Phone'));
+      },
+    );
 
     testWidgets(
-        'Camera still opens when the platform keyguard wins the auth race',
-        (tester) async {
-      final prompt = Completer<bool>();
-      await _pumpLockScreen(
-        tester,
-        _deviceApps(),
-        authenticate: ({String? appName}) => prompt.future,
-      );
+      'Camera still opens when the platform keyguard wins the auth race',
+      (tester) async {
+        final prompt = Completer<bool>();
+        await _pumpLockScreen(
+          tester,
+          _deviceApps(),
+          authenticate: ({String? appName}) => prompt.future,
+        );
 
-      await spy.capture(() async {
-        await tester.tap(find.byIcon(Icons.camera_alt_rounded));
-        await tester.pump();
+        await spy.capture(() async {
+          await tester.tap(find.byIcon(Icons.camera_alt_rounded));
+          await tester.pump();
 
-        await _deliverPlatformCall('userPresent');
-        for (int i = 0; i < 4; i++) {
-          await tester.pump(const Duration(milliseconds: 40));
-        }
+          await _deliverPlatformCall('userPresent');
+          for (int i = 0; i < 4; i++) {
+            await tester.pump(const Duration(milliseconds: 40));
+          }
 
-        prompt.complete(false);
-        await _settleUnlock(tester);
-      });
+          prompt.complete(false);
+          await _settleUnlock(tester);
+        });
 
-      expect(spy.launchedPackage, equals('com.oplus.camera'));
-    });
+        expect(spy.launchedPackage, equals('com.oplus.camera'));
+      },
+    );
 
     testWidgets('A swipe up launches nothing', (tester) async {
       await _pumpLockScreen(tester, _deviceApps());
@@ -356,57 +400,47 @@ void main() {
     });
 
     testWidgets(
-        'Opening an app from the lock screen keeps the panel up, so closing '
-        'the app returns to the lock screen', (tester) async {
-      // Closing the dialer must land back on this lock screen. Clearing the
-      // panel on launch drops the user behind it instead — onto the launcher,
-      // or onto whatever the system was covering.
-      var unlocked = false;
-      await _pumpLockScreen(
-        tester,
-        _deviceApps(),
-        onUnlock: () => unlocked = true,
-      );
+      'A successfully launched lock-screen app reveals cover content when it closes',
+      (tester) async {
+        var isLocked = true;
+        final foldable = FoldableController();
+        await tester.pumpWidget(
+          MaterialApp(
+            home: StatefulBuilder(
+              builder: (context, setState) => Scaffold(
+                body: isLocked
+                    ? CosmicLockScreen(
+                        foldable: foldable,
+                        apps: _deviceApps(),
+                        onUnlock: () => setState(() => isLocked = false),
+                      )
+                    : const SizedBox(key: ValueKey('cover_content')),
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
 
-      await spy.capture(() async {
-        await tester.tap(find.byIcon(Icons.phone_rounded));
-        await _settleUnlock(tester);
-      });
+        await spy.capture(() async {
+          await tester.tap(find.byIcon(Icons.phone_rounded));
+          await _settleUnlock(tester);
+        });
 
-      expect(spy.launchedPackage, equals('com.android.contacts'));
-      expect(
-        unlocked,
-        isFalse,
-        reason: 'the panel was cleared, so closing the dialer would not '
-            'return to the lock screen',
-      );
-    });
+        expect(spy.launchedPackage, equals('com.android.contacts'));
+        expect(isLocked, isFalse);
+        expect(find.byType(CosmicLockScreen), findsNothing);
+        expect(find.byKey(const ValueKey('cover_content')), findsOneWidget);
 
-    testWidgets('The panel is still live after coming back from a launched app',
-        (tester) async {
-      var unlocked = false;
-      await _pumpLockScreen(
-        tester,
-        _deviceApps(),
-        onUnlock: () => unlocked = true,
-      );
-
-      await spy.capture(() async {
-        await tester.tap(find.byIcon(Icons.phone_rounded));
-        await _settleUnlock(tester);
-
-        // The app is closed and the launcher comes back to the front.
-        tester.binding
-            .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        // Closing the app resumes Flutter. The parent has already removed the
+        // lock panel, so it cannot cover the folded cover screen again.
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
         await tester.pump();
 
-        // Still locked, so it must still accept an unlock.
-        expect(unlocked, isFalse);
-        await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
-        await _settleUnlock(tester);
-      });
-
-      expect(unlocked, isTrue);
-    });
+        expect(find.byType(CosmicLockScreen), findsNothing);
+        expect(find.byKey(const ValueKey('cover_content')), findsOneWidget);
+      },
+    );
   });
 }

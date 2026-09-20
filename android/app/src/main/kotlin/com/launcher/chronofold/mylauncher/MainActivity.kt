@@ -65,12 +65,30 @@ class MainActivity : FlutterActivity() {
     private var packageReceiver: BroadcastReceiver? = null
     private var appsMethodChannel: MethodChannel? = null
 
+    /**
+     * An opaque native cover surface held above Flutter while a foreign task is
+     * foregrounded. Keeping this in the launcher task prevents ColorOS from
+     * exposing its own task/background frame on the way back.
+     */
+    private var returnBridge: android.view.View? = null
+    private var returnBridgeAwaitingReturn = false
+    private var returnBridgeLeftForTarget = false
+    private var returnBridgeGeneration = 0
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#020306")))
-        // Enable drawing over the keyguard so ChronoFold Cosmic Lock Screen
-        // appears when device is locked/sleeping.
-        setOverlayWhenLocked(true)
+        // ColorOS owns the lock screen. The launcher starts as an ordinary home
+        // app that does NOT draw over the keyguard, which is the only
+        // arrangement where the platform's own lock screen is the thing
+        // standing between a locked device and its contents.
+        //
+        // Occluding the keyguard is opt-in, and only Dart asks for it — see
+        // `setLockScreenOverlayEnabled`. Asserting it here (or in the manifest)
+        // meant the launcher was drawn over the keyguard from process start,
+        // before any preference had been read, so a surface that authenticates
+        // nobody was the first thing on a locked screen.
+        setOverlayWhenLocked(false)
 
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -89,6 +107,7 @@ class MainActivity : FlutterActivity() {
                         }
                     Intent.ACTION_USER_PRESENT -> {
                         if (keyguardWasLocked) {
+                            keyguardWasLocked = false
                             runOnUiThread {
                                 appsMethodChannel?.invokeMethod("userPresent", null)
                             }
@@ -119,6 +138,34 @@ class MainActivity : FlutterActivity() {
             addDataScheme("package")
         }
         registerReceiver(packageReceiver, pkgFilter)
+    }
+
+    override fun onPause() {
+        // This is set only after the target activity has been accepted for
+        // launch, so transient keyguard UI cannot be mistaken for a return.
+        if (returnBridgeAwaitingReturn) {
+            returnBridgeLeftForTarget = true
+        }
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!returnBridgeAwaitingReturn || !returnBridgeLeftForTarget) return
+
+        // Keep the native bridge visible until Flutter has painted a fresh
+        // launcher frame. The timeout is a fail-safe for an engine failure,
+        // never the normal return path.
+        val bridge = returnBridge ?: return
+        bridge.bringToFront()
+        val generation = returnBridgeGeneration
+        bridge.postDelayed({
+            if (generation == returnBridgeGeneration &&
+                returnBridgeAwaitingReturn &&
+                returnBridgeLeftForTarget) {
+                hideReturnBridge()
+            }
+        }, 900L)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -262,6 +309,22 @@ class MainActivity : FlutterActivity() {
                     "isKeyguardLocked" -> {
                         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
                         result.success(keyguard?.isKeyguardLocked == true || keyguard?.isDeviceLocked == true)
+                    }
+                    "dismissKeyguard" -> {
+                        requestKeyguardDismissal { success ->
+                            runOnUiThread { result.success(success) }
+                        }
+                    }
+                    "launcherFrameReady" -> {
+                        runOnUiThread {
+                            // An initial Flutter frame (or one sent before
+                            // MainActivity actually paused) must not dismiss
+                            // the bridge while a target is still opening.
+                            if (returnBridgeAwaitingReturn && returnBridgeLeftForTarget) {
+                                hideReturnBridge()
+                            }
+                            result.success(true)
+                        }
                     }
                     "setLockScreenOverlayEnabled" -> {
                         val enabled = call.argument<Boolean>("enabled") ?: false
@@ -460,49 +523,103 @@ class MainActivity : FlutterActivity() {
      * Starts [intent] once the keyguard is out of the way, then reports whether
      * it started.
      *
-     * The launcher draws over the keyguard (`showWhenLocked`), so its lock
-     * overlay is interactive while the device is still locked. An activity
-     * started from that state is placed *behind* the keyguard: the user
-     * authenticates, the overlay clears, and they are shown the system lock
-     * screen with the app they asked for running out of sight.
-     *
-     * [onStarted] is therefore invoked only after the keyguard has actually
-     * gone and the activity is on its way, which is the signal the caller needs
-     * to keep its own cover up for exactly as long as the system lock screen
-     * could otherwise show through — that gap is what made the ColorOS keyguard
-     * flash during the transition.
-     *
-     * When [alreadyAuthenticated] is true the Dart side has already verified the
-     * user's identity via its own biometric prompt. In that case calling
-     * `requestDismissKeyguard` would be wrong: it unconditionally raises the
-     * system credential UI (the ColorOS PIN/password bouncer) even though
-     * authentication is already done. Instead, `FLAG_DISMISS_KEYGUARD` is set on
-     * the activity window — that flag tells the platform "this activity has
-     * handled authentication; clear the keyguard without prompting" — and the
-     * target activity is started directly on top.
-     *
-     * `requestDismissKeyguard` only prompts when the device is still locked, so
-     * on the normal path — the power-button reader authenticating the keyguard
-     * itself — it dismisses silently.
-     */
-    /**
-     * Starts [intent] once the keyguard is out of the way, then reports whether
-     * it started.
-     *
-     * If the keyguard is not locked (or already satisfied by a recent fingerprint
-     * on the power-button sensor), the intent starts immediately.
+     * If the keyguard is not locked — the normal case, since the launcher no
+     * longer occludes it by default — the intent starts immediately.
      *
      * If the keyguard is locked, [KeyguardManager.requestDismissKeyguard] is
-     * requested. The platform handles user credential confirmation (fingerprint/PIN),
-     * and upon success [onStarted] is invoked and the target activity is started.
+     * requested, and the platform performs the authentication: biometric, PIN or
+     * pattern, in its own UI. This is the launcher's only real authentication
+     * gate. Nothing in Dart can stand in for it, because while the device is
+     * locked only the keyguard may use the fingerprint sensor.
+     *
+     * [onStarted] reports true only when the activity is genuinely on its way to
+     * being visible. A refused or cancelled dismissal reports false rather than
+     * starting the activity behind the lock screen, where it would run unseen
+     * while the caller believed the launch had succeeded.
      */
+    /**
+     * Makes the last launcher buffer a native cover-like surface before a
+     * foreign task begins. It stays above Flutter during the round trip and is
+     * removed only after Dart confirms its replacement frame is painted.
+     */
+    private fun showReturnBridge() {
+        val bridge = returnBridge ?: android.view.View(this).apply {
+            setBackgroundResource(R.drawable.return_cover_bridge)
+            importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            // Do not allow an unseen Flutter surface to receive a tap while
+            // this noninteractive transition surface is visible.
+            isClickable = true
+            isFocusable = true
+        }.also { view ->
+            addContentView(
+                view,
+                android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            returnBridge = view
+        }
+
+        returnBridgeGeneration += 1
+        returnBridgeAwaitingReturn = true
+        returnBridgeLeftForTarget = false
+        bridge.animate().cancel()
+        bridge.alpha = 1f
+        bridge.visibility = android.view.View.VISIBLE
+        bridge.bringToFront()
+        bridge.invalidate()
+    }
+
+    private fun hideReturnBridge() {
+        val bridge = returnBridge ?: return
+        returnBridgeAwaitingReturn = false
+        returnBridgeLeftForTarget = false
+        returnBridgeGeneration += 1
+        bridge.animate().cancel()
+        bridge.animate()
+            .alpha(0f)
+            .setDuration(120L)
+            .withEndAction {
+                if (!returnBridgeAwaitingReturn) {
+                    bridge.visibility = android.view.View.GONE
+                }
+            }
+            .start()
+    }
+
+    private fun startTargetWithReturnBridge(
+        intent: Intent,
+        onStarted: (Boolean) -> Unit,
+    ) {
+        showReturnBridge()
+        val bridge = returnBridge
+        if (bridge == null) {
+            onStarted(startActivityQuietly(intent))
+            return
+        }
+
+        // Allow one compositor beat for the native bridge to become the
+        // launcher task's visible buffer before the target task takes over.
+        bridge.postDelayed({
+            val started = startActivityQuietly(intent)
+            if (!started) {
+                hideReturnBridge()
+            }
+            onStarted(started)
+        }, 16L)
+    }
+
     private fun startWhenUnlocked(
         intent: Intent,
         onStarted: (Boolean) -> Unit,
     ) {
         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         if (keyguard == null || !keyguard.isKeyguardLocked) {
-            onStarted(startActivityQuietly(intent))
+            // This activity must resume as ordinary home content after the
+            // target closes, not as an overlay that re-occludes a keyguard.
+            setOverlayWhenLocked(false)
+            startTargetWithReturnBridge(intent, onStarted)
             return
         }
 
@@ -514,19 +631,74 @@ class MainActivity : FlutterActivity() {
             this,
             object : KeyguardManager.KeyguardDismissCallback() {
                 override fun onDismissSucceeded() {
-                    onStarted(startActivityQuietly(intent))
+                    // ColorOS can re-present its bouncer when MainActivity
+                    // returns while it remains `showWhenLocked`. Remove that
+                    // temporary window flag before starting the target; the
+                    // Dart screen-off listener restores it for a real lock.
+                    setOverlayWhenLocked(false)
+                    startTargetWithReturnBridge(intent, onStarted)
                 }
 
                 override fun onDismissError() {
+                    // Starting the activity anyway reported success for a launch
+                    // the user cannot see: with the keyguard still up the
+                    // activity lands *behind* it, running and invisible, which
+                    // reads as the app never having opened. Reporting the
+                    // failure lets the caller say so instead.
                     android.util.Log.w(
                         "ChronoFold",
-                        "Keyguard refused to dismiss; starting behind it",
-                    ) 
-                    onStarted(startActivityQuietly(intent))
+                        "Keyguard refused to dismiss; not starting behind it",
+                    )
+                    onStarted(false)
                 }
 
                 override fun onDismissCancelled() {
                     onStarted(false)
+                }
+            },
+        )
+    }
+
+    /**
+     * Asks the platform to authenticate the user and clear the keyguard, without
+     * launching anything.
+     *
+     * This exists because the launcher's own lock panel cannot authenticate
+     * anyone. While the device is locked only the keyguard may use the
+     * fingerprint sensor, so a panel drawn over the keyguard has no way to
+     * verify identity itself. Its swipe-to-enter gesture therefore has exactly
+     * two honest options: refuse, or ask the platform to do the authenticating.
+     * This is the second.
+     *
+     * On a secure keyguard `requestDismissKeyguard` raises the platform's own
+     * bouncer (biometric, PIN, pattern), and the callback reports what the user
+     * did. On a device with no secure lock the keyguard is not locked and there
+     * is nothing to authenticate, so this reports success immediately.
+     */
+    private fun requestKeyguardDismissal(onResult: (Boolean) -> Unit) {
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (keyguard == null || !keyguard.isKeyguardLocked) {
+            onResult(true)
+            return
+        }
+
+        // Release this app's hold on the reader first so the keyguard can take
+        // sensor ownership cleanly.
+        stopFingerprintScan()
+
+        keyguard.requestDismissKeyguard(
+            this,
+            object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() {
+                    onResult(true)
+                }
+
+                override fun onDismissError() {
+                    onResult(false)
+                }
+
+                override fun onDismissCancelled() {
+                    onResult(false)
                 }
             },
         )
