@@ -1,9 +1,12 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+
 import '../models/app_entry.dart';
 import '../models/constellation.dart';
 import '../core/foldable_controller.dart';
+import '../ui/theme/luminous_home_theme.dart';
 import 'camera_controller.dart';
 
 class CosmicParticle {
@@ -147,59 +150,72 @@ class GalaxyCustomPainter extends CustomPainter {
   void _paintDeepSpace(Canvas canvas, Size size) {
     final bgRect = Offset.zero & size;
 
-    // 1. Deep OLED Obsidian Abyss
+    // An ink-blue cyclorama keeps the OLED depth without reading as empty
+    // space. The brighter ceiling makes the clock legible without a glow.
     _bgPaint.shader = ui.Gradient.radial(
       Offset(size.width * 0.5, size.height * 0.5),
       size.longestSide * 0.90,
       const [
-        Color(0xFF090D1A), // Deep interstellar navy
-        Color(0xFF04060C), // Deep void abyss
-        Color(0xFF010204), // Pure OLED pitch black
+        LuminousHomeTheme.backgroundTop,
+        LuminousHomeTheme.background,
+        LuminousHomeTheme.backgroundDeep,
       ],
       const [0.0, 0.55, 1.0],
     );
     canvas.drawRect(bgRect, _bgPaint);
 
-    // 2. Volumetric Interstellar Nebulae (Organic living cosmic dust clouds)
     final double driftX1 = math.sin(animationTime * 0.12) * 25.0;
     final double driftY1 = math.cos(animationTime * 0.10) * 20.0;
     final double driftX2 = math.cos(animationTime * 0.09) * 30.0;
     final double driftY2 = math.sin(animationTime * 0.11) * 25.0;
 
-    // Nebula Cloud 1: Deep Cosmic Indigo/Violet (Upper-left sector)
+    // Slow orchid and aqua fields keep the original drift inputs while
+    // behaving more like light through fluid than deep-space nebulae.
     _nebulaPaint.shader = ui.Gradient.radial(
       Offset(size.width * 0.30 + driftX1, size.height * 0.35 + driftY1),
       size.longestSide * 0.58,
-      const [
-        Color(0x2A3E1E74), // Ethereal violet luminosity
-        Color(0x121B0E3C),
+      [
+        LuminousHomeTheme.orchid.withValues(alpha: 0.20),
+        LuminousHomeTheme.cobalt.withValues(alpha: 0.07),
         Colors.transparent,
       ],
       const [0.0, 0.45, 1.0],
     );
     canvas.drawRect(bgRect, _nebulaPaint);
 
-    // Nebula Cloud 2: Cygnus Cyan / Stellar Gas (Lower-right sector)
     _nebulaPaint.shader = ui.Gradient.radial(
       Offset(size.width * 0.70 + driftX2, size.height * 0.65 + driftY2),
       size.longestSide * 0.52,
-      const [
-        Color(0x22007799), // Deep cyan-teal glow
-        Color(0x0C042533),
+      [
+        LuminousHomeTheme.aqua.withValues(alpha: 0.17),
+        LuminousHomeTheme.mint.withValues(alpha: 0.05),
         Colors.transparent,
       ],
       const [0.0, 0.42, 1.0],
     );
     canvas.drawRect(bgRect, _nebulaPaint);
 
-    // Nebula Cloud 3: Warm Solar Amber Corona (Anchoring the center galaxy origin)
+    // A low cobalt horizon grounds the field like a seamless cyclorama.
+    _nebulaPaint.shader = ui.Gradient.linear(
+      Offset(0, size.height * 0.34),
+      Offset(0, size.height * 0.94),
+      [
+        Colors.transparent,
+        LuminousHomeTheme.cobalt.withValues(alpha: 0.09),
+        LuminousHomeTheme.aqua.withValues(alpha: 0.055),
+        Colors.transparent,
+      ],
+      const [0.0, 0.42, 0.72, 1.0],
+    );
+    canvas.drawRect(bgRect, _nebulaPaint);
+
     final double corePulse = 0.05 + 0.02 * math.sin(animationTime * 1.5);
     _nebulaPaint.shader = ui.Gradient.radial(
       Offset(size.width * 0.5, size.height * 0.5),
       size.longestSide * 0.36,
       [
-        Color(0xFFFFB300).withValues(alpha: corePulse * 1.6),
-        Color(0xFFFF6F00).withValues(alpha: corePulse * 0.7),
+        LuminousHomeTheme.aqua.withValues(alpha: corePulse * 1.25),
+        LuminousHomeTheme.cobalt.withValues(alpha: corePulse * 0.55),
         Colors.transparent,
       ],
       const [0.0, 0.48, 1.0],
@@ -212,7 +228,10 @@ class GalaxyCustomPainter extends CustomPainter {
 
     final visible = camera.visibleWorldBounds.inflate(120.0);
 
-    for (final star in starfield) {
+    for (int i = 0; i < starfield.length; i++) {
+      final star = starfield[i];
+      // Keep the world populated, but let apps and horizon carry the scene.
+      if (!star.hasSpikes && i % 4 != 0) continue;
       if (star.x < visible.left ||
           star.x > visible.right ||
           star.y < visible.top ||
@@ -220,19 +239,38 @@ class GalaxyCustomPainter extends CustomPainter {
         continue;
       }
 
-      final double wave = math.sin(animationTime * star.twinkleSpeed + star.x * 0.05);
+      final double wave = math.sin(
+        animationTime * star.twinkleSpeed + star.x * 0.05,
+      );
       final double alpha = star.baseBrightness * (0.70 + wave * 0.25);
 
       final pos = Offset(star.x, star.y);
-      _starPaint.color = star.color.withValues(alpha: alpha.clamp(0.18, 0.98));
-      canvas.drawCircle(pos, star.radius, _starPaint);
+      final starColor = Color.lerp(
+        LuminousHomeTheme.textSecondary,
+        star.color,
+        0.24,
+      )!;
+      _starPaint.color = starColor.withValues(
+        alpha: (alpha * 0.62).clamp(0.10, 0.58),
+      );
+      canvas.drawCircle(pos, star.radius * 0.82, _starPaint);
 
-      // 4-point diffraction cross spikes for bright beacon stars
+      // Only the strongest points keep a restrained diffraction whisper.
       if (star.hasSpikes && alpha > 0.60) {
-        final double spikeLen = star.radius * 4.2 * (0.85 + wave * 0.25);
-        _spikePaint.color = star.color.withValues(alpha: (alpha * 0.45).clamp(0.0, 0.70));
-        canvas.drawLine(pos - Offset(spikeLen, 0), pos + Offset(spikeLen, 0), _spikePaint);
-        canvas.drawLine(pos - Offset(0, spikeLen), pos + Offset(0, spikeLen), _spikePaint);
+        final double spikeLen = star.radius * 3.2 * (0.85 + wave * 0.25);
+        _spikePaint.color = starColor.withValues(
+          alpha: (alpha * 0.20).clamp(0.0, 0.28),
+        );
+        canvas.drawLine(
+          pos - Offset(spikeLen, 0),
+          pos + Offset(spikeLen, 0),
+          _spikePaint,
+        );
+        canvas.drawLine(
+          pos - Offset(0, spikeLen),
+          pos + Offset(0, spikeLen),
+          _spikePaint,
+        );
       }
     }
 
@@ -241,7 +279,9 @@ class GalaxyCustomPainter extends CustomPainter {
 
   void _paintAstrogationGrid(Canvas canvas) {
     final double zoomAlpha = (camera.zoom * 0.8).clamp(0.35, 1.0);
-    _gridPaint.color = const Color(0xFF64B5F6).withValues(alpha: 0.035 * zoomAlpha);
+    _gridPaint.color = LuminousHomeTheme.textMuted.withValues(
+      alpha: 0.012 * zoomAlpha,
+    );
     _gridPaint.strokeWidth = 0.75;
 
     // Faint concentric celestial coordinate rings
@@ -250,7 +290,9 @@ class GalaxyCustomPainter extends CustomPainter {
     canvas.drawCircle(Offset.zero, 520.0, _gridPaint);
 
     // Subtle radial observatory degree ticks
-    _gridPaint.color = const Color(0xFF00E5FF).withValues(alpha: 0.04 * zoomAlpha);
+    _gridPaint.color = LuminousHomeTheme.aqua.withValues(
+      alpha: 0.014 * zoomAlpha,
+    );
     for (int i = 0; i < 12; i++) {
       final double a = i * math.pi / 6;
       final cosA = math.cos(a);
@@ -272,16 +314,23 @@ class GalaxyCustomPainter extends CustomPainter {
       if (dist <= 0) continue;
       final norm = dir / dist;
 
-      final double tailLen = meteor.length * (p < 0.2 ? (p / 0.2) : (p > 0.8 ? (1.0 - p) / 0.2 : 1.0));
+      final double tailLen =
+          meteor.length *
+          (p < 0.2 ? (p / 0.2) : (p > 0.8 ? (1.0 - p) / 0.2 : 1.0));
       final tail = head - (norm * tailLen);
       final double fade = math.sin(p * math.pi); // Smooth attack and release
 
+      final meteorColor = Color.lerp(
+        LuminousHomeTheme.aqua,
+        meteor.color,
+        0.35,
+      )!;
       _meteorPaint.shader = ui.Gradient.linear(
         head,
         tail,
         [
-          Colors.white.withValues(alpha: 0.95 * fade),
-          meteor.color.withValues(alpha: 0.65 * fade),
+          LuminousHomeTheme.textPrimary.withValues(alpha: 0.82 * fade),
+          meteorColor.withValues(alpha: 0.45 * fade),
           Colors.transparent,
         ],
         const [0.0, 0.35, 1.0],
@@ -311,7 +360,7 @@ class GalaxyCustomPainter extends CustomPainter {
       final double progress = c.expansionProgress;
       final bool isCore = c.id == 'core';
 
-      // If core, render dedicated artistic celestial astrolabe centerpiece
+      // The center uses a dedicated quiet luminous orb and breathing rings.
       if (isCore) {
         if (othersFade > 0.01) {
           _paintCenterConstellationCore(canvas, c, othersFade);
@@ -327,8 +376,10 @@ class GalaxyCustomPainter extends CustomPainter {
           c.center,
           auraRadius,
           [
-            c.glowColor.withValues(alpha: (progress > 0.3 ? 0.22 : 0.35) * auraAlphaScale),
-            c.glowColor.withValues(alpha: 0.06 * auraAlphaScale),
+            Color.lerp(LuminousHomeTheme.cobalt, c.glowColor, 0.45)!.withValues(
+              alpha: (progress > 0.3 ? 0.12 : 0.16) * auraAlphaScale,
+            ),
+            LuminousHomeTheme.aqua.withValues(alpha: 0.025 * auraAlphaScale),
             Colors.transparent,
           ],
           const [0.0, 0.55, 1.0],
@@ -348,34 +399,65 @@ class GalaxyCustomPainter extends CustomPainter {
             final touchWorld = camera.screenToWorld(activeTouchScreenPoint!);
             final dist = (c.center - touchWorld).distance;
             if (dist < 130.0) {
-              final dockMag = 1.0 + 0.35 * math.exp(-((dist * dist) / (2 * 55.0 * 55.0)));
+              final dockMag =
+                  1.0 + 0.35 * math.exp(-((dist * dist) / (2 * 55.0 * 55.0)));
               podSize *= dockMag;
             }
           }
 
-          final podRect = Rect.fromCenter(center: c.center, width: podSize, height: podSize);
-          final podRRect = RRect.fromRectAndRadius(podRect, Radius.circular(podSize * 0.34));
+          final podRect = Rect.fromCenter(
+            center: c.center,
+            width: podSize,
+            height: podSize,
+          );
+          final podRRect = RRect.fromRectAndRadius(
+            podRect,
+            Radius.circular(podSize * 0.34),
+          );
 
-          // Soft drop shadow
-          _haloPaint.color = c.glowColor.withValues(alpha: 0.25 * orbAlpha);
-          canvas.drawRRect(podRRect.inflate(5.0), _haloPaint);
+          // Offset depth, tonal glass, and one small color cue replace the
+          // incumbent neon frame while staying inside the same pod bounds.
+          _haloPaint
+            ..shader = null
+            ..color = LuminousHomeTheme.shadow.withValues(
+              alpha: 0.42 * orbAlpha,
+            );
+          canvas.drawRRect(
+            podRRect.shift(const Offset(0, 4)).inflate(2),
+            _haloPaint,
+          );
 
-          // Frosted Glass Pod Body
-          _nodeFillPaint.color = const Color(0xFF0F1424).withValues(alpha: 0.94 * orbAlpha);
+          _nodeFillPaint.shader = ui.Gradient.linear(
+            podRect.topLeft,
+            podRect.bottomRight,
+            [
+              Color.lerp(
+                LuminousHomeTheme.backgroundRaised,
+                c.primaryColor,
+                0.14,
+              )!.withValues(alpha: 0.92 * orbAlpha),
+              LuminousHomeTheme.glassOpaqueStrong.withValues(
+                alpha: 0.84 * orbAlpha,
+              ),
+            ],
+          );
           canvas.drawRRect(podRRect, _nodeFillPaint);
+          _nodeFillPaint.shader = null;
 
-          // Illuminated Rim Border
           _nodeStrokePaint
-            ..shader = ui.Gradient.linear(
-              podRect.topLeft,
-              podRect.bottomRight,
-              [
-                c.primaryColor.withValues(alpha: 0.85 * orbAlpha),
-                c.secondaryColor.withValues(alpha: 0.25 * orbAlpha),
-              ],
+            ..shader = null
+            ..color = LuminousHomeTheme.hairlineStrong.withValues(
+              alpha: 0.72 * orbAlpha,
             )
-            ..strokeWidth = 1.4;
+            ..strokeWidth = 0.9;
           canvas.drawRRect(podRRect, _nodeStrokePaint);
+
+          _starPaint.color = c.primaryColor.withValues(alpha: 0.86 * orbAlpha);
+          canvas.drawCircle(
+            c.center + Offset(podSize * 0.24, -podSize * 0.24),
+            3,
+            _starPaint,
+          );
 
           // Center Emblem Icon
           if (c.iconPainter != null) {
@@ -392,7 +474,10 @@ class GalaxyCustomPainter extends CustomPainter {
           // Center Emblem Icon
           if (c.iconPainter != null) {
             final ip = c.iconPainter!;
-            ip.paint(canvas, c.center - Offset(ip.width / 2, ip.height / 2 + 10.0));
+            ip.paint(
+              canvas,
+              c.center - Offset(ip.width / 2, ip.height / 2 + 10.0),
+            );
           }
           // Constellation Title
           if (c.titlePainter != null) {
@@ -411,18 +496,26 @@ class GalaxyCustomPainter extends CustomPainter {
       if (progress > 0.15) {
         final double trackAlpha = progress * 0.45;
         if (trackAlpha > 0.01) {
-          _trackPaint.color = c.primaryColor.withValues(alpha: 0.05 * trackAlpha);
+          _trackPaint.color = LuminousHomeTheme.textMuted.withValues(
+            alpha: 0.022 * trackAlpha,
+          );
           canvas.drawCircle(c.center, c.radius * 0.75, _trackPaint);
           canvas.drawCircle(c.center, c.radius * 1.0, _trackPaint);
 
           final double rot = c.rotation;
-          _tickPaint.color = c.primaryColor.withValues(alpha: 0.08 * trackAlpha);
+          _tickPaint.color = LuminousHomeTheme.aqua.withValues(
+            alpha: 0.025 * trackAlpha,
+          );
           for (int i = 0; i < 8; i++) {
             final double a = rot + (i * math.pi / 4);
             final cosA = math.cos(a);
             final sinA = math.sin(a);
-            final p1 = c.center + Offset(cosA * (c.radius - 2.0), sinA * (c.radius - 2.0));
-            final p2 = c.center + Offset(cosA * (c.radius + 2.0), sinA * (c.radius + 2.0));
+            final p1 =
+                c.center +
+                Offset(cosA * (c.radius - 2.0), sinA * (c.radius - 2.0));
+            final p2 =
+                c.center +
+                Offset(cosA * (c.radius + 2.0), sinA * (c.radius + 2.0));
             canvas.drawLine(p1, p2, _tickPaint);
           }
         }
@@ -430,7 +523,11 @@ class GalaxyCustomPainter extends CustomPainter {
     }
   }
 
-  void _paintCenterConstellationCore(Canvas canvas, Constellation core, double othersFade) {
+  void _paintCenterConstellationCore(
+    Canvas canvas,
+    Constellation core,
+    double othersFade,
+  ) {
     final double progress = core.expansionProgress.clamp(0.0, 1.0);
     final double alpha = othersFade;
     if (alpha < 0.01) return;
@@ -438,32 +535,39 @@ class GalaxyCustomPainter extends CustomPainter {
     final center = core.center;
     final double breath = math.sin(animationTime * 2.2);
 
-    // 1. Radiant Solar Nebula Corona
     final double coronaRadius = (38.0 + progress * 24.0) + breath * 3.0;
     _auraPaint.shader = ui.Gradient.radial(
       center,
       coronaRadius * 1.6,
       [
-        core.primaryColor.withValues(alpha: (0.35 + 0.08 * breath) * alpha),
-        core.secondaryColor.withValues(alpha: (0.12 + 0.04 * breath) * alpha),
+        LuminousHomeTheme.aqua.withValues(
+          alpha: (0.16 + 0.035 * breath) * alpha,
+        ),
+        LuminousHomeTheme.cobalt.withValues(
+          alpha: (0.055 + 0.018 * breath) * alpha,
+        ),
         Colors.transparent,
       ],
       const [0.0, 0.50, 1.0],
     );
     canvas.drawCircle(center, coronaRadius * 1.6, _auraPaint);
 
-    // 2. Concentric Astrolabe Gyroscope Rings (Counter-Rotating Celestial Chrono Rings)
-    // Ring 1: Inner Gyro Ring with cardinal tick marks (rotates clockwise)
+    // The original counter-rotation remains, but hairlines replace the
+    // calibrated astrolabe treatment.
     final double innerRot = animationTime * 0.35;
     const double innerR = 33.0;
     _coreRingPaint
-      ..color = core.primaryColor.withValues(alpha: (0.50 + 0.15 * progress) * alpha)
-      ..strokeWidth = 1.0;
+      ..color = LuminousHomeTheme.textPrimary.withValues(
+        alpha: (0.18 + 0.06 * progress) * alpha,
+      )
+      ..strokeWidth = 0.8;
     canvas.drawCircle(center, innerR, _coreRingPaint);
 
-    // Inner ring tick marks
-    _tickPaint.color = core.primaryColor.withValues(alpha: (0.40 + 0.15 * progress) * alpha);
-    _tickPaint.strokeWidth = 1.0;
+    _tickPaint
+      ..color = LuminousHomeTheme.aqua.withValues(
+        alpha: (0.12 + 0.04 * progress) * alpha,
+      )
+      ..strokeWidth = 0.8;
     for (int i = 0; i < 8; i++) {
       final double a = innerRot + (i * math.pi / 4);
       final cosA = math.cos(a);
@@ -473,61 +577,73 @@ class GalaxyCustomPainter extends CustomPainter {
       canvas.drawLine(p1, p2, _tickPaint);
     }
 
-    // Orbiting Golden Micro-Photons on Inner Ring
     for (int i = 0; i < 2; i++) {
       final a = innerRot + (i * math.pi);
-      final photonPos = center + Offset(math.cos(a) * innerR, math.sin(a) * innerR);
-      _starPaint.color = Colors.white.withValues(alpha: 0.95 * alpha);
-      canvas.drawCircle(photonPos, 1.8, _starPaint);
-      _haloPaint.color = core.primaryColor.withValues(alpha: 0.60 * alpha);
+      final photonPos =
+          center + Offset(math.cos(a) * innerR, math.sin(a) * innerR);
+      _haloPaint
+        ..shader = null
+        ..color = LuminousHomeTheme.aqua.withValues(alpha: 0.12 * alpha);
       canvas.drawCircle(photonPos, 4.0, _haloPaint);
+      _starPaint.color = LuminousHomeTheme.textPrimary.withValues(
+        alpha: 0.74 * alpha,
+      );
+      canvas.drawCircle(photonPos, 1.8, _starPaint);
     }
 
-    // Ring 2: Outer Calibrated Astrolabe Ring (rotates counter-clockwise, expands dynamically with progress)
     final double outerR = 44.0 + progress * 14.0;
     final double outerRot = -animationTime * 0.22;
     _coreRingPaint
-      ..color = core.primaryColor.withValues(alpha: (0.35 + 0.20 * progress) * alpha)
-      ..strokeWidth = 1.2;
+      ..color = LuminousHomeTheme.orchid.withValues(
+        alpha: (0.12 + 0.06 * progress) * alpha,
+      )
+      ..strokeWidth = 0.9;
     canvas.drawCircle(center, outerR, _coreRingPaint);
 
-    // Outer ring diamond nodes at 4 cardinal points
     for (int i = 0; i < 4; i++) {
       final a = outerRot + (i * math.pi / 2);
-      final nodePos = center + Offset(math.cos(a) * outerR, math.sin(a) * outerR);
-      _drawDiamond(canvas, nodePos, 3.2, core.primaryColor.withValues(alpha: 0.85 * alpha));
+      final nodePos =
+          center + Offset(math.cos(a) * outerR, math.sin(a) * outerR);
+      _drawDiamond(
+        canvas,
+        nodePos,
+        2.2,
+        LuminousHomeTheme.orchid.withValues(alpha: 0.34 * alpha),
+      );
     }
 
-    // 3. Collapsed State Visuals: Radiant Singularity Orb & Breathing Beacon Ripple
     if (progress < 0.80) {
-      final double closedAlpha = ((1.0 - progress) / 1.0).clamp(0.0, 1.0) * alpha;
-
-      // Sonar / Beacon Ripple Wave expanding from center
+      final double closedAlpha =
+          ((1.0 - progress) / 1.0).clamp(0.0, 1.0) * alpha;
       final double rippleT = (animationTime * 0.55) % 1.0;
       final double rippleRadius = 24.0 + rippleT * 42.0;
-      final double rippleAlpha = (1.0 - rippleT) * 0.45 * closedAlpha;
+      final double rippleAlpha = (1.0 - rippleT) * 0.20 * closedAlpha;
       if (rippleAlpha > 0.01) {
         _coreRingPaint
-          ..color = core.primaryColor.withValues(alpha: rippleAlpha)
-          ..strokeWidth = 1.2;
+          ..color = LuminousHomeTheme.aqua.withValues(alpha: rippleAlpha)
+          ..strokeWidth = 0.9;
         canvas.drawCircle(center, rippleRadius, _coreRingPaint);
       }
 
-      // Elegant Singularity Label underneath: "ESSENTIALS"
-      if (closedAlpha > 0.1) {
-        if (core.titlePainter != null) {
-          final tp = core.titlePainter!;
-          canvas.saveLayer(
-            Rect.fromLTWH(center.dx - tp.width / 2, center.dy + 34.0, tp.width, tp.height),
-            Paint()..color = Colors.white.withValues(alpha: closedAlpha * 0.90),
-          );
-          tp.paint(canvas, center + Offset(-tp.width / 2, 34.0));
-          canvas.restore();
-        }
+      if (closedAlpha > 0.1 && core.titlePainter != null) {
+        final tp = core.titlePainter!;
+        canvas.saveLayer(
+          Rect.fromLTWH(
+            center.dx - tp.width / 2,
+            center.dy + 34.0,
+            tp.width,
+            tp.height,
+          ),
+          Paint()
+            ..color = LuminousHomeTheme.textPrimary.withValues(
+              alpha: closedAlpha * 0.90,
+            ),
+        );
+        tp.paint(canvas, center + Offset(-tp.width / 2, 34.0));
+        canvas.restore();
       }
     }
 
-    // 4. Center Singularity Core Disc (Glassmorphic Obsidian-Gold Jewel)
     double coreScale = 1.0;
     if (activeTouchScreenPoint != null) {
       final touchWorld = camera.screenToWorld(activeTouchScreenPoint!);
@@ -540,50 +656,62 @@ class GalaxyCustomPainter extends CustomPainter {
     final double discRadius = (22.0 + progress * 3.0) * coreScale;
     final discRect = Rect.fromCircle(center: center, radius: discRadius);
 
-    // Deep drop glow
-    _haloPaint.color = core.glowColor.withValues(alpha: (0.45 + 0.15 * breath) * alpha);
-    canvas.drawCircle(center, discRadius * 1.25, _haloPaint);
-
-    // Obsidian Dark Glass Body
-    _nodeFillPaint.color = const Color(0xFF0D1222).withValues(alpha: 0.95 * alpha);
-    canvas.drawCircle(center, discRadius, _nodeFillPaint);
-
-    // Inner Satin Gradient
-    _auraPaint.shader = ui.Gradient.radial(
-      center - Offset(discRadius * 0.25, discRadius * 0.25),
-      discRadius * 0.9,
-      [
-        core.primaryColor.withValues(alpha: (0.28 + 0.08 * breath) * alpha),
-        Colors.transparent,
-      ],
-      const [0.0, 1.0],
+    _haloPaint
+      ..shader = null
+      ..color = LuminousHomeTheme.shadow.withValues(alpha: 0.48 * alpha);
+    canvas.drawCircle(
+      center + const Offset(0, 4),
+      discRadius * 1.18,
+      _haloPaint,
     );
-    canvas.drawCircle(center, discRadius, _auraPaint);
 
-    // Polished Radiant Gold Rim
+    _nodeFillPaint.shader = ui.Gradient.radial(
+      center - Offset(discRadius * 0.28, discRadius * 0.30),
+      discRadius * 1.25,
+      [
+        LuminousHomeTheme.aqua.withValues(
+          alpha: (0.72 + 0.04 * breath) * alpha,
+        ),
+        LuminousHomeTheme.cobalt.withValues(alpha: 0.48 * alpha),
+        LuminousHomeTheme.backgroundRaised.withValues(alpha: 0.96 * alpha),
+      ],
+      const [0.0, 0.48, 1.0],
+    );
+    canvas.drawCircle(center, discRadius, _nodeFillPaint);
+    _nodeFillPaint.shader = null;
+
     _nodeStrokePaint
       ..shader = ui.Gradient.linear(
         discRect.topLeft,
         discRect.bottomRight,
         [
-          const Color(0xFFFFFFFF).withValues(alpha: 0.90 * alpha),
-          core.primaryColor.withValues(alpha: 0.95 * alpha),
-          core.secondaryColor.withValues(alpha: 0.40 * alpha),
+          LuminousHomeTheme.textPrimary.withValues(alpha: 0.72 * alpha),
+          LuminousHomeTheme.aqua.withValues(alpha: 0.36 * alpha),
+          LuminousHomeTheme.orchid.withValues(alpha: 0.22 * alpha),
         ],
-        const [0.0, 0.45, 1.0],
+        const [0.0, 0.52, 1.0],
       )
-      ..strokeWidth = 1.5 * coreScale;
+      ..strokeWidth = 1.0 * coreScale;
     canvas.drawCircle(center, discRadius, _nodeStrokePaint);
+    _nodeStrokePaint.shader = null;
 
-    // 5. Central Artistic Motif: Radiant Celestial 8-Point Compass Star
-    _drawCelestialCompassStar(
-      canvas,
-      center,
-      radius: (10.0 + progress * 2.0) * coreScale,
-      color: Colors.white.withValues(alpha: (0.95 + 0.05 * breath) * alpha),
-      accentColor: core.primaryColor.withValues(alpha: 0.85 * alpha),
-      rotation: animationTime * 0.15,
+    _starPaint.color = LuminousHomeTheme.textPrimary.withValues(
+      alpha: (0.82 + 0.08 * breath) * alpha,
     );
+    canvas.drawCircle(center, 4.2 * coreScale, _starPaint);
+
+    // A single satin highlight keeps the former motif's rotation and radius
+    // without restoring its compass-star ornament.
+    final double highlightRotation = animationTime * 0.15;
+    final double highlightRadius = (10.0 + progress * 2.0) * coreScale;
+    final highlight =
+        center +
+        Offset(
+          math.cos(highlightRotation) * highlightRadius,
+          math.sin(highlightRotation) * highlightRadius,
+        );
+    _starPaint.color = LuminousHomeTheme.aqua.withValues(alpha: 0.58 * alpha);
+    canvas.drawCircle(highlight, 1.4 * coreScale, _starPaint);
   }
 
   void _drawDiamond(Canvas canvas, Offset pos, double size, Color color) {
@@ -595,38 +723,6 @@ class GalaxyCustomPainter extends CustomPainter {
     _starPath.close();
     _nodeFillPaint.color = color;
     canvas.drawPath(_starPath, _nodeFillPaint);
-  }
-
-  void _drawCelestialCompassStar(
-    Canvas canvas,
-    Offset center, {
-    required double radius,
-    required Color color,
-    required Color accentColor,
-    required double rotation,
-  }) {
-    _starPath.reset();
-    const int points = 8;
-    for (int i = 0; i < points * 2; i++) {
-      final double angle = rotation + (i * math.pi / points);
-      final bool isMajor = (i % 4 == 0);
-      final bool isMinor = (i % 2 == 0);
-      final double r = isMajor ? radius : (isMinor ? radius * 0.55 : radius * 0.28);
-      final double x = center.dx + math.cos(angle) * r;
-      final double y = center.dy + math.sin(angle) * r;
-      if (i == 0) {
-        _starPath.moveTo(x, y);
-      } else {
-        _starPath.lineTo(x, y);
-      }
-    }
-    _starPath.close();
-
-    _nodeFillPaint.color = accentColor;
-    canvas.drawPath(_starPath, _nodeFillPaint);
-
-    // Inner diamond core point
-    _drawDiamond(canvas, center, radius * 0.38, color);
   }
 
   void _paintBezierFilaments(Canvas canvas) {
@@ -650,35 +746,59 @@ class GalaxyCustomPainter extends CustomPainter {
         _path.moveTo(core.center.dx, core.center.dy);
 
         final mid = (core.center + c.center) / 2;
-        final double wave = math.sin(animationTime * 1.0 + c.center.dx * 0.01) * 12.0;
-        final normal = Offset(-(c.center.dy - core.center.dy), c.center.dx - core.center.dx);
-        final normalNormalized = normal.distance > 0 ? normal / normal.distance : Offset.zero;
+        final double wave =
+            math.sin(animationTime * 1.0 + c.center.dx * 0.01) * 12.0;
+        final normal = Offset(
+          -(c.center.dy - core.center.dy),
+          c.center.dx - core.center.dx,
+        );
+        final normalNormalized = normal.distance > 0
+            ? normal / normal.distance
+            : Offset.zero;
         final controlPoint = mid + (normalNormalized * wave);
 
-        _path.quadraticBezierTo(controlPoint.dx, controlPoint.dy, c.center.dx, c.center.dy);
+        _path.quadraticBezierTo(
+          controlPoint.dx,
+          controlPoint.dy,
+          c.center.dx,
+          c.center.dy,
+        );
 
-        final double filamentAlpha = (c.isExpanded ? 0.6 : (c.isCustom ? 0.40 : 0.25)) * othersFade;
+        final double filamentAlpha =
+            (c.isExpanded ? 0.6 : (c.isCustom ? 0.40 : 0.25)) * othersFade;
         _filamentPaint
           ..shader = null
-          ..color = c.primaryColor.withValues(alpha: 0.06 * filamentAlpha)
-          ..strokeWidth = c.isCustom ? 3.0 : 2.5;
+          ..color = c.primaryColor.withValues(alpha: 0.025 * filamentAlpha)
+          ..strokeWidth = c.isCustom ? 2.2 : 1.7;
         canvas.drawPath(_path, _filamentPaint);
 
         _filamentPaint
-          ..color = c.primaryColor.withValues(alpha: 0.28 * filamentAlpha)
-          ..strokeWidth = c.isCustom ? 1.4 : 1.0;
+          ..color = Color.lerp(
+            LuminousHomeTheme.aqua,
+            c.primaryColor,
+            0.45,
+          )!.withValues(alpha: 0.16 * filamentAlpha)
+          ..strokeWidth = c.isCustom ? 1.1 : 0.75;
         canvas.drawPath(_path, _filamentPaint);
       }
     }
 
     // 2. Inter-constellation filaments connecting outer constellations to each other (fade out when a constellation opens)
     if (othersFade > 0.01) {
-      final List<Constellation> outer = constellations.where((c) => c.id != 'core').toList();
+      final List<Constellation> outer = constellations
+          .where((c) => c.id != 'core')
+          .toList();
       if (outer.length >= 2) {
         // Sort in circular polar angle order around the core center to connect adjacent neighbors seamlessly
         outer.sort((a, b) {
-          final angleA = math.atan2(a.center.dy - core.center.dy, a.center.dx - core.center.dx);
-          final angleB = math.atan2(b.center.dy - core.center.dy, b.center.dx - core.center.dx);
+          final angleA = math.atan2(
+            a.center.dy - core.center.dy,
+            a.center.dx - core.center.dx,
+          );
+          final angleB = math.atan2(
+            b.center.dy - core.center.dy,
+            b.center.dx - core.center.dx,
+          );
           return angleA.compareTo(angleB);
         });
 
@@ -692,42 +812,41 @@ class GalaxyCustomPainter extends CustomPainter {
 
           final mid = (c1.center + c2.center) / 2;
           // Subtle bow outward away from the center core
-          final midDir = mid.distance > 0 ? mid / mid.distance : const Offset(0, 1);
+          final midDir = mid.distance > 0
+              ? mid / mid.distance
+              : const Offset(0, 1);
           final double wave = math.sin(animationTime * 0.9 + i * 1.5) * 8.0;
           final controlPoint = mid + (midDir * (20.0 + wave));
 
-          _path.quadraticBezierTo(controlPoint.dx, controlPoint.dy, c2.center.dx, c2.center.dy);
+          _path.quadraticBezierTo(
+            controlPoint.dx,
+            controlPoint.dy,
+            c2.center.dx,
+            c2.center.dy,
+          );
 
           // Highlight if either constellation is custom (newly created) or expanded
           final bool involvesCustom = c1.isCustom || c2.isCustom;
           final bool involvesExpanded = c1.isExpanded || c2.isExpanded;
-          final double baseAlpha = (involvesCustom
-              ? 0.42
-              : (involvesExpanded ? 0.35 : 0.22)) * othersFade;
+          final double baseAlpha =
+              (involvesCustom ? 0.42 : (involvesExpanded ? 0.35 : 0.22)) *
+              othersFade;
 
           // Dual-color gradient blending the two connected constellations
-          final bridgeShader = ui.Gradient.linear(
-            c1.center,
-            c2.center,
-            [
-              c1.primaryColor.withValues(alpha: 0.12 * baseAlpha),
-              c2.primaryColor.withValues(alpha: 0.12 * baseAlpha),
-            ],
-          );
+          final bridgeShader = ui.Gradient.linear(c1.center, c2.center, [
+            c1.primaryColor.withValues(alpha: 0.055 * baseAlpha),
+            c2.primaryColor.withValues(alpha: 0.055 * baseAlpha),
+          ]);
 
           _filamentPaint
             ..shader = bridgeShader
             ..strokeWidth = involvesCustom ? 2.6 : 1.8;
           canvas.drawPath(_path, _filamentPaint);
 
-          final coreShader = ui.Gradient.linear(
-            c1.center,
-            c2.center,
-            [
-              c1.primaryColor.withValues(alpha: 0.50 * baseAlpha),
-              c2.primaryColor.withValues(alpha: 0.50 * baseAlpha),
-            ],
-          );
+          final coreShader = ui.Gradient.linear(c1.center, c2.center, [
+            c1.primaryColor.withValues(alpha: 0.24 * baseAlpha),
+            c2.primaryColor.withValues(alpha: 0.24 * baseAlpha),
+          ]);
 
           _filamentPaint
             ..shader = coreShader
@@ -738,15 +857,30 @@ class GalaxyCustomPainter extends CustomPainter {
           // Flowing stardust pulse node travelling along the connection between constellations
           final double pulseT = ((animationTime * 0.32) + (i * 0.25)) % 1.0;
           final double invT = 1.0 - pulseT;
-          final pulsePos = (c1.center * (invT * invT)) +
+          final pulsePos =
+              (c1.center * (invT * invT)) +
               (controlPoint * (2.0 * invT * pulseT)) +
               (c2.center * (pulseT * pulseT));
 
-          final Color pulseColor = Color.lerp(c1.primaryColor, c2.primaryColor, pulseT) ?? c1.primaryColor;
-          _haloPaint.color = pulseColor.withValues(alpha: (involvesCustom ? 0.65 : 0.40) * othersFade);
+          final Color pulseColor =
+              Color.lerp(c1.primaryColor, c2.primaryColor, pulseT) ??
+              c1.primaryColor;
+          _haloPaint
+            ..shader = null
+            ..color = pulseColor.withValues(
+              alpha: (involvesCustom ? 0.30 : 0.18) * othersFade,
+            );
           canvas.drawCircle(pulsePos, involvesCustom ? 3.8 : 2.5, _haloPaint);
-          _nodeFillPaint.color = Colors.white.withValues(alpha: (involvesCustom ? 0.95 : 0.75) * othersFade);
-          canvas.drawCircle(pulsePos, involvesCustom ? 1.8 : 1.2, _nodeFillPaint);
+          _nodeFillPaint
+            ..shader = null
+            ..color = LuminousHomeTheme.textPrimary.withValues(
+              alpha: (involvesCustom ? 0.72 : 0.52) * othersFade,
+            );
+          canvas.drawCircle(
+            pulsePos,
+            involvesCustom ? 1.8 : 1.2,
+            _nodeFillPaint,
+          );
         }
       }
     }
@@ -763,30 +897,48 @@ class GalaxyCustomPainter extends CustomPainter {
         _path.moveTo(c.center.dx, c.center.dy);
 
         final mid = (c.center + app.worldPosition) / 2;
-        final normal = Offset(-(app.worldPosition.dy - c.center.dy), app.worldPosition.dx - c.center.dx);
-        final normalNormalized = normal.distance > 0 ? normal / normal.distance : Offset.zero;
-        final double wave = math.sin(animationTime * 1.5 + app.orbitalAngle) * 3.5;
+        final normal = Offset(
+          -(app.worldPosition.dy - c.center.dy),
+          app.worldPosition.dx - c.center.dx,
+        );
+        final normalNormalized = normal.distance > 0
+            ? normal / normal.distance
+            : Offset.zero;
+        final double wave =
+            math.sin(animationTime * 1.5 + app.orbitalAngle) * 3.5;
         final controlPoint = mid + (normalNormalized * wave);
 
-        _path.quadraticBezierTo(controlPoint.dx, controlPoint.dy, app.worldPosition.dx, app.worldPosition.dy);
+        _path.quadraticBezierTo(
+          controlPoint.dx,
+          controlPoint.dy,
+          app.worldPosition.dx,
+          app.worldPosition.dy,
+        );
 
         if (c.id == 'core') {
           // Luminous golden energy flux filaments connecting core to essentials apps
           _filamentPaint
             ..shader = null
-            ..color = c.primaryColor.withValues(alpha: 0.28 * progress)
-            ..strokeWidth = 1.3;
+            ..color = LuminousHomeTheme.aqua.withValues(alpha: 0.16 * progress)
+            ..strokeWidth = 1.0;
           canvas.drawPath(_path, _filamentPaint);
 
           // Flowing stardust pulse toward app
-          final double pulseT = ((animationTime * 0.42) + (app.orbitalAngle / (2 * math.pi))) % 1.0;
+          final double pulseT =
+              ((animationTime * 0.42) + (app.orbitalAngle / (2 * math.pi))) %
+              1.0;
           final double invT = 1.0 - pulseT;
-          final pulsePos = (c.center * (invT * invT)) +
+          final pulsePos =
+              (c.center * (invT * invT)) +
               (controlPoint * (2.0 * invT * pulseT)) +
               (app.worldPosition * (pulseT * pulseT));
-          _starPaint.color = Colors.white.withValues(alpha: 0.90 * progress);
+          _starPaint.color = LuminousHomeTheme.textPrimary.withValues(
+            alpha: 0.72 * progress,
+          );
           canvas.drawCircle(pulsePos, 1.4, _starPaint);
-          _haloPaint.color = c.primaryColor.withValues(alpha: 0.50 * progress);
+          _haloPaint
+            ..shader = null
+            ..color = LuminousHomeTheme.aqua.withValues(alpha: 0.22 * progress);
           canvas.drawCircle(pulsePos, 3.0, _haloPaint);
         } else {
           _filamentPaint
@@ -840,7 +992,9 @@ class GalaxyCustomPainter extends CustomPainter {
         final double postureScale = foldable.isFolded ? 0.76 : 1.0;
         // Center Essentials apps are primary daily drivers: render them larger (58px) for high usability
         final double baseSize = (isCore ? 58.0 : 50.0) * postureScale;
-        double nodeSize = (isFocused ? baseSize * 1.16 : baseSize) * (0.45 + effectiveAlpha * 0.55);
+        double nodeSize =
+            (isFocused ? baseSize * 1.16 : baseSize) *
+            (0.45 + effectiveAlpha * 0.55);
 
         // Mac Dock Fish-Eye Magnification on finger glide across galaxy
         double dockMagnification = 1.0;
@@ -849,7 +1003,8 @@ class GalaxyCustomPainter extends CustomPainter {
           final dist = (pos - touchWorld).distance;
           if (dist < 130.0) {
             // Gaussian bell curve: peak magnification +42% under touch, tapering off smoothly within 130px
-            dockMagnification = 1.0 + 0.42 * math.exp(-((dist * dist) / (2 * 52.0 * 52.0)));
+            dockMagnification =
+                1.0 + 0.42 * math.exp(-((dist * dist) / (2 * 52.0 * 52.0)));
             nodeSize *= dockMagnification;
           }
         }
@@ -858,76 +1013,133 @@ class GalaxyCustomPainter extends CustomPainter {
 
         app.ensurePainters(halfSize, textScaler: textScaler);
 
-        final nodeRect = Rect.fromCenter(center: pos, width: nodeSize, height: nodeSize);
-        final nodeRRect = RRect.fromRectAndRadius(nodeRect, Radius.circular(nodeSize * 0.30));
-
-        // Outer glow halo - dynamically amplified when dock zoomed
-        final double haloAlphaBoost = (dockMagnification - 1.0) * 0.8;
-        _haloPaint.shader = ui.Gradient.radial(
-          pos,
-          nodeSize * 1.15,
-          [
-            app.accentColor.withValues(alpha: ((isFocused ? 0.50 : 0.18) + haloAlphaBoost).clamp(0.0, 0.75) * effectiveAlpha),
-            app.accentColor.withValues(alpha: 0.04 * effectiveAlpha),
-            Colors.transparent,
-          ],
-          const [0.0, 0.60, 1.0],
+        final nodeRect = Rect.fromCenter(
+          center: pos,
+          width: nodeSize,
+          height: nodeSize,
         );
-        canvas.drawCircle(pos, nodeSize * 1.15, _haloPaint);
+        final nodeRRect = RRect.fromRectAndRadius(
+          nodeRect,
+          Radius.circular(nodeSize * 0.30),
+        );
 
-        // Modern Glassmorphic Squircle Body
-        _nodeFillPaint.color = const Color(0xFF13182A).withValues(alpha: 0.94 * effectiveAlpha);
-        canvas.drawRRect(nodeRRect, _nodeFillPaint);
+        // Soft offset depth keeps the icon readable without a neon halo.
+        final double shadowLift = isFocused ? 4.5 : 3.5;
+        _haloPaint
+          ..shader = null
+          ..color = LuminousHomeTheme.shadow.withValues(
+            alpha: 0.50 * effectiveAlpha,
+          );
+        canvas.drawRRect(
+          nodeRRect.shift(Offset(0, shadowLift)).inflate(isFocused ? 3.0 : 2.0),
+          _haloPaint,
+        );
 
-        // Satin illuminated rim border
-        _nodeStrokePaint
-          ..shader = ui.Gradient.linear(
-            nodeRect.topLeft,
-            nodeRect.bottomRight,
+        final double haloAlphaBoost = (dockMagnification - 1.0) * 0.8;
+        if (isFocused || haloAlphaBoost > 0.06) {
+          _haloPaint.shader = ui.Gradient.radial(
+            pos,
+            nodeSize * 1.05,
             [
-              app.accentColor.withValues(alpha: ((isFocused ? 1.0 : 0.75) + haloAlphaBoost).clamp(0.0, 1.0) * effectiveAlpha),
-              app.accentColor.withValues(alpha: 0.18 * effectiveAlpha),
+              app.accentColor.withValues(
+                alpha:
+                    ((isFocused ? 0.18 : 0.08) + haloAlphaBoost * 0.18).clamp(
+                      0.0,
+                      0.26,
+                    ) *
+                    effectiveAlpha,
+              ),
+              Colors.transparent,
             ],
-          )
-          ..strokeWidth = isFocused ? 2.0 : (1.2 * (dockMagnification > 1.1 ? 1.4 : 1.0));
+            const [0.0, 1.0],
+          );
+          canvas.drawCircle(pos, nodeSize * 1.05, _haloPaint);
+          _haloPaint.shader = null;
+        }
+
+        final surfaceColor = Color.lerp(
+          LuminousHomeTheme.backgroundRaised,
+          app.accentColor,
+          isFocused ? 0.22 : 0.12,
+        )!;
+        _nodeFillPaint.shader = ui.Gradient.linear(
+          nodeRect.topLeft,
+          nodeRect.bottomRight,
+          [
+            surfaceColor.withValues(alpha: 0.98 * effectiveAlpha),
+            LuminousHomeTheme.glassOpaqueStrong.withValues(
+              alpha: 0.90 * effectiveAlpha,
+            ),
+          ],
+        );
+        canvas.drawRRect(nodeRRect, _nodeFillPaint);
+        _nodeFillPaint.shader = null;
+
+        _nodeStrokePaint
+          ..shader = null
+          ..color =
+              (isFocused ? app.accentColor : LuminousHomeTheme.textPrimary)
+                  .withValues(alpha: (isFocused ? 0.62 : 0.20) * effectiveAlpha)
+          ..strokeWidth = isFocused ? 1.5 : 0.8;
         canvas.drawRRect(nodeRRect, _nodeStrokePaint);
 
-        // App Icon
+        // Installed icons keep their source artwork but use a larger adaptive
+        // squircle clip instead of a circular cosmic disc and nested rim.
         if (app.decodedIcon != null) {
           final icon = app.decodedIcon!;
-          final iconSize = nodeSize * 0.64;
-          final srcRect = Rect.fromLTWH(0, 0, icon.width.toDouble(), icon.height.toDouble());
-          final dstRect = Rect.fromCenter(center: pos, width: iconSize, height: iconSize);
-          _iconPaint.color = Colors.white.withValues(alpha: effectiveAlpha);
+          final iconSize = nodeSize * 0.76;
+          final srcRect = Rect.fromLTWH(
+            0,
+            0,
+            icon.width.toDouble(),
+            icon.height.toDouble(),
+          );
+          final dstRect = Rect.fromCenter(
+            center: pos,
+            width: iconSize,
+            height: iconSize,
+          );
+          final iconRRect = RRect.fromRectAndRadius(
+            dstRect,
+            Radius.circular(iconSize * 0.28),
+          );
+          _iconPaint.color = LuminousHomeTheme.textPrimary.withValues(
+            alpha: effectiveAlpha,
+          );
 
-          // Circular cosmic disc normalization for third-party & OEM icons
           canvas.save();
-          final Path discClip = Path()
-            ..addOval(Rect.fromCircle(center: pos, radius: iconSize / 2));
-          canvas.clipPath(discClip);
+          canvas.clipRRect(iconRRect);
           canvas.drawImageRect(icon, srcRect, dstRect, _iconPaint);
           canvas.restore();
-
-          // Luminous celestial rim around icon disc
-          final Paint iconRim = Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.0
-            ..color = app.accentColor.withValues(alpha: 0.38 * effectiveAlpha);
-          canvas.drawCircle(pos, iconSize / 2, iconRim);
         } else if (app.iconPainter != null) {
           final p = app.iconPainter!;
           p.paint(canvas, pos - Offset(p.width / 2, p.height / 2));
         }
 
-        // Notification Pip Badge
-        if (app.notificationCount > 0 && app.badgePainter != null && effectiveAlpha > 0.6) {
+        // ColorOS-like red notification badge; anchor, radius, and gate stay
+        // unchanged so visual and semantic bounds continue to agree.
+        if (app.notificationCount > 0 &&
+            app.badgePainter != null &&
+            effectiveAlpha > 0.6) {
           final badgeCenter = pos + Offset(halfSize * 0.85, -halfSize * 0.85);
           const badgeR = 8.0;
-          _badgePaint.color = const Color(0xFFFF3366).withValues(alpha: effectiveAlpha);
+          _badgeGlowPaint.color = LuminousHomeTheme.notification.withValues(
+            alpha: 0.18 * effectiveAlpha,
+          );
+          canvas.drawCircle(badgeCenter, badgeR * 1.3, _badgeGlowPaint);
+
+          _badgePaint.color = LuminousHomeTheme.notification.withValues(
+            alpha: effectiveAlpha,
+          );
           canvas.drawCircle(badgeCenter, badgeR, _badgePaint);
 
-          _badgeGlowPaint.color = const Color(0x55FF3366).withValues(alpha: effectiveAlpha);
-          canvas.drawCircle(badgeCenter, badgeR * 1.3, _badgeGlowPaint);
+          _nodeStrokePaint
+            ..shader = null
+            ..color = LuminousHomeTheme.textPrimary.withValues(
+              alpha: 0.68 * effectiveAlpha,
+            )
+            ..strokeWidth = 0.7;
+          canvas.drawCircle(badgeCenter, badgeR, _nodeStrokePaint);
 
           final bp = app.badgePainter!;
           bp.paint(canvas, badgeCenter - Offset(bp.width / 2, bp.height / 2));
@@ -944,15 +1156,25 @@ class GalaxyCustomPainter extends CustomPainter {
         if (showLabel && app.labelPainter != null) {
           final double labelAlpha = isCore
               ? (coreAlpha * c.expansionProgress * 0.95)
-              : (isFocused ? 1.0 : ((zoom - 1.10) / 0.35).clamp(0.0, 1.0) * effectiveAlpha);
+              : (isFocused
+                    ? 1.0
+                    : ((zoom - 1.10) / 0.35).clamp(0.0, 1.0) * effectiveAlpha);
 
           if (labelAlpha > 0.05) {
             final lp = app.labelPainter!;
             canvas.saveLayer(
-              Rect.fromLTWH(pos.dx - lp.width / 2, pos.dy + halfSize + 5.0, lp.width, lp.height),
+              Rect.fromLTWH(
+                pos.dx - lp.width / 2,
+                pos.dy + halfSize + 5.0,
+                lp.width,
+                lp.height,
+              ),
               Paint()..color = Colors.white.withValues(alpha: labelAlpha),
             );
-            lp.paint(canvas, Offset(pos.dx - lp.width / 2, pos.dy + halfSize + 5.0));
+            lp.paint(
+              canvas,
+              Offset(pos.dx - lp.width / 2, pos.dy + halfSize + 5.0),
+            );
             canvas.restore();
           }
         }

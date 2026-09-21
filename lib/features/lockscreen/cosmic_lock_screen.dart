@@ -48,7 +48,8 @@ class CosmicLockScreen extends StatefulWidget {
   final List<AppEntry> apps;
   final bool initialAuthenticated;
 
-  /// Platform authentication, defaulting to [LauncherBridge.authenticate].
+  /// Stands in for the whole authentication step. Null in production, where the
+  /// panel reads the silent sensor and then leaves the keyguard to the platform.
   ///
   /// Injectable because the reader is the side power button: on a real device
   /// the platform keyguard usually authenticates first and this prompt is
@@ -64,8 +65,12 @@ class CosmicLockScreen extends StatefulWidget {
   final Future<FingerprintCapability> Function()? fingerprintCapability;
   final Stream<Map<String, dynamic>> Function()? fingerprintEvents;
 
-  /// The platform's own credential prompt, defaulting to
-  /// [LauncherBridge.authenticate].
+  /// A credential prompt the panel may raise itself. Null in production.
+  ///
+  /// There is deliberately no production default. Raising a prompt of our own
+  /// here cannot dismiss the keyguard, so the launch that follows would ask
+  /// again — two prompts for one tap. Without it the request resolves as
+  /// [AuthOutcome.deferToPlatform] and the keyguard asks exactly once.
   ///
   /// Separate from [authenticate] so a test can hold *this* prompt open — with
   /// [authenticate] it would bypass the panel's reader entirely — and observe
@@ -204,9 +209,27 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// see the finger that is still resting on the sensor.
   bool _handingOffLaunch = false;
 
-  /// Suppresses clearing the overlay on userPresent for a short window when
-  /// returning to the lock screen after an app launch.
-  DateTime? _suppressUserPresentUntil;
+  /// True once this panel has finished its job: it has authenticated, handed
+  /// off, and told the launcher to take it down.
+  ///
+  /// It is not enough to stop at [_disposed]. `widget.onUnlock()` is a setState
+  /// issued at the moment the launched activity takes the screen, and Flutter
+  /// does not build a frame for an activity that is no longer visible — so the
+  /// element is still mounted, still a `WidgetsBindingObserver`, and still the
+  /// registered `screenOn`/`userPresent` listener for the whole time the other
+  /// app is in front. On the way back its `resumed` handler used to re-arm the
+  /// reader and, with the guards it also reset, could re-run a leftover launch:
+  /// a fingerprint request with no tap behind it.
+  ///
+  /// A fresh panel is constructed for the next lock, so a one-way latch here
+  /// costs nothing and makes "this panel is finished" mean it.
+  bool _handedOff = false;
+
+  /// Whether this panel should be reading the sensor at all.
+  ///
+  /// The reader is only ever armed for a lock surface the user is looking at.
+  bool get _sensorSessionAllowed =>
+      mounted && !_disposed && !_handedOff && !_handingOffLaunch;
 
   Future<AuthOutcome> _authenticate(String? appName) async {
     final override = widget.authenticate;
@@ -217,16 +240,22 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     }
 
     // The panel draws its own prompt only where it can actually read the
-    // sensor. Where it cannot — no finger enrolled, or no reader at all — the
-    // platform's credential prompt is the only honest way forward.
+    // sensor. Where it cannot — no finger enrolled, or no reader at all — there
+    // is nothing for it to ask, so it asks nothing and lets the launch run.
     final capability =
         await (widget.fingerprintCapability ??
             LauncherBridge.fingerprintCapability)();
     if (!mounted || _disposed) return AuthOutcome.denied;
     if (!capability.isReady) {
-      return await LauncherBridge.authenticate(appName: appName)
-          ? AuthOutcome.verified
-          : AuthOutcome.denied;
+      // Deliberately not `LauncherBridge.authenticate` — that raises the
+      // platform's BiometricPrompt, which cannot dismiss the keyguard, so the
+      // `requestDismissKeyguard` inside the launch that follows asks the user a
+      // second time for the same tap. Two prompts for one intention is the
+      // "why is it asking again" complaint, and the first of them buys nothing.
+      //
+      // Deferring is not an authentication and does not claim to be: the launch
+      // still cannot be seen until the keyguard's own prompt is satisfied.
+      return AuthOutcome.deferToPlatform;
     }
     return _authenticateWithSensor();
   }
@@ -515,15 +544,14 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   void _onUserPresent() {
     if (!mounted || _disposed) return;
     if (_unlockedBySensor) return;
-    if (_handingOffLaunch) {
-      debugPrint('Ignoring userPresent while handing off app launch');
+    if (_handedOff) {
+      // This panel has already unlocked and handed off. Acting again would
+      // re-launch or re-authenticate on behalf of a surface the user has left.
+      debugPrint('Ignoring userPresent on a panel that already handed off');
       return;
     }
-    if (_suppressUserPresentUntil != null &&
-        DateTime.now().isBefore(_suppressUserPresentUntil!)) {
-      debugPrint(
-        'Ignoring userPresent during resume transition from launched app',
-      );
+    if (_handingOffLaunch) {
+      debugPrint('Ignoring userPresent while handing off app launch');
       return;
     }
 
@@ -552,9 +580,8 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   }
 
   void _onScreenOn() {
-    if (!mounted || _disposed) return;
+    if (!mounted || _disposed || _handedOff) return;
     _screenInteractive = true;
-    _suppressUserPresentUntil = null;
     // A new panel-on is a new chance for the reader: the refusal above belongs
     // to the lock session that has just ended.
     _sensorUnusable = false;
@@ -568,7 +595,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// all. The prompt only appears once the user asks for a specific app, where
   /// the panel has something to name and a match has somewhere to go.
   Future<void> _armFingerprintSensor() async {
-    if (_armingFingerprint || _disposed || _handingOffLaunch) return;
+    if (_armingFingerprint || !_sensorSessionAllowed) return;
     // Already listening: leave the live session alone. Cancelling and replacing
     // it is what lost the reader on the tested device.
     if (_sensorArmed) return;
@@ -607,13 +634,12 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                 },
               );
 
-      // Only the native side knows whether the panel is really on, and it
-      // refuses to arm while it is off without touching the sensor at all. The
-      // Dart-side copy of that state goes stale across a pause/resume and used
-      // to leave the reader permanently unarmed, so the native answer decides.
-      if (!mounted || _disposed || _handingOffLaunch) {
-        return;
-      }
+      // Only the native side knows whether the panel is really on, and whether
+      // this activity is the one in front. It refuses to arm in either case
+      // without touching the sensor at all. The Dart-side copies of that state
+      // go stale across a pause/resume and used to leave the reader permanently
+      // unarmed, so the native answer decides.
+      if (!_sensorSessionAllowed) return;
       await LauncherBridge.startFingerprintScan();
     } finally {
       _armingFingerprint = false;
@@ -715,6 +741,14 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         // there is nothing left armed to reuse.
         _sensorArmed = false;
 
+      case 'background':
+        // The native side refused because the launcher is not the activity in
+        // front. Nothing was armed and nothing is wrong with the reader, so
+        // this is neither a failure nor grounds for the credential fallback:
+        // the resume handler arms it once the panel is actually visible.
+        debugPrint('Reader not armed: launcher is not in the foreground');
+        _sensorArmed = false;
+
       case 'unavailable':
         // The reason matters: it is the difference between a device with no
         // reader and a reader the platform refused to hand over.
@@ -732,24 +766,25 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.resumed:
-        // Coming back to the front. Usually this panel was cleared by an
-        // unlock, but an app launched from it leaves it up, and that panel is
-        // still on screen — so this starts a fresh lock session and it has to
-        // accept an unlock, and re-arm the reader, all over again.
+        // A panel that has already unlocked and handed off is finished. It is
+        // only still here because Flutter could not build the frame that would
+        // dispose it while the launched app held the screen, and reviving its
+        // reader — or its guards — is what asked for a fingerprint on the way
+        // back out of that app. Leave it alone; the frame after this resume
+        // takes it down.
+        if (_handedOff) return;
+        // Coming back to the front with the panel still the live lock surface,
+        // so it has to accept an unlock and re-arm the reader all over again.
         _unlockStarted = false;
         _unlockedBySensor = false;
         _handingOffLaunch = false;
-        // When returning to the lock screen from a launched app, suppress any
-        // trailing or queued userPresent events so the lock screen remains active.
-        _suppressUserPresentUntil = DateTime.now().add(
-          const Duration(milliseconds: 800),
-        );
         // Assume the panel is on: the native side refuses an arm while it is
         // off, and reports `screenOff` back, which puts this flag right again.
         _screenInteractive = true;
         _sensorUnusable = false;
-        // The panel may or may not be on by now; arming is refused cheaply if
-        // it is not, and the screen-on broadcast will arm it for real.
+        // The panel may or may not be on by now, and this activity may not yet
+        // be the one in front; arming is refused cheaply in either case, and
+        // the screen-on broadcast will arm it for real.
         _armFingerprintSensor();
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
@@ -759,6 +794,15 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         _sensorArmed = false;
         if (_authCompleter != null) {
           _cancelAuth();
+        }
+        // Forget what the panel was in the middle of. A request only means
+        // anything while the user is looking at the surface they made it on;
+        // carrying it across a background trip is how a tap from before could
+        // launch an app, and raise the keyguard to do it, long after the fact.
+        // The handoff is the one exception: there the launch is the reason the
+        // panel is being backgrounded.
+        if (!_handingOffLaunch) {
+          _pendingLaunch = null;
         }
         _fingerprintSubscription?.cancel();
         _fingerprintSubscription = null;
@@ -1018,10 +1062,15 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       if (!mounted) return;
       _unlockStarted = false;
       if (launched) {
+        // Latched before onUnlock, because onUnlock is the last thing this
+        // panel does and the frame that disposes it may be a whole app
+        // round trip away. Everything after this point must be inert.
+        _handedOff = true;
         // The native handoff already removes `showWhenLocked` before the
         // target starts. Keep the Dart side in sync so its return reveals the
         // folded cover screen rather than recreating a fingerprint surface.
         unawaited(LauncherBridge.setLockScreenOverlayEnabled(false));
+        unawaited(LauncherBridge.stopFingerprintScan());
         widget.onUnlock();
       } else {
         _showTurbulence('COULD NOT OPEN ${pending.label.toUpperCase()}');
@@ -1035,9 +1084,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         );
     await _slideController.forward(from: 0.0);
     if (!mounted) return;
+    _handedOff = true;
     // An ordinary unlock also needs to stop MainActivity behaving like a
     // keyguard overlay until the next genuine screen-off event.
     unawaited(LauncherBridge.setLockScreenOverlayEnabled(false));
+    unawaited(LauncherBridge.stopFingerprintScan());
     widget.onUnlock();
   }
 
@@ -1054,14 +1105,21 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   Future<void> _unlockAndLaunchApp(AppEntry app) async {
     // One authentication at a time. The prompt is modal, so a second request
     // can only arrive from a semantics action fired underneath it.
-    if (_authCompleter != null || _unlockStarted) return;
+    if (_authCompleter != null || _unlockStarted || _handedOff) return;
     HapticFeedback.lightImpact();
     // Record the request before authenticating.
     _pendingLaunch = app;
 
     final bool isLocked =
         await (widget.isKeyguardLocked ?? LauncherBridge.isKeyguardLocked)();
-    if (!mounted || _disposed || _unlockStarted) return;
+    // Bailing out has to forget the request too. A [_pendingLaunch] left behind
+    // here is a tap that can still be redeemed later, by a platform unlock the
+    // user performed for some other reason — an app opening on its own, and a
+    // keyguard prompt raised to open it.
+    if (!mounted || _disposed || _unlockStarted) {
+      _pendingLaunch = null;
+      return;
+    }
     if (!isLocked) {
       // Device is already unlocked (e.g. side power-button reader satisfied keyguard).
       // Bypass any prompt and launch immediately with no delay!
@@ -1071,7 +1129,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     }
 
     final outcome = await _authenticate(app.label);
-    if (!mounted || _disposed || _unlockStarted) return;
+    if (!mounted || _disposed || _unlockStarted) {
+      _pendingLaunch = null;
+      return;
+    }
 
     if (outcome == AuthOutcome.denied) {
       _pendingLaunch = null;

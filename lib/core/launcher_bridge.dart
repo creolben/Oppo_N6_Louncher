@@ -555,6 +555,21 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     }
   }
 
+  /// Opens Android's live-wallpaper chooser for ChronoFold's optional ambient
+  /// layer. The system—not the launcher—owns selection, preview, and apply.
+  static Future<bool> openCosmicLiveWallpaperPreview() async {
+    if (kIsWeb || !Platform.isAndroid) return false;
+    try {
+      final bool? opened = await _appsChannel.invokeMethod(
+        'openCosmicLiveWallpaperPreview',
+      );
+      return opened ?? false;
+    } catch (e) {
+      debugPrint('Open cosmic live wallpaper chooser failed: $e');
+      return false;
+    }
+  }
+
   static Future<String?> getFilesDirPath() async {
     if (!kIsWeb && Platform.isAndroid) {
       try {

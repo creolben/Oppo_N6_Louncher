@@ -70,79 +70,91 @@ void main() {
       expect(engine.sparks.isNotEmpty, isTrue);
     });
 
-    test('Circle-to-circle collision resolves overlap and exchanges momentum', () {
-      const size = Size(500, 500);
-      engine.initializeBubbles(apps: testApps, size: size);
+    test(
+      'Circle-to-circle collision resolves overlap and exchanges momentum',
+      () {
+        const size = Size(500, 500);
+        engine.initializeBubbles(apps: testApps, size: size);
 
-      final b1 = engine.bubbles[0];
-      final b2 = engine.bubbles[1];
-      engine.bubbles[2].position = const Offset(450, 450);
-      engine.bubbles[2].velocity = Offset.zero;
+        final b1 = engine.bubbles[0];
+        final b2 = engine.bubbles[1];
+        engine.bubbles[2].position = const Offset(450, 450);
+        engine.bubbles[2].velocity = Offset.zero;
 
-      b1.radius = 30.0;
-      b2.radius = 30.0;
-      b1.position = const Offset(200, 200);
-      b2.position = const Offset(240, 200); // Distance = 40 < 60 (overlap!)
-      b1.velocity = const Offset(100, 0); // Moving right towards b2
-      b2.velocity = const Offset(-100, 0); // Moving left towards b1
+        b1.radius = 30.0;
+        b2.radius = 30.0;
+        b1.position = const Offset(200, 200);
+        b2.position = const Offset(240, 200); // Distance = 40 < 60 (overlap!)
+        b1.velocity = const Offset(100, 0); // Moving right towards b2
+        b2.velocity = const Offset(-100, 0); // Moving left towards b1
 
-      engine.update(0.016);
+        engine.update(0.016);
 
-      // Overlap should be separated
-      final newDist = (b2.position - b1.position).distance;
-      expect(newDist, greaterThanOrEqualTo(59.0));
+        // Overlap should be separated
+        final newDist = (b2.position - b1.position).distance;
+        expect(newDist, greaterThanOrEqualTo(59.0));
 
-      // Velocities should reflect away from each other
-      expect(b1.velocity.dx, lessThan(0)); // Now moving left
-      expect(b2.velocity.dx, greaterThan(0)); // Now moving right
-    });
+        // Velocities should reflect away from each other
+        expect(b1.velocity.dx, lessThan(0)); // Now moving left
+        expect(b2.velocity.dx, greaterThan(0)); // Now moving right
+      },
+    );
 
-    test('triggerShakeScatter disperses all bubbles outwards with high speed', () {
-      const size = Size(600, 800);
-      engine.initializeBubbles(apps: testApps, size: size);
+    test(
+      'triggerShakeScatter disperses all bubbles outwards with high speed',
+      () {
+        const size = Size(600, 800);
+        engine.initializeBubbles(apps: testApps, size: size);
 
-      engine.triggerShakeScatter(strength: 1.5);
+        engine.triggerShakeScatter(strength: 1.5);
 
-      expect(engine.ripples.isNotEmpty, isTrue);
-      for (final bubble in engine.bubbles) {
-        // High dispersion velocity after shake
-        expect(bubble.velocity.distance, greaterThan(500.0));
-        expect(bubble.glowIntensity, equals(1.0));
-      }
-    });
+        expect(engine.ripples.isNotEmpty, isTrue);
+        for (final bubble in engine.bubbles) {
+          // High dispersion velocity after shake
+          expect(bubble.velocity.distance, greaterThan(500.0));
+          expect(bubble.glowIntensity, equals(1.0));
+        }
+      },
+    );
 
-    test('findBubbleAt accurately detects target bubble within touch radius', () {
-      const size = Size(500, 500);
-      engine.initializeBubbles(apps: testApps, size: size);
+    test(
+      'findBubbleAt accurately detects target bubble within touch radius',
+      () {
+        const size = Size(500, 500);
+        engine.initializeBubbles(apps: testApps, size: size);
 
-      final target = engine.bubbles[1];
-      target.position = const Offset(250, 300);
-      target.radius = 30.0;
+        final target = engine.bubbles[1];
+        target.position = const Offset(250, 300);
+        target.radius = 30.0;
 
-      final hit = engine.findBubbleAt(const Offset(255, 305));
-      expect(hit, isNotNull);
-      expect(hit!.app.packageName, equals(target.app.packageName));
+        final hit = engine.findBubbleAt(const Offset(255, 305));
+        expect(hit, isNotNull);
+        expect(hit!.app.packageName, equals(target.app.packageName));
 
-      final miss = engine.findBubbleAt(const Offset(50, 50));
-      expect(miss, isNull);
-    });
+        final miss = engine.findBubbleAt(const Offset(50, 50));
+        expect(miss, isNull);
+      },
+    );
 
-    test('notifies listeners per simulation step so the canvas can repaint', () {
-      // The lock screen's canvas repaints from this notifier instead of the
-      // widget rebuilding every frame. If the engine stops notifying, the
-      // bubbles silently freeze while every test above still passes.
-      const size = Size(400, 800);
-      engine.initializeBubbles(apps: testApps, size: size);
+    test(
+      'notifies listeners per simulation step so the canvas can repaint',
+      () {
+        // The lock screen's canvas repaints from this notifier instead of the
+        // widget rebuilding every frame. If the engine stops notifying, the
+        // bubbles silently freeze while every test above still passes.
+        const size = Size(400, 800);
+        engine.initializeBubbles(apps: testApps, size: size);
 
-      var notifications = 0;
-      engine.addListener(() => notifications++);
+        var notifications = 0;
+        engine.addListener(() => notifications++);
 
-      engine.update(0.016);
-      expect(notifications, equals(1));
+        engine.update(0.016);
+        expect(notifications, equals(1));
 
-      engine.update(0.016);
-      expect(notifications, equals(2));
-    });
+        engine.update(0.016);
+        expect(notifications, equals(2));
+      },
+    );
 
     test('notifies on a direct-manipulation repaint request', () {
       const size = Size(400, 800);
@@ -170,8 +182,9 @@ void main() {
   });
 
   group('CosmicLockScreen Widget Tests', () {
-    testWidgets('Renders bouncing apps lock screen and triggers shake button',
-        (tester) async {
+    testWidgets('Renders bouncing apps lock screen and triggers shake button', (
+      tester,
+    ) async {
       final foldable = FoldableController();
       bool unlocked = false;
 
@@ -214,7 +227,10 @@ void main() {
       // Verify custom painter is present
       expect(find.byType(CustomPaint), findsWidgets);
       expect(find.text('SHAKE'), findsOneWidget);
-      expect(find.text('TAP APP TO LAUNCH • SWIPE UP TO ENTER'), findsOneWidget);
+      expect(
+        find.text('TAP APP TO LAUNCH • SWIPE UP TO ENTER'),
+        findsOneWidget,
+      );
 
       // Tap SHAKE button
       await tester.tap(find.text('SHAKE'));
@@ -235,143 +251,160 @@ void main() {
       expect(unlocked, isTrue);
     });
 
-    testWidgets('Bouncing apps and category chips are immediately accessible on lock screen',
-        (tester) async {
-      final foldable = FoldableController();
-      bool unlocked = false;
+    testWidgets(
+      'Bouncing apps and category chips are immediately accessible on lock screen',
+      (tester) async {
+        final foldable = FoldableController();
+        bool unlocked = false;
 
-      final apps = [
-        AppEntry(
-          packageName: 'com.test.phone',
-          label: 'Phone',
-          category: AppCategory.core,
-          accentColor: Colors.green,
-          fallbackIcon: Icons.phone,
-        ),
-      ];
+        final apps = [
+          AppEntry(
+            packageName: 'com.test.phone',
+            label: 'Phone',
+            category: AppCategory.core,
+            accentColor: Colors.green,
+            fallbackIcon: Icons.phone,
+          ),
+        ];
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: CosmicLockScreen(
-              foldable: foldable,
-              apps: apps,
-              onUnlock: () => unlocked = true,
-              // See the note above: the swipe at the end of this test is not the
-              // subject, so the device is reported already unlocked.
-              isKeyguardLocked: () async => false,
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: CosmicLockScreen(
+                foldable: foldable,
+                apps: apps,
+                onUnlock: () => unlocked = true,
+                // See the note above: the swipe at the end of this test is not the
+                // subject, so the device is reported already unlocked.
+                isKeyguardLocked: () async => false,
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      // Bouncing apps canvas and category chips are always visible
-      expect(find.byType(CustomPaint), findsWidgets);
-      expect(find.text('★ Featured'), findsOneWidget);
-      expect(find.text('Core'), findsOneWidget);
-      expect(find.text('Social'), findsOneWidget);
-      expect(find.text('TAP APP TO LAUNCH • SWIPE UP TO ENTER'), findsOneWidget);
-      expect(find.text('LOCKED'), findsOneWidget);
+        // Bouncing apps canvas and category chips are always visible
+        expect(find.byType(CustomPaint), findsWidgets);
+        expect(find.text('★ Featured'), findsOneWidget);
+        expect(find.text('Core'), findsOneWidget);
+        expect(find.text('Social'), findsOneWidget);
+        expect(
+          find.text('TAP APP TO LAUNCH • SWIPE UP TO ENTER'),
+          findsOneWidget,
+        );
+        expect(find.text('LOCKED'), findsOneWidget);
 
-      // Swipe up enters the launcher once the device is not locked
-      await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
-      for (int i = 0; i < 12; i++) {
-        await tester.pump(const Duration(milliseconds: 40));
-      }
-      expect(unlocked, isTrue);
-    });
+        // Swipe up enters the launcher once the device is not locked
+        await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
+        for (int i = 0; i < 12; i++) {
+          await tester.pump(const Duration(milliseconds: 40));
+        }
+        expect(unlocked, isTrue);
+      },
+    );
 
-    testWidgets('Swipe up does NOT enter the launcher while the device is locked',
-        (tester) async {
-      // The panel is drawn over the keyguard in COSMIC mode, so a swipe that
-      // cleared it unconditionally exposed the launcher — the full app
-      // inventory, search over every app name, and the editors that persist
-      // layout — on a locked device. The panel cannot authenticate anyone
-      // itself, so it must ask the platform and honour the answer.
-      bool unlocked = false;
-      var dismissalRequested = false;
+    testWidgets(
+      'Swipe up does NOT enter the launcher while the device is locked',
+      (tester) async {
+        // The panel is drawn over the keyguard in COSMIC mode, so a swipe that
+        // cleared it unconditionally exposed the launcher — the full app
+        // inventory, search over every app name, and the editors that persist
+        // layout — on a locked device. The panel cannot authenticate anyone
+        // itself, so it must ask the platform and honour the answer.
+        bool unlocked = false;
+        var dismissalRequested = false;
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: CosmicLockScreen(
-              foldable: FoldableController(),
-              apps: [
-                AppEntry(
-                  packageName: 'com.test.bank',
-                  label: 'Bank',
-                  category: AppCategory.core,
-                  accentColor: Colors.green,
-                  fallbackIcon: Icons.account_balance,
-                ),
-              ],
-              onUnlock: () => unlocked = true,
-              isKeyguardLocked: () async => true,
-              // The user backs out of the platform's bouncer.
-              dismissKeyguard: () async {
-                dismissalRequested = true;
-                return false;
-              },
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: CosmicLockScreen(
+                foldable: FoldableController(),
+                apps: [
+                  AppEntry(
+                    packageName: 'com.test.bank',
+                    label: 'Bank',
+                    category: AppCategory.core,
+                    accentColor: Colors.green,
+                    fallbackIcon: Icons.account_balance,
+                  ),
+                ],
+                onUnlock: () => unlocked = true,
+                isKeyguardLocked: () async => true,
+                // The user backs out of the platform's bouncer.
+                dismissKeyguard: () async {
+                  dismissalRequested = true;
+                  return false;
+                },
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
-      for (int i = 0; i < 12; i++) {
-        await tester.pump(const Duration(milliseconds: 40));
-      }
+        await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
+        for (int i = 0; i < 12; i++) {
+          await tester.pump(const Duration(milliseconds: 40));
+        }
 
-      expect(dismissalRequested, isTrue,
-          reason: 'the swipe must ask the platform to authenticate');
-      expect(unlocked, isFalse,
-          reason: 'a declined platform prompt must leave the panel up');
-      expect(find.text('UNLOCK TO ENTER THE LAUNCHER'), findsOneWidget);
-    });
+        expect(
+          dismissalRequested,
+          isTrue,
+          reason: 'the swipe must ask the platform to authenticate',
+        );
+        expect(
+          unlocked,
+          isFalse,
+          reason: 'a declined platform prompt must leave the panel up',
+        );
+        expect(find.text('UNLOCK TO ENTER THE LAUNCHER'), findsOneWidget);
+      },
+    );
 
-    testWidgets('Swipe up enters the launcher when the platform authenticates',
-        (tester) async {
-      bool unlocked = false;
+    testWidgets(
+      'Swipe up enters the launcher when the platform authenticates',
+      (tester) async {
+        bool unlocked = false;
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: CosmicLockScreen(
-              foldable: FoldableController(),
-              apps: [
-                AppEntry(
-                  packageName: 'com.test.bank',
-                  label: 'Bank',
-                  category: AppCategory.core,
-                  accentColor: Colors.green,
-                  fallbackIcon: Icons.account_balance,
-                ),
-              ],
-              onUnlock: () => unlocked = true,
-              isKeyguardLocked: () async => true,
-              // The platform raised its bouncer and the user passed it.
-              dismissKeyguard: () async => true,
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: CosmicLockScreen(
+                foldable: FoldableController(),
+                apps: [
+                  AppEntry(
+                    packageName: 'com.test.bank',
+                    label: 'Bank',
+                    category: AppCategory.core,
+                    accentColor: Colors.green,
+                    fallbackIcon: Icons.account_balance,
+                  ),
+                ],
+                onUnlock: () => unlocked = true,
+                isKeyguardLocked: () async => true,
+                // The platform raised its bouncer and the user passed it.
+                dismissKeyguard: () async => true,
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
-      for (int i = 0; i < 12; i++) {
-        await tester.pump(const Duration(milliseconds: 40));
-      }
+        await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
+        for (int i = 0; i < 12; i++) {
+          await tester.pump(const Duration(milliseconds: 40));
+        }
 
-      expect(unlocked, isTrue);
-    });
+        expect(unlocked, isTrue);
+      },
+    );
 
-    testWidgets('Tapping quick phone shortcut launches the app',
-        (tester) async {
+    testWidgets('Tapping quick phone shortcut launches the app', (
+      tester,
+    ) async {
       final foldable = FoldableController();
       bool unlocked = false;
       final launched = <String>[];
       final previousDebugPrint = debugPrint;
       debugPrint = (String? message, {int? wrapWidth}) {
-        if (message != null && message.startsWith('Simulating launching app:')) {
+        if (message != null &&
+            message.startsWith('Simulating launching app:')) {
           launched.add(message);
         }
       };
@@ -412,49 +445,51 @@ void main() {
       expect(launched, hasLength(1));
       expect(launched.single, contains('com.android.phone'));
 
-      // The panel stays up: it is what the user returns to when the launched
-      // app is closed. Clearing it here is what dropped them behind the lock
-      // screen instead.
-      expect(unlocked, isFalse);
+      // A successful launch clears the custom overlay so closing the app
+      // returns to the cover or home content. Keeping it mounted here would
+      // recreate the fingerprint surface over the launcher.
+      expect(unlocked, isTrue);
     });
 
-    testWidgets('Draws no fingerprint affordance: the panel is not the reader',
-        (tester) async {
-      final foldable = FoldableController();
-      final apps = [
-        AppEntry(
-          packageName: 'com.test.phone',
-          label: 'Phone',
-          category: AppCategory.core,
-          accentColor: Colors.green,
-          fallbackIcon: Icons.phone,
-        ),
-      ];
+    testWidgets(
+      'Draws no fingerprint affordance: the panel is not the reader',
+      (tester) async {
+        final foldable = FoldableController();
+        final apps = [
+          AppEntry(
+            packageName: 'com.test.phone',
+            label: 'Phone',
+            category: AppCategory.core,
+            accentColor: Colors.green,
+            fallbackIcon: Icons.phone,
+          ),
+        ];
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: CosmicLockScreen(
-              foldable: foldable,
-              apps: apps,
-              onUnlock: () {},
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: CosmicLockScreen(
+                foldable: foldable,
+                apps: apps,
+                onUnlock: () {},
+              ),
             ),
           ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 300));
+        );
+        await tester.pump(const Duration(milliseconds: 300));
 
-      // The reader is the side power button, so nothing on the panel may look
-      // like a fingerprint target the user could press.
-      expect(find.byIcon(Icons.fingerprint_rounded), findsNothing);
-      expect(find.byIcon(Icons.lock_open_rounded), findsNothing);
-      expect(find.text('TOUCH SENSOR TO UNLOCK'), findsNothing);
-      expect(find.text('NOT RECOGNIZED • TOUCH AGAIN'), findsNothing);
-      expect(find.text('FINGERPRINT UNAVAILABLE'), findsNothing);
+        // The reader is the side power button, so nothing on the panel may look
+        // like a fingerprint target the user could press.
+        expect(find.byIcon(Icons.fingerprint_rounded), findsNothing);
+        expect(find.byIcon(Icons.lock_open_rounded), findsNothing);
+        expect(find.text('TOUCH SENSOR TO UNLOCK'), findsNothing);
+        expect(find.text('NOT RECOGNIZED • TOUCH AGAIN'), findsNothing);
+        expect(find.text('FINGERPRINT UNAVAILABLE'), findsNothing);
 
-      // The quick shortcuts survive the removal, at both ends of the row.
-      expect(find.byIcon(Icons.phone_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.camera_alt_rounded), findsOneWidget);
-    });
+        // The quick shortcuts survive the removal, at both ends of the row.
+        expect(find.byIcon(Icons.phone_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.camera_alt_rounded), findsOneWidget);
+      },
+    );
   });
 }

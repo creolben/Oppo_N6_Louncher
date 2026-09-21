@@ -1,38 +1,43 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../../models/app_entry.dart';
 import '../../models/constellation.dart';
 import '../../core/launcher_bridge.dart';
 import '../../core/foldable_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
+import '../theme/luminous_home_theme.dart';
 import '../widgets/fading_horizontal_scroll.dart';
 import '../widgets/foldable_simulation_chip.dart';
 
-/// Visual tokens for the folded cover surface.
+/// Luminous Horizon roles tuned for the narrow, one-handed cover surface.
 ///
-/// The cover panel is narrow and used one-handed, so it runs a tighter rhythm
-/// than the unfolded galaxy: one 4-based gutter, one card radius, one chip
-/// radius, one touch target. Values live here so a single surface cannot drift
-/// into five near-identical greys and radii again.
+/// Colors and materials come from [LuminousHomeTheme]; the local rhythm stays
+/// compact so the existing cover grid and touch geometry remain unchanged.
 abstract final class CoverStyle {
-  static const Color page = Color(0xFF020306);
-  static const Color accent = Color(0xFF00E5FF);
-  static const Color hairline = Color(0x3364B5F6);
-  static const Color label = Color(0xA6FFFFFF);
-  static const Color labelMuted = Color(0x8AFFFFFF);
+  static const Color page = LuminousHomeTheme.background;
+  static const Color pageTop = LuminousHomeTheme.backgroundTop;
+  static const Color pageDeep = LuminousHomeTheme.backgroundDeep;
+  static const Color accent = LuminousHomeTheme.aqua;
+  static const Color secondaryAccent = LuminousHomeTheme.cobalt;
+  static const Color tertiaryAccent = LuminousHomeTheme.orchid;
+  static const Color hairline = LuminousHomeTheme.hairline;
+  static const Color label = LuminousHomeTheme.textSecondary;
+  static const Color labelMuted = LuminousHomeTheme.textMuted;
 
   static const double gutter = 16;
-  static const double cardRadius = 18;
-  static const double chipRadius = 16;
-  static const double tileRadius = 14;
-  static const double dockRadius = 24;
+  static const double cardRadius = LuminousHomeTheme.cardRadius;
+  static const double chipRadius = LuminousHomeTheme.controlRadius;
+  static const double tileRadius = LuminousHomeTheme.iconRadius;
+  static const double dockRadius = LuminousHomeTheme.dockRadius;
 
   /// Minimum touch target for a control on the cover panel: 48dp, the
   /// Android baseline, not a round number below it.
-  static const double touchTarget = 48;
+  static const double touchTarget = LuminousHomeTheme.minimumTouchTarget;
 
   /// Height reserved below the scrolling body for the floating cockpit dock.
   static const double dockClearance = 118;
@@ -154,23 +159,65 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
       backgroundColor: CoverStyle.page,
       body: Stack(
         children: [
-          // 1. Ambient nebula wash: ties the cover panel to the lock screen,
-          // which opens on the same deep-space gradient.
-          const Positioned.fill(
+          // 1. Luminous Horizon atmosphere: an ink-blue OLED field with a
+          // low cobalt horizon and restrained aqua/orchid light.
+          Positioned.fill(
             child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: RadialGradient(
-                    center: Alignment(0.0, -0.85),
-                    radius: 1.05,
-                    colors: [
-                      Color(0x1F00E5FF),
-                      Color(0x0D2979FF),
-                      Color(0x00020306),
-                    ],
-                    stops: [0.0, 0.42, 1.0],
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          CoverStyle.pageTop,
+                          CoverStyle.page,
+                          CoverStyle.pageDeep,
+                        ],
+                        stops: [0.0, 0.58, 1.0],
+                      ),
+                    ),
                   ),
-                ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: const Alignment(-0.9, -0.62),
+                        radius: 0.9,
+                        colors: [
+                          CoverStyle.accent.withValues(alpha: 0.13),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: const Alignment(0.95, 0.02),
+                        radius: 0.82,
+                        colors: [
+                          CoverStyle.tertiaryAccent.withValues(alpha: 0.11),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: RadialGradient(
+                        center: const Alignment(0.08, 1.16),
+                        radius: 0.8,
+                        colors: [
+                          CoverStyle.secondaryAccent.withValues(alpha: 0.2),
+                          Colors.transparent,
+                        ],
+                        stops: const [0.0, 1.0],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -181,9 +228,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
           Positioned.fill(
             child: RepaintBoundary(
               child: CustomPaint(
-                painter: _CoverStardustPainter(
-                  animation: _pulseController,
-                ),
+                painter: _CoverStardustPainter(animation: _pulseController),
               ),
             ),
           ),
@@ -305,27 +350,24 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
               Text(
                 timeString,
                 style: const TextStyle(
-                  color: Colors.white,
+                  color: LuminousHomeTheme.textPrimary,
                   fontSize: 38,
-                  fontWeight: FontWeight.w200,
+                  fontWeight: FontWeight.w300,
                   letterSpacing: -1.2,
                   height: 1.05,
                   // Tabular figures keep the clock from shifting width as the
                   // minute rolls over.
                   fontFeatures: [FontFeature.tabularFigures()],
-                  shadows: [
-                    Shadow(color: Color(0x5900E5FF), blurRadius: 16),
-                  ],
                 ),
               ),
               const SizedBox(height: 3),
               Text(
-                dateString.toUpperCase(),
+                dateString,
                 style: const TextStyle(
                   color: CoverStyle.labelMuted,
                   fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.6,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.3,
                 ),
               ),
             ],
@@ -346,45 +388,40 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
                 curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                constraints: const BoxConstraints(
+                  minHeight: CoverStyle.touchTarget,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 11),
                 decoration: BoxDecoration(
                   color: _showFoldControls
-                      ? const Color(0x3300E5FF)
-                      : const Color(0x1F101424),
+                      ? LuminousHomeTheme.softTint(CoverStyle.accent, 0.16)
+                      : LuminousHomeTheme.glass,
                   borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
                   border: Border.all(
                     color: _showFoldControls
-                        ? CoverStyle.accent
+                        ? LuminousHomeTheme.hairlineStrong
                         : CoverStyle.hairline,
-                    width: 1.0,
+                    width: 0.8,
                   ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      width: 7,
-                      height: 7,
-                      decoration: const BoxDecoration(
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: CoverStyle.accent,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Color(0x9900E5FF),
-                            blurRadius: 7,
-                            spreadRadius: 0.5,
-                          ),
-                        ],
                       ),
+                      child: SizedBox(width: 7, height: 7),
                     ),
                     const SizedBox(width: 7),
                     const Text(
                       'COVER',
                       style: TextStyle(
-                        color: CoverStyle.accent,
+                        color: LuminousHomeTheme.textSecondary,
                         fontSize: 10.5,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.4,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.2,
                       ),
                     ),
                     const SizedBox(width: 2),
@@ -393,7 +430,9 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                           ? Icons.keyboard_arrow_down_rounded
                           : Icons.keyboard_arrow_up_rounded,
                       size: 15,
-                      color: CoverStyle.accent,
+                      color: _showFoldControls
+                          ? CoverStyle.accent
+                          : LuminousHomeTheme.textMuted,
                     ),
                   ],
                 ),
@@ -426,33 +465,27 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
               height: CoverStyle.touchTarget,
               padding: const EdgeInsets.symmetric(horizontal: 15),
               decoration: BoxDecoration(
-                color: const Color(0x2E10162A),
+                color: LuminousHomeTheme.glass,
                 borderRadius: BorderRadius.circular(23),
                 border: Border.all(
-                  color: const Color(0x2E00E5FF),
-                  width: 0.9,
+                  color: LuminousHomeTheme.hairline,
+                  width: 0.8,
                 ),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x40000000),
-                    blurRadius: 8,
-                    offset: Offset(0, 3),
-                  ),
-                ],
+                boxShadow: LuminousHomeTheme.floatingShadow,
               ),
-              child: Row(
+              child: const Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.search_rounded,
-                    color: CoverStyle.accent,
+                    color: LuminousHomeTheme.textSecondary,
                     size: 19,
                   ),
-                  const SizedBox(width: 10),
+                  SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'Search apps or cosmos...',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.58),
+                        color: LuminousHomeTheme.textMuted,
                         fontSize: 13,
                         fontWeight: FontWeight.w400,
                         letterSpacing: 0.1,
@@ -461,7 +494,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                   ),
                   Icon(
                     Icons.auto_awesome_rounded,
-                    color: Colors.white.withValues(alpha: 0.32),
+                    color: LuminousHomeTheme.textMuted,
                     size: 16,
                   ),
                 ],
@@ -473,36 +506,25 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     );
   }
 
-  /// Shared card surface: one radius, one fill, one hairline, and a single
-  /// two-part elevation (real drop shadow + faint accent halo). Both the
-  /// Essentials shelf and the sector grid are built from it so they cannot
-  /// drift apart.
-  Widget _cardSurface({
-    required Color accent,
-    required Color glow,
-    required Widget child,
-  }) {
+  /// Shared milky tonal-glass shelf. Accent is mixed into the material at a
+  /// very low level; it identifies content without outlining every surface.
+  Widget _cardSurface({required Color accent, required Widget child}) {
+    final tintedGlass = Color.alphaBlend(
+      accent.withValues(alpha: 0.035),
+      LuminousHomeTheme.glassStrong,
+    );
+
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       decoration: BoxDecoration(
-        color: const Color(0x1A131A30),
-        borderRadius: BorderRadius.circular(CoverStyle.cardRadius),
-        border: Border.all(
-          color: accent.withValues(alpha: 0.26),
-          width: 0.9,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [tintedGlass, LuminousHomeTheme.glass],
         ),
-        boxShadow: [
-          const BoxShadow(
-            color: Color(0x52000000),
-            blurRadius: 14,
-            offset: Offset(0, 6),
-          ),
-          BoxShadow(
-            color: glow.withValues(alpha: 0.10),
-            blurRadius: 18,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(CoverStyle.cardRadius),
+        border: Border.all(color: LuminousHomeTheme.hairline, width: 0.8),
+        boxShadow: LuminousHomeTheme.floatingShadow,
       ),
       child: child,
     );
@@ -524,29 +546,22 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             title.toUpperCase(),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: color,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.6,
+            style: const TextStyle(
+              color: LuminousHomeTheme.textPrimary,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.1,
             ),
           ),
         ),
-        const SizedBox(width: 7),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            starCount == 1 ? '1 star' : '$starCount stars',
-            style: TextStyle(
-              color: color,
-              fontSize: 9.5,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.2,
-            ),
+        const SizedBox(width: 8),
+        Text(
+          starCount == 1 ? '1 star' : '$starCount stars',
+          style: const TextStyle(
+            color: LuminousHomeTheme.textMuted,
+            fontSize: 10,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0.1,
           ),
         ),
         if (action != null) ...[const Spacer(), action],
@@ -557,7 +572,6 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
   Widget _buildEssentialsShelf(Constellation core) {
     return _cardSurface(
       accent: core.primaryColor,
-      glow: core.glowColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -597,11 +611,11 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     required VoidCallback onPressed,
   }) {
     return IconButton(
-      icon: Icon(icon, size: 17, color: Colors.white.withValues(alpha: 0.62)),
+      icon: Icon(icon, size: 17, color: LuminousHomeTheme.textSecondary),
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(
-        minWidth: 40,
-        minHeight: 48,
+        minWidth: CoverStyle.touchTarget,
+        minHeight: CoverStyle.touchTarget,
       ),
       tooltip: tooltip,
       onPressed: onPressed,
@@ -612,12 +626,12 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     return Padding(
       padding: const EdgeInsets.only(left: 4.0),
       child: Text(
-        text,
+        text.toUpperCase(),
         style: const TextStyle(
           color: CoverStyle.labelMuted,
           fontSize: 10,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 1.8,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.7,
         ),
       ),
     );
@@ -632,7 +646,8 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
           label: c.name,
           icon: c.emblemIcon,
           color: c.primaryColor,
-          isSelected: _selectedSectorId == c.id ||
+          isSelected:
+              _selectedSectorId == c.id ||
               (_selectedSectorId == null && c == outerList.first),
           onTap: () => setState(() => _selectedSectorId = c.id),
         ),
@@ -643,7 +658,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionLabel('SECTORS'),
+        _sectionLabel('Sectors'),
         const SizedBox(height: 8),
         FadingHorizontalScroll(
           fadeColor: CoverStyle.page,
@@ -669,12 +684,8 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
               padding: const EdgeInsets.symmetric(horizontal: 12),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: CoverStyle.accent.withValues(alpha: 0.09),
+                color: LuminousHomeTheme.softTint(CoverStyle.accent, 0.12),
                 borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
-                border: Border.all(
-                  color: CoverStyle.accent.withValues(alpha: 0.32),
-                  width: 0.9,
-                ),
               ),
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
@@ -724,22 +735,15 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
                 color: isSelected
-                    ? color.withValues(alpha: 0.20)
-                    : const Color(0x14131A30),
+                    ? LuminousHomeTheme.softTint(color, 0.18)
+                    : LuminousHomeTheme.glass,
                 borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
                 border: Border.all(
-                  color: isSelected ? color : color.withValues(alpha: 0.22),
-                  width: isSelected ? 1.1 : 0.8,
+                  color: isSelected
+                      ? LuminousHomeTheme.hairlineStrong
+                      : LuminousHomeTheme.hairline,
+                  width: 0.8,
                 ),
-                boxShadow: isSelected
-                    ? [
-                        BoxShadow(
-                          color: color.withValues(alpha: 0.22),
-                          blurRadius: 10,
-                          offset: const Offset(0, 3),
-                        ),
-                      ]
-                    : null,
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -747,15 +751,19 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                   Icon(
                     icon,
                     size: 14,
-                    color: isSelected ? color : Colors.white70,
+                    color: isSelected ? color : LuminousHomeTheme.textSecondary,
                   ),
                   const SizedBox(width: 6),
                   Text(
                     label,
                     style: TextStyle(
-                      color: isSelected ? Colors.white : Colors.white70,
+                      color: isSelected
+                          ? LuminousHomeTheme.textPrimary
+                          : LuminousHomeTheme.textSecondary,
                       fontSize: 11.5,
-                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                      fontWeight: isSelected
+                          ? FontWeight.w700
+                          : FontWeight.w500,
                       letterSpacing: 0.1,
                     ),
                   ),
@@ -771,7 +779,6 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
   Widget _buildSectorAppCard(Constellation constellation) {
     return _cardSurface(
       accent: constellation.primaryColor,
-      glow: constellation.glowColor,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -805,19 +812,22 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
                       foregroundColor: constellation.primaryColor,
-                      side: BorderSide(
-                        color: constellation.primaryColor.withValues(alpha: 0.4),
+                      backgroundColor: LuminousHomeTheme.glass,
+                      minimumSize: const Size(0, CoverStyle.touchTarget),
+                      side: const BorderSide(
+                        color: LuminousHomeTheme.hairline,
+                        width: 0.8,
                       ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 8,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
                     ),
                     icon: const Icon(Icons.add_rounded, size: 16),
-                    label: const Text('Add Apps', style: TextStyle(fontSize: 11)),
+                    label: const Text(
+                      'Add Apps',
+                      style: TextStyle(fontSize: 11),
+                    ),
                     onPressed: () {
                       widget.onConstellationLongPressed?.call(constellation);
                     },
@@ -891,21 +901,21 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
         child: ClipRRect(
           borderRadius: BorderRadius.circular(CoverStyle.dockRadius),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            filter: ImageFilter.blur(
+              sigmaX: LuminousHomeTheme.glassBlur,
+              sigmaY: LuminousHomeTheme.glassBlur,
+            ),
             child: Container(
               height: 60,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
-                color: const Color(0xD90D1120),
+                color: LuminousHomeTheme.glassOpaque,
                 borderRadius: BorderRadius.circular(CoverStyle.dockRadius),
-                border: Border.all(color: CoverStyle.hairline, width: 0.9),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x66000000),
-                    blurRadius: 18,
-                    offset: Offset(0, 6),
-                  ),
-                ],
+                border: Border.all(
+                  color: LuminousHomeTheme.hairline,
+                  width: 0.8,
+                ),
+                boxShadow: LuminousHomeTheme.floatingShadow,
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -923,7 +933,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                     icon: Icons.splitscreen_rounded,
                     color: _showFoldControls
                         ? CoverStyle.accent
-                        : Colors.white70,
+                        : LuminousHomeTheme.textSecondary,
                     tooltip: 'Fold Simulator',
                     isActive: _showFoldControls,
                     onTap: () {
@@ -935,7 +945,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                   // Lock Screen
                   _dockIconButton(
                     icon: Icons.lock_outline_rounded,
-                    color: Colors.white70,
+                    color: LuminousHomeTheme.textSecondary,
                     tooltip: 'Lock Screen',
                     onTap: widget.onLock,
                   ),
@@ -943,7 +953,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                   // Settings
                   _dockIconButton(
                     icon: Icons.settings_outlined,
-                    color: Colors.white70,
+                    color: LuminousHomeTheme.textSecondary,
                     tooltip: 'Launcher Settings',
                     onTap: widget.onOpenSettings,
                   ),
@@ -996,24 +1006,10 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xF20D1120),
+        color: LuminousHomeTheme.glassOpaqueStrong,
         borderRadius: BorderRadius.circular(CoverStyle.cardRadius),
-        border: Border.all(
-          color: CoverStyle.accent.withValues(alpha: 0.42),
-          width: 1.0,
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x73000000),
-            blurRadius: 20,
-            offset: Offset(0, 8),
-          ),
-          BoxShadow(
-            color: Color(0x2E00E5FF),
-            blurRadius: 22,
-            offset: Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: LuminousHomeTheme.hairline, width: 0.8),
+        boxShadow: LuminousHomeTheme.floatingShadow,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1024,17 +1020,21 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
               Expanded(
                 child: Row(
                   children: [
-                    const Icon(Icons.screen_rotation_rounded, color: Color(0xFF00E5FF), size: 16),
+                    const Icon(
+                      Icons.screen_rotation_rounded,
+                      color: LuminousHomeTheme.aqua,
+                      size: 16,
+                    ),
                     const SizedBox(width: 6),
                     Flexible(
                       child: Text(
-                        'Posture: ${posture.name.toUpperCase()} (${angle.toStringAsFixed(0)}°)',
+                        'Posture: ${posture.name} (${angle.toStringAsFixed(0)}°)',
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: LuminousHomeTheme.textPrimary,
                           fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.8,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.2,
                         ),
                       ),
                     ),
@@ -1049,9 +1049,16 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 16),
+                icon: const Icon(
+                  Icons.close_rounded,
+                  color: LuminousHomeTheme.textSecondary,
+                  size: 16,
+                ),
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
+                constraints: const BoxConstraints(
+                  minWidth: CoverStyle.touchTarget,
+                  minHeight: CoverStyle.touchTarget,
+                ),
                 onPressed: () => setState(() => _showFoldControls = false),
               ),
             ],
@@ -1059,9 +1066,13 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
           const SizedBox(height: 8),
           Row(
             children: [
-              Expanded(child: _presetButton('Cover (0°)', DevicePosture.folded)),
+              Expanded(
+                child: _presetButton('Cover (0°)', DevicePosture.folded),
+              ),
               const SizedBox(width: 6),
-              Expanded(child: _presetButton('Tabletop (90°)', DevicePosture.tabletop)),
+              Expanded(
+                child: _presetButton('Tabletop (90°)', DevicePosture.tabletop),
+              ),
               const SizedBox(width: 6),
               Expanded(child: _presetButton('Main (180°)', DevicePosture.flat)),
             ],
@@ -1069,10 +1080,10 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
           const SizedBox(height: 6),
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
-              activeTrackColor: const Color(0xFF00E5FF),
-              inactiveTrackColor: Colors.white24,
-              thumbColor: Colors.white,
-              overlayColor: const Color(0x3300E5FF),
+              activeTrackColor: CoverStyle.accent,
+              inactiveTrackColor: LuminousHomeTheme.hairlineStrong,
+              thumbColor: LuminousHomeTheme.textPrimary,
+              overlayColor: LuminousHomeTheme.softTint(CoverStyle.accent, 0.16),
               trackHeight: 2.5,
             ),
             child: Slider(
@@ -1095,15 +1106,20 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
         onTap: () => widget.foldable.setPosture(targetPosture),
         borderRadius: BorderRadius.circular(10),
         child: Container(
+          constraints: const BoxConstraints(minHeight: CoverStyle.touchTarget),
           padding: const EdgeInsets.symmetric(vertical: 6),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0x3300E5FF) : const Color(0x18FFFFFF),
+            color: isSelected
+                ? LuminousHomeTheme.softTint(CoverStyle.accent, 0.16)
+                : LuminousHomeTheme.glass,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: isSelected ? const Color(0xFF00E5FF) : Colors.white24,
-              width: 0.9,
-            ),
+            border: isSelected
+                ? Border.all(
+                    color: CoverStyle.accent.withValues(alpha: 0.48),
+                    width: 0.9,
+                  )
+                : null,
           ),
           child: Text(
             label,
@@ -1111,7 +1127,9 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: isSelected ? const Color(0xFF00E5FF) : Colors.white70,
+              color: isSelected
+                  ? CoverStyle.accent
+                  : LuminousHomeTheme.textSecondary,
               fontSize: 10,
               fontWeight: FontWeight.w600,
             ),
@@ -1127,7 +1145,20 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
   }
 
   String _monthName(int month) {
-    const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const names = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
     return names[(month - 1) % 12];
   }
 }
@@ -1137,17 +1168,20 @@ class _CoverStardustPainter extends CustomPainter {
   final Animation<double> animation;
   static final math.Random _rng = math.Random(42);
 
-  // Pre-generate 60 subtle stars
+  // Pre-generate 60 restrained points of light. Their pulse formula and rate
+  // remain unchanged; only scale, base opacity, and palette are quieter.
   static final List<_CoverStar> _stars = List.generate(60, (index) {
     return _CoverStar(
       x: _rng.nextDouble(),
       y: _rng.nextDouble(),
-      radius: 0.6 + _rng.nextDouble() * 1.2,
-      baseAlpha: 0.2 + _rng.nextDouble() * 0.45,
+      radius: 0.45 + _rng.nextDouble() * 0.8,
+      baseAlpha: 0.1 + _rng.nextDouble() * 0.22,
       blinkRate: 0.5 + _rng.nextDouble() * 1.5,
-      color: index % 3 == 0
-          ? const Color(0xFF00E5FF)
-          : (index % 4 == 0 ? const Color(0xFFFFD54F) : Colors.white),
+      color: index % 5 == 0
+          ? LuminousHomeTheme.aqua
+          : (index % 7 == 0
+                ? LuminousHomeTheme.orchid
+                : LuminousHomeTheme.textSecondary),
     );
   });
 
@@ -1159,8 +1193,9 @@ class _CoverStardustPainter extends CustomPainter {
     final t = animation.value;
 
     for (final star in _stars) {
-      final alpha = (star.baseAlpha + 0.25 * math.sin(t * math.pi * 2 * star.blinkRate))
-          .clamp(0.08, 0.85);
+      final alpha =
+          (star.baseAlpha + 0.25 * math.sin(t * math.pi * 2 * star.blinkRate))
+              .clamp(0.08, 0.85);
       paint.color = star.color.withValues(alpha: alpha);
       final center = Offset(star.x * size.width, star.y * size.height);
       canvas.drawCircle(center, star.radius, paint);
@@ -1255,31 +1290,33 @@ class _CoverAppTileState extends State<_CoverAppTile> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // App Icon Container with Glowing Border & Glass Backing
+              // Clean 48dp squircle icon with soft offset depth. The source
+              // artwork is the icon; there is no nested glowing frame.
               AnimatedContainer(
                 duration: const Duration(milliseconds: 140),
                 curve: Curves.easeOutCubic,
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: app.accentColor.withValues(alpha: _pressed ? 0.22 : 0.13),
+                  color: _pressed
+                      ? Color.alphaBlend(
+                          app.accentColor.withValues(alpha: 0.12),
+                          LuminousHomeTheme.glassStrong,
+                        )
+                      : LuminousHomeTheme.glassStrong,
                   borderRadius: BorderRadius.circular(CoverStyle.tileRadius),
-                  border: Border.all(
-                    color: app.accentColor.withValues(alpha: _pressed ? 0.7 : 0.4),
-                    width: 1.0,
-                  ),
                   boxShadow: [
                     BoxShadow(
-                      color: app.accentColor.withValues(
-                        alpha: _pressed ? 0.32 : 0.14,
+                      color: LuminousHomeTheme.shadow.withValues(
+                        alpha: _pressed ? 0.64 : 0.48,
                       ),
-                      blurRadius: _pressed ? 14 : 9,
-                      offset: const Offset(0, 3),
+                      blurRadius: _pressed ? 16 : 12,
+                      offset: Offset(0, _pressed ? 7 : 4),
                     ),
                   ],
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(CoverStyle.tileRadius - 1),
+                  borderRadius: BorderRadius.circular(CoverStyle.tileRadius),
                   child: app.iconBytes != null
                       ? Image.memory(
                           app.iconBytes!,
@@ -1305,7 +1342,7 @@ class _CoverAppTileState extends State<_CoverAppTile> {
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  color: Colors.white,
+                  color: LuminousHomeTheme.textPrimary,
                   fontSize: 10.5,
                   fontWeight: FontWeight.w500,
                   letterSpacing: 0.2,
@@ -1337,12 +1374,12 @@ class _ShelfEmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Column(
         children: [
-          Icon(icon, size: 24, color: Colors.white.withValues(alpha: 0.45)),
+          Icon(icon, size: 24, color: LuminousHomeTheme.textMuted),
           const SizedBox(height: 8),
           Text(
             title,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.72),
+            style: const TextStyle(
+              color: LuminousHomeTheme.textSecondary,
               fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
@@ -1351,8 +1388,8 @@ class _ShelfEmptyState extends StatelessWidget {
           Text(
             hint,
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
+            style: const TextStyle(
+              color: LuminousHomeTheme.textMuted,
               fontSize: 11,
               height: 1.3,
             ),

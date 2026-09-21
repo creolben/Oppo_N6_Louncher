@@ -1,15 +1,11 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
-enum AppCategory {
-  core,
-  social,
-  productivity,
-  entertainment,
-  tools,
-  games,
-}
+import '../ui/theme/luminous_home_theme.dart';
+
+enum AppCategory { core, social, productivity, entertainment, tools, games }
 
 class AppEntry {
   final String packageName;
@@ -62,12 +58,16 @@ class AppEntry {
       text: TextSpan(
         text: label,
         style: const TextStyle(
-          color: Colors.white,
+          color: LuminousHomeTheme.textPrimary,
           fontSize: 10.0,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.4,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.1,
           shadows: [
-            Shadow(color: Colors.black, blurRadius: 4.0),
+            Shadow(
+              color: LuminousHomeTheme.shadow,
+              blurRadius: 6.0,
+              offset: Offset(0, 1),
+            ),
           ],
         ),
       ),
@@ -91,15 +91,16 @@ class AppEntry {
       )..layout();
     }
 
-    if (notificationCount > 0 && (_lastBadgeCount != notificationCount || badgePainter == null)) {
+    if (notificationCount > 0 &&
+        (_lastBadgeCount != notificationCount || badgePainter == null)) {
       _lastBadgeCount = notificationCount;
       badgePainter = TextPainter(
         text: TextSpan(
           text: '$notificationCount',
           style: const TextStyle(
-            color: Colors.white,
+            color: LuminousHomeTheme.textPrimary,
             fontSize: 9.0,
-            fontWeight: FontWeight.bold,
+            fontWeight: FontWeight.w700,
           ),
         ),
         textDirection: TextDirection.ltr,

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="cosmic_black">#020306</color>
-    <color name="cosmic_deep">#070A14</color>
-    <color name="cosmic_cyan">#00E5FF</color>
+    <color name="cosmic_black">#050A16</color>
+    <color name="cosmic_deep">#0A1830</color>
+    <color name="cosmic_cyan">#70D9FF</color>
 </resources>
