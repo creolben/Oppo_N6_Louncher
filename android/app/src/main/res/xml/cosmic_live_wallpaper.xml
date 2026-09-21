@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android reads this metadata before it creates CosmicLiveWallpaperService. -->
+<wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/cosmic_live_wallpaper_description" />

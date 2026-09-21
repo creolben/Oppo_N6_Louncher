@@ -38,36 +38,36 @@ class _LaunchSpy {
   }
 
   List<String> get launchedPackages => [
-        for (final line in lines)
-          if (line.startsWith('Simulating launching app:'))
-            RegExp(r'\(([^()]*)\)$').firstMatch(line)?.group(1) ?? '',
-      ];
+    for (final line in lines)
+      if (line.startsWith('Simulating launching app:'))
+        RegExp(r'\(([^()]*)\)$').firstMatch(line)?.group(1) ?? '',
+  ];
 }
 
 List<AppEntry> _apps() => [
-      AppEntry(
-        packageName: 'com.test.camera',
-        activityName: 'com.test.camera.Camera',
-        label: 'Camera',
-        category: AppCategory.core,
-        accentColor: Colors.amber,
-        fallbackIcon: Icons.camera_alt_rounded,
-      ),
-      AppEntry(
-        packageName: 'com.test.notes',
-        label: 'Notes',
-        category: AppCategory.tools,
-        accentColor: Colors.teal,
-        fallbackIcon: Icons.edit_note_rounded,
-      ),
-      AppEntry(
-        packageName: 'com.test.chat',
-        label: 'Chat',
-        category: AppCategory.social,
-        accentColor: Colors.pink,
-        fallbackIcon: Icons.chat_bubble_rounded,
-      ),
-    ];
+  AppEntry(
+    packageName: 'com.test.camera',
+    activityName: 'com.test.camera.Camera',
+    label: 'Camera',
+    category: AppCategory.core,
+    accentColor: Colors.amber,
+    fallbackIcon: Icons.camera_alt_rounded,
+  ),
+  AppEntry(
+    packageName: 'com.test.notes',
+    label: 'Notes',
+    category: AppCategory.tools,
+    accentColor: Colors.teal,
+    fallbackIcon: Icons.edit_note_rounded,
+  ),
+  AppEntry(
+    packageName: 'com.test.chat',
+    label: 'Chat',
+    category: AppCategory.social,
+    accentColor: Colors.pink,
+    fallbackIcon: Icons.chat_bubble_rounded,
+  ),
+];
 
 /// A fingerprint reader that can be driven from a test.
 class _FakeReader {
@@ -127,8 +127,10 @@ Future<void> _settle(WidgetTester tester) async {
 /// semantics node the panel publishes for it.
 Future<void> _tapBubble(WidgetTester tester, String label) async {
   final node = tester.getSemantics(find.bySemanticsLabel(label));
-  tester.binding.pipelineOwner.semanticsOwner!
-      .performAction(node.id, SemanticsAction.tap);
+  tester.binding.pipelineOwner.semanticsOwner!.performAction(
+    node.id,
+    SemanticsAction.tap,
+  );
   await _settle(tester);
 }
 
@@ -181,8 +183,9 @@ void main() {
   });
 
   group('Lock screen fingerprint prompt', () {
-    testWidgets("tapping an app bubble raises the panel's own prompt",
-        (tester) async {
+    testWidgets("tapping an app bubble raises the panel's own prompt", (
+      tester,
+    ) async {
       final semantics = tester.ensureSemantics();
       await _pumpLockScreen(tester, reader: reader);
 
@@ -224,15 +227,18 @@ void main() {
       });
 
       expect(spy.launchedPackages, equals(['com.test.notes']));
-      // The panel stays up so closing the app returns to the lock screen.
-      expect(unlocked, isFalse);
+      // A successful launch dismisses the custom overlay so closing the app
+      // returns to the cover or home content rather than recreating the
+      // fingerprint surface.
+      expect(unlocked, isTrue);
       expect(find.byType(FingerprintAuthPrompt), findsNothing);
 
       semantics.dispose();
     });
 
-    testWidgets('a live reader is reused rather than re-armed on a tap',
-        (tester) async {
+    testWidgets('a live reader is reused rather than re-armed on a tap', (
+      tester,
+    ) async {
       final semantics = tester.ensureSemantics();
       await _pumpLockScreen(tester, reader: reader);
 
@@ -257,8 +263,9 @@ void main() {
       semantics.dispose();
     });
 
-    testWidgets('cancelling launches nothing and leaves the panel locked',
-        (tester) async {
+    testWidgets('cancelling launches nothing and leaves the panel locked', (
+      tester,
+    ) async {
       final semantics = tester.ensureSemantics();
       var unlocked = false;
       await _pumpLockScreen(
@@ -283,8 +290,9 @@ void main() {
       await _settle(tester);
     });
 
-    testWidgets('a non-matching finger keeps the prompt and stays armed',
-        (tester) async {
+    testWidgets('a non-matching finger keeps the prompt and stays armed', (
+      tester,
+    ) async {
       final semantics = tester.ensureSemantics();
       await _pumpLockScreen(tester, reader: reader);
 
@@ -308,8 +316,9 @@ void main() {
       semantics.dispose();
     });
 
-    testWidgets('a refused reader keeps the card up while the platform asks',
-        (tester) async {
+    testWidgets('a refused reader keeps the card up while the platform asks', (
+      tester,
+    ) async {
       final semantics = tester.ensureSemantics();
       // The tested ColorOS build cancels an app's reader session outright while
       // the device is locked, so this is the real device's behaviour. The
@@ -324,7 +333,8 @@ void main() {
       await _pumpLockScreen(
         tester,
         reader: reader,
-        authenticateWithCredential: ({String? appName}) => platformPrompt.future,
+        authenticateWithCredential: ({String? appName}) =>
+            platformPrompt.future,
       );
 
       await spy.capture(() async {
@@ -353,8 +363,9 @@ void main() {
       semantics.dispose();
     });
 
-    testWidgets('a refused reader is not re-armed by the next tap',
-        (tester) async {
+    testWidgets('a refused reader is not re-armed by the next tap', (
+      tester,
+    ) async {
       final semantics = tester.ensureSemantics();
       // Re-arming a reader the platform has already refused spends the sensor
       // and can only fail the same way: on the tested device it produced six
@@ -401,8 +412,9 @@ void main() {
       semantics.dispose();
     });
 
-    testWidgets('the PIN route is offered when the finger will not read',
-        (tester) async {
+    testWidgets('the PIN route is offered when the finger will not read', (
+      tester,
+    ) async {
       final semantics = tester.ensureSemantics();
       await _pumpLockScreen(tester, reader: reader);
 
@@ -424,30 +436,33 @@ void main() {
       semantics.dispose();
     });
 
-    testWidgets('a device with no enrolled finger never raises the panel prompt',
-        (tester) async {
-      final semantics = tester.ensureSemantics();
-      // There is no finger that could ever answer a prompt, so the panel must
-      // not pretend to wait for one; the platform credential prompt answers.
-      await _pumpLockScreen(
-        tester,
-        reader: _FakeReader(ready: false),
-        authenticate: ({String? appName}) async => true,
-      );
+    testWidgets(
+      'a device with no enrolled finger never raises the panel prompt',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        // There is no finger that could ever answer a prompt, so the panel must
+        // not pretend to wait for one; the platform credential prompt answers.
+        await _pumpLockScreen(
+          tester,
+          reader: _FakeReader(ready: false),
+          authenticate: ({String? appName}) async => true,
+        );
 
-      await spy.capture(() async {
-        await _tapBubble(tester, 'Camera');
-        await _settleLaunch(tester);
-      });
+        await spy.capture(() async {
+          await _tapBubble(tester, 'Camera');
+          await _settleLaunch(tester);
+        });
 
-      expect(find.byType(FingerprintAuthPrompt), findsNothing);
-      expect(spy.launchedPackages, equals(['com.test.camera']));
+        expect(find.byType(FingerprintAuthPrompt), findsNothing);
+        expect(spy.launchedPackages, equals(['com.test.camera']));
 
-      semantics.dispose();
-    });
+        semantics.dispose();
+      },
+    );
 
-    testWidgets('the prompt is announced as a live region with real buttons',
-        (tester) async {
+    testWidgets('the prompt is announced as a live region with real buttons', (
+      tester,
+    ) async {
       final semantics = tester.ensureSemantics();
       await _pumpLockScreen(tester, reader: reader);
 
@@ -458,33 +473,41 @@ void main() {
       expect(prompt.getSemanticsData().flagsCollection.isLiveRegion, isTrue);
       expect(prompt.getSemanticsData().label, 'Fingerprint required');
 
-      final cancel = _nodeLabelled(tester, 'Cancel and stay on the lock screen');
+      final cancel = _nodeLabelled(
+        tester,
+        'Cancel and stay on the lock screen',
+      );
       expect(cancel, isNotNull, reason: 'the prompt has no cancel node');
-      expect(cancel!.getSemanticsData().hasAction(SemanticsAction.tap), isTrue,
-          reason: 'a reader could hear the button but not press it');
+      expect(
+        cancel!.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+        reason: 'a reader could hear the button but not press it',
+      );
 
       semantics.dispose();
       await _settle(tester);
     });
 
-    testWidgets('platform userPresent while locked completes auth and launches app',
-        (tester) async {
-      final semantics = tester.ensureSemantics();
-      await _pumpLockScreen(tester, reader: reader);
+    testWidgets(
+      'platform userPresent while locked completes auth and launches app',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        await _pumpLockScreen(tester, reader: reader);
 
-      await _tapBubble(tester, 'Camera');
-      await _handOverReader(tester, reader);
-      expect(find.byType(FingerprintAuthPrompt), findsOneWidget);
+        await _tapBubble(tester, 'Camera');
+        await _handOverReader(tester, reader);
+        expect(find.byType(FingerprintAuthPrompt), findsOneWidget);
 
-      await spy.capture(() async {
-        LauncherBridge.dispatchUserPresentForTesting();
-        await _settleLaunch(tester);
-      });
+        await spy.capture(() async {
+          LauncherBridge.dispatchUserPresentForTesting();
+          await _settleLaunch(tester);
+        });
 
-      expect(spy.launchedPackages, equals(['com.test.camera']));
-      expect(find.byType(FingerprintAuthPrompt), findsNothing);
+        expect(spy.launchedPackages, equals(['com.test.camera']));
+        expect(find.byType(FingerprintAuthPrompt), findsNothing);
 
-      semantics.dispose();
-    });
+        semantics.dispose();
+      },
+    );
   });
 }

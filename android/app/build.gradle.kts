@@ -28,14 +28,24 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
+
+            // AGP 9 already turns both of these on for release, so this block
+            // changes nothing today — it pins the behaviour so an AGP default
+            // change or a stray `false` cannot silently re-add 5.6MB of dex.
+            // Measured here: off -> classes.dex 6,188,764 B and 87 res entries;
+            // on -> 545,000 B and 8 res entries.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 
-    packaging {
-        jniLibs {
-            keepDebugSymbols.add("**/*.so")
-        }
-    }
+    // Native debug symbols are deliberately NOT retained. Keeping them made the
+    // release APK 508MB, because the unstripped libflutter.so is ~165MB per ABI.
+    // Symbolicate release crashes with `--split-debug-info` output instead.
 }
 
 kotlin {

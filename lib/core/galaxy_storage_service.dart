@@ -62,8 +62,12 @@ class CustomConstellationConfig {
       case 0xf0149:
         return Icons.satellite_alt_rounded;
       default:
-        // ignore: non_const_argument_for_const_parameter
-        return IconData(emblemIconCodePoint, fontFamily: 'MaterialIcons');
+        // Every codepoint the emblem picker can produce is handled above, so
+        // this is only reached by stored data from outside that set. Building an
+        // IconData from a runtime codepoint here would force the whole
+        // MaterialIcons font (1.6MB) into the bundle, because the compiler can
+        // no longer prove which glyphs are reachable.
+        return Icons.star_rounded;
     }
   }
 }

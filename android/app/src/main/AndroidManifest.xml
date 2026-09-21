@@ -50,6 +50,23 @@
                 <category android:name="android.intent.category.DEFAULT"/>
             </intent-filter>
         </activity>
+
+        <!-- The optional, non-root ambient layer of the hybrid theme. Android's
+             own preview flow decides whether it is applied; this service never
+             changes the user's wallpaper by itself. -->
+        <service
+            android:name=".CosmicLiveWallpaperService"
+            android:exported="true"
+            android:label="@string/cosmic_live_wallpaper_name"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/cosmic_live_wallpaper" />
+        </service>
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

@@ -1,10 +1,13 @@
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
-import '../../core/foldable_controller.dart';
+
 import '../../canvas/camera_controller.dart';
+import '../../core/foldable_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
-import 'foldable_simulation_chip.dart';
+import '../theme/luminous_home_theme.dart';
 import 'comet_orb.dart';
+import 'foldable_simulation_chip.dart';
 
 class FoldableCockpitBar extends StatefulWidget {
   final FoldableController foldable;
@@ -83,237 +86,272 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
 
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 8.0),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Expandable Fold Simulation Controller
-            if (_showFoldControls)
-              Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xDD0D111F),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0x6600E5FF), width: 1.0),
-                  boxShadow: const [
-                    BoxShadow(color: Color(0x3300E5FF), blurRadius: 16),
-                  ],
+            if (_showFoldControls) _buildFoldControls(context, posture, angle),
+            _buildShelf(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFoldControls(
+    BuildContext context,
+    DevicePosture posture,
+    double angle,
+  ) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(LuminousHomeTheme.cardRadius),
+        boxShadow: LuminousHomeTheme.floatingShadow,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(LuminousHomeTheme.cardRadius),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: LuminousHomeTheme.glassBlur,
+            sigmaY: LuminousHomeTheme.glassBlur,
+          ),
+          child: Material(
+            color: LuminousHomeTheme.glassOpaque,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(
+                  LuminousHomeTheme.cardRadius,
                 ),
+                border: Border.all(color: LuminousHomeTheme.hairline),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: LuminousHomeTheme.softTint(
+                              LuminousHomeTheme.aqua,
+                              0.14,
+                            ),
+                            borderRadius: BorderRadius.circular(
+                              LuminousHomeTheme.iconRadius,
+                            ),
+                          ),
+                          child: const SizedBox.square(
+                            dimension: 40,
+                            child: Icon(
+                              Icons.screen_rotation_rounded,
+                              color: LuminousHomeTheme.aqua,
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
                         Expanded(
-                          child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Icon(Icons.screen_rotation_rounded, color: Color(0xFF00E5FF), size: 18),
-                              const SizedBox(width: 8),
-                              Flexible(
-                                child: Text(
-                                  'Foldable Posture: ${posture.name.toUpperCase()} (${angle.toStringAsFixed(0)}°)',
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 0.8,
-                                  ),
+                              const Text(
+                                'Fold position',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: LuminousHomeTheme.textPrimary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              if (widget.foldable.isSimulated) ...[
-                                const SizedBox(width: 8),
-                                FoldableSimulationChip(foldable: widget.foldable),
-                              ],
+                              const SizedBox(height: 2),
+                              Text(
+                                '${_postureLabel(posture)} · ${angle.toStringAsFixed(0)}°',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: LuminousHomeTheme.textMuted,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
                             ],
                           ),
                         ),
+                        if (widget.foldable.isSimulated) ...[
+                          const SizedBox(width: 8),
+                          FoldableSimulationChip(foldable: widget.foldable),
+                        ],
                         IconButton(
-                          icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 18),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          onPressed: () => setState(() => _showFoldControls = false),
+                          icon: const Icon(Icons.close_rounded, size: 19),
+                          color: LuminousHomeTheme.textSecondary,
+                          tooltip: 'Close fold controls',
+                          onPressed: () {
+                            setState(() => _showFoldControls = false);
+                          },
                         ),
                       ],
                     ),
                     const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _presetButton('Cover (0°)', DevicePosture.folded),
-                        _presetButton('Tabletop (90°)', DevicePosture.tabletop),
-                        _presetButton('Main Screen (180°)', DevicePosture.flat),
-                      ],
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      physics: const BouncingScrollPhysics(),
+                      child: Row(
+                        children: [
+                          _presetButton('Cover · 0°', DevicePosture.folded),
+                          const SizedBox(width: 8),
+                          _presetButton(
+                            'Tabletop · 90°',
+                            DevicePosture.tabletop,
+                          ),
+                          const SizedBox(width: 8),
+                          _presetButton('Main · 180°', DevicePosture.flat),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     SliderTheme(
                       data: SliderTheme.of(context).copyWith(
-                        activeTrackColor: const Color(0xFF00E5FF),
-                        inactiveTrackColor: Colors.white24,
-                        thumbColor: Colors.white,
-                        overlayColor: const Color(0x3300E5FF),
-                        trackHeight: 3.0,
+                        activeTrackColor: LuminousHomeTheme.aqua,
+                        inactiveTrackColor: LuminousHomeTheme.hairlineStrong,
+                        thumbColor: LuminousHomeTheme.textPrimary,
+                        overlayColor: LuminousHomeTheme.softTint(
+                          LuminousHomeTheme.aqua,
+                          0.16,
+                        ),
+                        trackHeight: 3,
                       ),
                       child: Slider(
                         value: angle,
-                        min: 0.0,
-                        max: 180.0,
-                        onChanged: (v) => widget.foldable.setHingeAngle(v),
+                        min: 0,
+                        max: 180,
+                        semanticFormatterCallback: (value) {
+                          return '${value.round()} degrees';
+                        },
+                        onChanged: (value) {
+                          widget.foldable.setHingeAngle(value);
+                        },
                       ),
                     ),
                   ],
                 ),
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
-            // Main Glassmorphic Dock Bar
-            ClipRRect(
-              borderRadius: BorderRadius.circular(30),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                child: Container(
-                  height: 60,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xAA0E1222),
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(
-                      color: const Color(0x44FFFFFF),
-                      width: 1.0,
-                    ),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x33000000),
-                        blurRadius: 20,
-                        offset: Offset(0, 4),
-                      ),
-                    ],
-                  ),
+  Widget _buildShelf() {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(LuminousHomeTheme.dockRadius),
+        boxShadow: LuminousHomeTheme.floatingShadow,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(LuminousHomeTheme.dockRadius),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(
+            sigmaX: LuminousHomeTheme.glassBlur,
+            sigmaY: LuminousHomeTheme.glassBlur,
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    LuminousHomeTheme.glassStrong,
+                    LuminousHomeTheme.glass,
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(
+                  LuminousHomeTheme.dockRadius,
+                ),
+                border: Border.all(color: LuminousHomeTheme.hairline),
+              ),
+              child: SizedBox(
+                height: 64,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: Row(
                     children: [
                       _cockpitIconButton(
                         icon: Icons.search_rounded,
-                        color: const Color(0xFF00E5FF),
+                        color: LuminousHomeTheme.aqua,
                         tooltip: 'Search apps',
                         onTap: widget.onOpenSearch,
                       ),
-
-                      // The comet: the only warm control in a cold bar. It
-                      // borrows the galaxy core's amber, so it reads as the one
-                      // affordance that reaches outside the galaxy.
                       if (widget.onOpenWebSearch != null)
-                        Semantics(
-                          button: true,
-                          label: 'Search the web',
-                          child: TextButton(
-                            onPressed: widget.onOpenWebSearch,
-                            style: TextButton.styleFrom(
-                              // 48dp minimum; shrinkWrap was explicitly
-                              // opting out of it. The orb stays 22px.
-                              minimumSize: const Size(48, 48),
-                              padding: EdgeInsets.zero,
-                              shape: const CircleBorder(),
-                            ),
-                            child: const Tooltip(
-                              message: 'Search the web',
-                              child: CometOrb(size: 22),
-                            ),
-                          ),
+                        _cometButton(widget.onOpenWebSearch!),
+                      const _ShelfDivider(),
+                      ...widget.layoutEngine.constellations.map((
+                        constellation,
+                      ) {
+                        return _constellationShortcut(
+                          label: constellation.name,
+                          color: constellation.primaryColor,
+                          icon: constellation.emblemIcon,
+                          onTap: () {
+                            _jumpToConstellation(constellation.id);
+                          },
+                          onLongPress: constellation.id == 'core'
+                              ? widget.onEditCore
+                              : null,
+                        );
+                      }),
+                      if (widget.onCreateConstellation != null ||
+                          widget.onCreateGalaxy != null)
+                        _cockpitIconButton(
+                          icon: Icons.add_rounded,
+                          color: LuminousHomeTheme.aqua,
+                          tooltip: 'Create constellation',
+                          emphasized: true,
+                          onTap:
+                              widget.onCreateConstellation ??
+                              widget.onCreateGalaxy!,
                         ),
-
-                      // Constellation Jump Shortcuts
-                      Expanded(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          physics: const BouncingScrollPhysics(),
-                          padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Render dynamic chips for all active constellations
-                              ...widget.layoutEngine.constellations.map((c) {
-                                return GestureDetector(
-                                  onLongPress: c.id == 'core'
-                                      ? widget.onEditCore
-                                      : null,
-                                  child: _constellationChip(
-                                    c.name,
-                                    c.primaryColor,
-                                    () => _jumpToConstellation(c.id),
-                                  ),
-                                );
-                              }),
-
-                              // + Button to create a new Constellation
-                              if (widget.onCreateConstellation != null || widget.onCreateGalaxy != null)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 3.0),
-                                  child: Material(
-                                    color: Colors.transparent,
-                                    child: InkWell(
-                                      onTap: widget.onCreateConstellation ?? widget.onCreateGalaxy,
-                                      borderRadius: BorderRadius.circular(16),
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFF00E5FF).withValues(alpha: 0.12),
-                                          borderRadius: BorderRadius.circular(16),
-                                          border: Border.all(color: const Color(0xFF00E5FF).withValues(alpha: 0.5)),
-                                        ),
-                                        child: const Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Icon(Icons.add_rounded, size: 14, color: Color(0xFF00E5FF)),
-                                            SizedBox(width: 2),
-                                            Text(
-                                              'Constellation',
-                                              style: TextStyle(
-                                                color: Color(0xFF00E5FF),
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-
+                      const _ShelfDivider(),
                       _cockpitIconButton(
                         icon: Icons.filter_center_focus_rounded,
-                        color: Colors.white70,
+                        color: LuminousHomeTheme.textSecondary,
                         tooltip: 'Recenter galaxy',
                         onTap: () {
                           widget.layoutEngine.collapseAllExceptCore();
                           widget.camera.resetView();
                         },
                       ),
-
                       if (!widget.foldable.isFolded)
                         _cockpitIconButton(
                           icon: Icons.splitscreen_rounded,
-                          color: _showFoldControls ? const Color(0xFF00E5FF) : Colors.white70,
+                          color: _showFoldControls
+                              ? LuminousHomeTheme.aqua
+                              : LuminousHomeTheme.textSecondary,
                           tooltip: 'Foldable simulator',
-                          onTap: () => setState(() => _showFoldControls = !_showFoldControls),
+                          emphasized: _showFoldControls,
+                          onTap: () {
+                            setState(
+                              () => _showFoldControls = !_showFoldControls,
+                            );
+                          },
                         ),
-
                       if (!widget.foldable.isFolded)
                         _cockpitIconButton(
                           icon: Icons.lock_outline_rounded,
-                          color: Colors.white70,
+                          color: LuminousHomeTheme.textSecondary,
                           tooltip: 'Lock screen',
                           onTap: widget.onLock,
                         ),
-
                       _cockpitIconButton(
                         icon: Icons.settings_outlined,
-                        color: Colors.white70,
+                        color: LuminousHomeTheme.textSecondary,
                         tooltip: 'Settings',
                         onTap: widget.onOpenSettings,
                       ),
@@ -322,7 +360,31 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                 ),
               ),
             ),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _cometButton(VoidCallback onTap) {
+    return Semantics(
+      button: true,
+      label: 'Search the web',
+      child: Tooltip(
+        message: 'Search the web',
+        child: SizedBox.square(
+          dimension: LuminousHomeTheme.minimumTouchTarget,
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(LuminousHomeTheme.iconRadius),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(LuminousHomeTheme.iconRadius),
+              child: const Center(
+                child: ExcludeSemantics(child: CometOrb(size: 22)),
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -333,42 +395,29 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
     required Color color,
     required String tooltip,
     required VoidCallback onTap,
+    bool emphasized = false,
   }) {
-    // 48dp, the Android minimum. The icon itself stays 19px, so this widens
-    // what a finger can hit without changing how the dock looks.
-    return SizedBox(
-      width: 48,
-      height: 48,
-      child: IconButton(
-        icon: Icon(icon, color: color, size: 19),
-        tooltip: tooltip,
-        padding: EdgeInsets.zero,
-        splashRadius: 18,
-        onPressed: onTap,
-      ),
-    );
-  }
-
-  Widget _constellationChip(String label, Color color, VoidCallback onTap) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 3.0),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: color.withValues(alpha: 0.35), width: 1.0),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
+    final radius = BorderRadius.circular(LuminousHomeTheme.iconRadius);
+    return Semantics(
+      button: true,
+      label: tooltip,
+      child: Tooltip(
+        message: tooltip,
+        child: SizedBox.square(
+          dimension: LuminousHomeTheme.minimumTouchTarget,
+          child: Material(
+            color: emphasized
+                ? LuminousHomeTheme.softTint(color, 0.16)
+                : Colors.transparent,
+            borderRadius: radius,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: radius,
+              child: Center(
+                child: ExcludeSemantics(
+                  child: Icon(icon, color: color, size: 20),
+                ),
+              ),
             ),
           ),
         ),
@@ -376,27 +425,122 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
     );
   }
 
-  Widget _presetButton(String label, DevicePosture p) {
-    final isSelected = widget.foldable.posture == p;
-    return InkWell(
-      onTap: () => widget.foldable.setPosture(p),
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0x3300E5FF) : Colors.white10,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? const Color(0xFF00E5FF) : Colors.white24,
+  Widget _constellationShortcut({
+    required String label,
+    required Color color,
+    required IconData icon,
+    required VoidCallback onTap,
+    VoidCallback? onLongPress,
+  }) {
+    final semanticLabel = 'Open $label constellation';
+    final radius = BorderRadius.circular(LuminousHomeTheme.iconRadius);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Semantics(
+        button: true,
+        label: semanticLabel,
+        hint: onLongPress == null ? null : 'Long press to edit',
+        onLongPress: onLongPress,
+        child: Tooltip(
+          message: label,
+          child: SizedBox.square(
+            dimension: LuminousHomeTheme.minimumTouchTarget,
+            child: Material(
+              color: LuminousHomeTheme.softTint(color, 0.13),
+              borderRadius: radius,
+              child: InkWell(
+                onTap: onTap,
+                onLongPress: onLongPress,
+                borderRadius: radius,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    ExcludeSemantics(child: Icon(icon, color: color, size: 20)),
+                    Positioned(
+                      right: 8,
+                      bottom: 8,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const SizedBox.square(dimension: 4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: isSelected ? const Color(0xFF00E5FF) : Colors.white70,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+
+  Widget _presetButton(String label, DevicePosture posture) {
+    final isSelected = widget.foldable.posture == posture;
+    final radius = BorderRadius.circular(LuminousHomeTheme.controlRadius);
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: 'Set posture to $label',
+      child: Material(
+        color: isSelected
+            ? LuminousHomeTheme.softTint(LuminousHomeTheme.aqua, 0.16)
+            : LuminousHomeTheme.glass,
+        borderRadius: radius,
+        child: InkWell(
+          onTap: () => widget.foldable.setPosture(posture),
+          borderRadius: radius,
+          child: Container(
+            constraints: const BoxConstraints(
+              minHeight: LuminousHomeTheme.minimumTouchTarget,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              border: Border.all(
+                color: isSelected
+                    ? LuminousHomeTheme.aqua.withValues(alpha: 0.48)
+                    : LuminousHomeTheme.hairline,
+              ),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: isSelected
+                    ? LuminousHomeTheme.textPrimary
+                    : LuminousHomeTheme.textSecondary,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
+        ),
+      ),
+    );
+  }
+
+  String _postureLabel(DevicePosture posture) {
+    final name = posture.name;
+    return '${name[0].toUpperCase()}${name.substring(1)}';
+  }
+}
+
+class _ShelfDivider extends StatelessWidget {
+  const _ShelfDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 4),
+      child: SizedBox(
+        height: 24,
+        child: VerticalDivider(
+          width: 1,
+          thickness: 1,
+          color: LuminousHomeTheme.hairline,
         ),
       ),
     );

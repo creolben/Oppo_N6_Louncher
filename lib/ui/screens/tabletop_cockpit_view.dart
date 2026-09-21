@@ -1,6 +1,8 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../../models/app_entry.dart';
 import '../../models/constellation.dart';
 import '../../core/launcher_bridge.dart';
@@ -8,6 +10,7 @@ import '../../core/foldable_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
 import '../../canvas/camera_controller.dart';
 import '../../canvas/galaxy_interactive_canvas.dart';
+import '../theme/luminous_home_theme.dart';
 
 class TabletopCockpitView extends StatefulWidget {
   final List<AppEntry> apps;
@@ -94,7 +97,18 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
         .toList();
 
     return Container(
-      color: const Color(0xFF060914),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            LuminousHomeTheme.backgroundTop,
+            LuminousHomeTheme.background,
+            LuminousHomeTheme.backgroundDeep,
+          ],
+          stops: [0.0, 0.58, 1.0],
+        ),
+      ),
       child: SafeArea(
         child: Column(
           children: [
@@ -112,7 +126,8 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                         camera: _activeCamera,
                         layoutEngine: widget.layoutEngine,
                         onAppLongPressed: widget.onAppLongPressed,
-                        onConstellationLongPressed: widget.onConstellationLongPressed,
+                        onConstellationLongPressed:
+                            widget.onConstellationLongPressed,
                         onSwipeDown: widget.onOpenSearch,
                       ),
                     ),
@@ -157,7 +172,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
     final timeStr =
         '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}';
     final dateStr =
-        '${_weekdayName(_now.weekday).toUpperCase()} • ${_monthName(_now.month).toUpperCase()} ${_now.day}';
+        '${_weekdayName(_now.weekday)} • ${_monthName(_now.month)} ${_now.day}';
 
     return Container(
       width: double.infinity,
@@ -167,83 +182,109 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            const Color(0xFF020306).withValues(alpha: 0.75),
+            LuminousHomeTheme.backgroundDeep.withValues(alpha: 0.86),
+            LuminousHomeTheme.background.withValues(alpha: 0.34),
             Colors.transparent,
           ],
+          stops: const [0.0, 0.68, 1.0],
         ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           // Top Row: Hinge Telemetry Badge & Optional Fullscreen Toggle
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0x3300E5FF),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0x6600E5FF), width: 1.0),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x2200E5FF),
-                      blurRadius: 8,
-                      spreadRadius: 1,
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 32),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: LuminousHomeTheme.glass,
+                    borderRadius: BorderRadius.circular(
+                      LuminousHomeTheme.controlRadius,
                     ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Color(0xFF00E5FF),
+                    border: Border.all(
+                      color: LuminousHomeTheme.hairline,
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: LuminousHomeTheme.aqua,
+                        ),
+                        child: SizedBox(width: 6, height: 6),
                       ),
-                    ),
-                    const SizedBox(width: 7),
-                    Text(
-                      'OPPO N6 FLEX MODE • ${widget.foldable.hingeAngle.round()}°',
-                      style: const TextStyle(
-                        color: Color(0xFF00E5FF),
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.2,
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          'OPPO N6 FLEX MODE • ${widget.foldable.hingeAngle.round()}°',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: LuminousHomeTheme.textSecondary,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-              if (widget.onToggleFullscreen != null)
+              if (widget.onToggleFullscreen != null) ...[
+                const SizedBox(width: 8),
                 Material(
                   color: Colors.transparent,
                   child: InkWell(
                     onTap: widget.onToggleFullscreen,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(
+                      LuminousHomeTheme.controlRadius,
+                    ),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      constraints: const BoxConstraints(
+                        minWidth: LuminousHomeTheme.minimumTouchTarget,
+                        minHeight: LuminousHomeTheme.minimumTouchTarget,
+                        maxWidth: 128,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
                       decoration: BoxDecoration(
-                        color: const Color(0x22141A2E),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0x4464B5F6), width: 0.8),
+                        color: LuminousHomeTheme.glass,
+                        borderRadius: BorderRadius.circular(
+                          LuminousHomeTheme.controlRadius,
+                        ),
+                        border: Border.all(
+                          color: LuminousHomeTheme.hairline,
+                          width: 0.8,
+                        ),
                       ),
                       child: const Row(
-                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.fullscreen_rounded, color: Color(0xFF00E5FF), size: 14),
-                          SizedBox(width: 4),
-                          Text(
-                            'FULLSCREEN',
-                            style: TextStyle(
-                              color: Color(0xFF00E5FF),
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.0,
+                          Icon(
+                            Icons.fullscreen_rounded,
+                            color: LuminousHomeTheme.aqua,
+                            size: 16,
+                          ),
+                          SizedBox(width: 5),
+                          Flexible(
+                            child: Text(
+                              'Fullscreen',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: LuminousHomeTheme.textSecondary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.2,
+                              ),
                             ),
                           ),
                         ],
@@ -251,10 +292,10 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                     ),
                   ),
                 ),
+              ],
             ],
           ),
-        ),
-        const SizedBox(height: 6),
+          const SizedBox(height: 6),
 
           // Luminous Time & Date (IgnorePointer allows dragging celestial canvas beneath)
           IgnorePointer(
@@ -264,24 +305,21 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                 Text(
                   timeStr,
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: LuminousHomeTheme.textPrimary,
                     fontSize: 52,
-                    fontWeight: FontWeight.w200,
+                    fontWeight: FontWeight.w300,
                     letterSpacing: -1.5,
                     height: 1.0,
-                    shadows: [
-                      Shadow(color: Color(0x8800E5FF), blurRadius: 24),
-                    ],
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   dateStr,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.70),
+                  style: const TextStyle(
+                    color: LuminousHomeTheme.textSecondary,
                     fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 2.0,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.3,
                   ),
                 ),
               ],
@@ -299,31 +337,41 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
               onTap: widget.onOpenSearch,
               child: Container(
                 width: 270,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF141C34).withValues(alpha: 0.85),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0x4464B5F6), width: 1.0),
-                ),
+                height: LuminousHomeTheme.minimumTouchTarget,
                 padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Row(
+                decoration: BoxDecoration(
+                  color: LuminousHomeTheme.glassStrong,
+                  borderRadius: BorderRadius.circular(
+                    LuminousHomeTheme.controlRadius,
+                  ),
+                  border: Border.all(
+                    color: LuminousHomeTheme.hairline,
+                    width: 0.8,
+                  ),
+                  boxShadow: LuminousHomeTheme.floatingShadow,
+                ),
+                child: const Row(
                   children: [
-                    const Icon(Icons.search_rounded, color: Color(0xFF00E5FF), size: 16),
-                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.search_rounded,
+                      color: LuminousHomeTheme.aqua,
+                      size: 16,
+                    ),
+                    SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'Search galaxy applications...',
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.5),
+                          color: LuminousHomeTheme.textMuted,
                           fontSize: 12,
                         ),
                       ),
                     ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
           ),
         ],
       ),
@@ -332,40 +380,39 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
 
   Widget _buildCreaseDivider() {
     return Container(
+      constraints: const BoxConstraints(
+        minHeight: LuminousHomeTheme.minimumTouchTarget,
+      ),
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            height: 5,
+            height: 1,
             margin: const EdgeInsets.symmetric(horizontal: 20),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(2.5),
-              gradient: const LinearGradient(
+              gradient: LinearGradient(
                 colors: [
                   Colors.transparent,
-                  Color(0x3300E5FF),
-                  Color(0xCC00E5FF),
-                  Color(0x3300E5FF),
+                  LuminousHomeTheme.hairline,
+                  LuminousHomeTheme.aqua.withValues(alpha: 0.28),
+                  LuminousHomeTheme.hairline,
                   Colors.transparent,
                 ],
               ),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x4400E5FF),
-                  blurRadius: 10,
-                  spreadRadius: 1,
-                ),
-              ],
             ),
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 5),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+            constraints: const BoxConstraints(minHeight: 32),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
             decoration: BoxDecoration(
-              color: const Color(0x3310162A),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0x3300E5FF), width: 0.8),
+              color: LuminousHomeTheme.glass,
+              borderRadius: BorderRadius.circular(
+                LuminousHomeTheme.controlRadius,
+              ),
+              border: Border.all(color: LuminousHomeTheme.hairline, width: 0.8),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -374,17 +421,17 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                   _isLaunchpadCollapsed
                       ? Icons.keyboard_arrow_up_rounded
                       : Icons.keyboard_arrow_down_rounded,
-                  color: const Color(0xFF00E5FF),
+                  color: LuminousHomeTheme.aqua,
                   size: 14,
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  _isLaunchpadCollapsed ? 'EXPAND LAUNCHPAD' : 'COLLAPSE PANEL',
+                  _isLaunchpadCollapsed ? 'Expand launchpad' : 'Collapse panel',
                   style: const TextStyle(
-                    color: Color(0xFF00E5FF),
-                    fontSize: 8.5,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.0,
+                    color: LuminousHomeTheme.textSecondary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.2,
                   ),
                 ),
               ],
@@ -395,69 +442,83 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
     );
   }
 
+  Widget _buildActionStrip(List<Widget> children) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: constraints.maxWidth),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: children,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildCollapsedCockpitBar() {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: const BoxDecoration(
-        color: Color(0xCC0A0E1C),
-      ),
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _cockpitActionButton(
-              icon: Icons.grid_view_rounded,
-              label: 'Launchpad',
-              color: const Color(0xFF00E5FF),
-              onTap: () {
-                HapticFeedback.selectionClick();
-                setState(() => _isLaunchpadCollapsed = false);
-              },
-            ),
-            _cockpitActionButton(
-              icon: Icons.search_rounded,
-              label: 'Search',
-              color: const Color(0xFF00E5FF),
-              onTap: widget.onOpenSearch,
-            ),
-            if (widget.onToggleFullscreen != null)
-              _cockpitActionButton(
-                icon: Icons.fullscreen_rounded,
-                label: 'Fullscreen',
-                color: const Color(0xFF00E5FF),
-                onTap: widget.onToggleFullscreen!,
-              ),
-            if (widget.onCreateConstellation != null)
-              _cockpitActionButton(
-                icon: Icons.add_circle_outline_rounded,
-                label: 'Create',
-                color: const Color(0xFF69F0AE),
-                onTap: widget.onCreateConstellation!,
-              ),
-            if (widget.onEditCore != null)
-              _cockpitActionButton(
-                icon: Icons.hub_rounded,
-                label: 'Center Hub',
-                color: const Color(0xFFFFD54F),
-                onTap: widget.onEditCore!,
-              ),
-            _cockpitActionButton(
-              icon: Icons.lock_outline_rounded,
-              label: 'Lock',
-              color: const Color(0xFFFF8A80),
-              onTap: widget.onLock,
-            ),
-            _cockpitActionButton(
-              icon: Icons.tune_rounded,
-              label: 'Settings',
-              color: Colors.white70,
-              onTap: widget.onOpenSettings,
-            ),
-          ],
+        color: LuminousHomeTheme.glassOpaque,
+        border: Border(
+          top: BorderSide(color: LuminousHomeTheme.hairline, width: 0.8),
         ),
       ),
+      child: _buildActionStrip([
+        _cockpitActionButton(
+          icon: Icons.grid_view_rounded,
+          label: 'Launchpad',
+          color: LuminousHomeTheme.aqua,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            setState(() => _isLaunchpadCollapsed = false);
+          },
+        ),
+        _cockpitActionButton(
+          icon: Icons.search_rounded,
+          label: 'Search',
+          color: LuminousHomeTheme.aqua,
+          onTap: widget.onOpenSearch,
+        ),
+        if (widget.onToggleFullscreen != null)
+          _cockpitActionButton(
+            icon: Icons.fullscreen_rounded,
+            label: 'Fullscreen',
+            color: LuminousHomeTheme.aqua,
+            onTap: widget.onToggleFullscreen!,
+          ),
+        if (widget.onCreateConstellation != null)
+          _cockpitActionButton(
+            icon: Icons.add_circle_outline_rounded,
+            label: 'Create',
+            color: LuminousHomeTheme.mint,
+            onTap: widget.onCreateConstellation!,
+          ),
+        if (widget.onEditCore != null)
+          _cockpitActionButton(
+            icon: Icons.hub_rounded,
+            label: 'Center Hub',
+            color: LuminousHomeTheme.amber,
+            onTap: widget.onEditCore!,
+          ),
+        _cockpitActionButton(
+          icon: Icons.lock_outline_rounded,
+          label: 'Lock',
+          color: LuminousHomeTheme.rose,
+          onTap: widget.onLock,
+        ),
+        _cockpitActionButton(
+          icon: Icons.tune_rounded,
+          label: 'Settings',
+          color: LuminousHomeTheme.textSecondary,
+          onTap: widget.onOpenSettings,
+        ),
+      ]),
     );
   }
 
@@ -475,16 +536,14 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      decoration: const BoxDecoration(
-        color: Color(0x990A0E1C),
-      ),
+      decoration: const BoxDecoration(color: LuminousHomeTheme.glassOpaque),
       child: Column(
         children: [
           // Sector Selector Chips Row. Tall enough for the 48dp touch minimum;
           // a fixed 36 also clipped these chips once the system font scale
           // grew the label.
           SizedBox(
-            height: 48,
+            height: LuminousHomeTheme.minimumTouchTarget,
             child: ListView(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
@@ -492,7 +551,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                 _sectorChip(
                   label: 'Essentials',
                   icon: Icons.star_rounded,
-                  color: const Color(0xFFFFD54F),
+                  color: LuminousHomeTheme.amber,
                   isSelected: _selectedSectorId == null,
                   onTap: () {
                     setState(() => _selectedSectorId = null);
@@ -537,46 +596,40 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           ),
 
           // Bottom Cockpit Controls Row
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _cockpitActionButton(
-                  icon: Icons.search_rounded,
-                  label: 'Search',
-                  color: const Color(0xFF00E5FF),
-                  onTap: widget.onOpenSearch,
-                ),
-                if (widget.onCreateConstellation != null)
-                  _cockpitActionButton(
-                    icon: Icons.add_circle_outline_rounded,
-                    label: 'Create',
-                    color: const Color(0xFF69F0AE),
-                    onTap: widget.onCreateConstellation!,
-                  ),
-                if (widget.onEditCore != null)
-                  _cockpitActionButton(
-                    icon: Icons.hub_rounded,
-                    label: 'Center Hub',
-                    color: const Color(0xFFFFD54F),
-                    onTap: widget.onEditCore!,
-                  ),
-                _cockpitActionButton(
-                  icon: Icons.lock_outline_rounded,
-                  label: 'Lock',
-                  color: const Color(0xFFFF8A80),
-                  onTap: widget.onLock,
-                ),
-                _cockpitActionButton(
-                  icon: Icons.tune_rounded,
-                  label: 'Settings',
-                  color: Colors.white70,
-                  onTap: widget.onOpenSettings,
-                ),
-              ],
+          _buildActionStrip([
+            _cockpitActionButton(
+              icon: Icons.search_rounded,
+              label: 'Search',
+              color: LuminousHomeTheme.aqua,
+              onTap: widget.onOpenSearch,
             ),
-          ),
+            if (widget.onCreateConstellation != null)
+              _cockpitActionButton(
+                icon: Icons.add_circle_outline_rounded,
+                label: 'Create',
+                color: LuminousHomeTheme.mint,
+                onTap: widget.onCreateConstellation!,
+              ),
+            if (widget.onEditCore != null)
+              _cockpitActionButton(
+                icon: Icons.hub_rounded,
+                label: 'Center Hub',
+                color: LuminousHomeTheme.amber,
+                onTap: widget.onEditCore!,
+              ),
+            _cockpitActionButton(
+              icon: Icons.lock_outline_rounded,
+              label: 'Lock',
+              color: LuminousHomeTheme.rose,
+              onTap: widget.onLock,
+            ),
+            _cockpitActionButton(
+              icon: Icons.tune_rounded,
+              label: 'Settings',
+              color: LuminousHomeTheme.textSecondary,
+              onTap: widget.onOpenSettings,
+            ),
+          ]),
         ],
       ),
     );
@@ -596,30 +649,43 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           HapticFeedback.selectionClick();
           onTap();
         },
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(LuminousHomeTheme.controlRadius),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          constraints: const BoxConstraints(
+            minHeight: LuminousHomeTheme.minimumTouchTarget,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: isSelected
-                ? color.withValues(alpha: 0.25)
-                : const Color(0xFF141A2E).withValues(alpha: 0.7),
-            borderRadius: BorderRadius.circular(18),
+                ? LuminousHomeTheme.softTint(color, 0.18)
+                : LuminousHomeTheme.glass,
+            borderRadius: BorderRadius.circular(
+              LuminousHomeTheme.controlRadius,
+            ),
             border: Border.all(
-              color: isSelected ? color : Colors.white.withValues(alpha: 0.15),
-              width: isSelected ? 1.4 : 1.0,
+              color: isSelected
+                  ? LuminousHomeTheme.hairlineStrong
+                  : LuminousHomeTheme.hairline,
+              width: 0.8,
             ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 15, color: isSelected ? color : Colors.white70),
+              Icon(
+                icon,
+                size: 15,
+                color: isSelected ? color : LuminousHomeTheme.textSecondary,
+              ),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: TextStyle(
-                  color: isSelected ? Colors.white : Colors.white70,
+                  color: isSelected
+                      ? LuminousHomeTheme.textPrimary
+                      : LuminousHomeTheme.textSecondary,
                   fontSize: 12,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
                 ),
               ),
             ],
@@ -630,6 +696,11 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
   }
 
   Widget _buildTactileAppButton(AppEntry app) {
+    final tintedGlass = Color.alphaBlend(
+      app.accentColor.withValues(alpha: 0.035),
+      LuminousHomeTheme.glassStrong,
+    );
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -641,40 +712,38 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           HapticFeedback.heavyImpact();
           widget.onAppLongPressed?.call(app, Offset.zero);
         },
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(LuminousHomeTheme.controlRadius),
         child: Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: const Color(0xFF12172C).withValues(alpha: 0.85),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: app.accentColor.withValues(alpha: 0.35),
-              width: 1.2,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [tintedGlass, LuminousHomeTheme.glass],
             ),
-            boxShadow: [
-              BoxShadow(
-                color: app.accentColor.withValues(alpha: 0.15),
-                blurRadius: 12,
-                spreadRadius: 1,
-              ),
-            ],
+            borderRadius: BorderRadius.circular(
+              LuminousHomeTheme.controlRadius,
+            ),
+            border: Border.all(color: LuminousHomeTheme.hairline, width: 0.8),
+            boxShadow: LuminousHomeTheme.floatingShadow,
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Circular Normalized App Icon
+              // Clean squircle app icon without a nested accent ring.
               Container(
                 width: 44,
                 height: 44,
                 decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: app.accentColor.withValues(alpha: 0.15),
-                  border: Border.all(
-                    color: app.accentColor.withValues(alpha: 0.5),
-                    width: 1.2,
+                  color: LuminousHomeTheme.glassStrong,
+                  borderRadius: BorderRadius.circular(
+                    LuminousHomeTheme.iconRadius,
                   ),
                 ),
-                child: ClipOval(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(
+                    LuminousHomeTheme.iconRadius,
+                  ),
                   child: app.iconBytes != null
                       ? Image.memory(
                           app.iconBytes!,
@@ -699,7 +768,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  color: Colors.white,
+                  color: LuminousHomeTheme.textPrimary,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -724,23 +793,30 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           HapticFeedback.lightImpact();
           onTap();
         },
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: color, size: 22),
-              const SizedBox(height: 3),
-              Text(
-                label,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w500,
+        borderRadius: BorderRadius.circular(LuminousHomeTheme.controlRadius),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(
+            minWidth: LuminousHomeTheme.minimumTouchTarget,
+            minHeight: LuminousHomeTheme.minimumTouchTarget,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: color, size: 22),
+                const SizedBox(height: 3),
+                Text(
+                  label,
+                  style: const TextStyle(
+                    color: LuminousHomeTheme.textSecondary,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -754,8 +830,18 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
 
   String _monthName(int month) {
     const names = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return names[(month - 1).clamp(0, 11)];
   }

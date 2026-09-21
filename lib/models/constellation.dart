@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../ui/theme/luminous_home_theme.dart';
 import 'app_entry.dart';
 
 class Constellation {
@@ -50,16 +52,17 @@ class Constellation {
 
     titlePainter ??= TextPainter(
       text: TextSpan(
-        text: name.toUpperCase(),
-        style: TextStyle(
-          color: primaryColor.withValues(alpha: 0.85),
-          fontSize: 10.5,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 2.0,
+        text: name,
+        style: const TextStyle(
+          color: LuminousHomeTheme.textPrimary,
+          fontSize: 11.0,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.1,
           shadows: [
             Shadow(
-              color: primaryColor.withValues(alpha: 0.8),
-              blurRadius: 8.0,
+              color: LuminousHomeTheme.shadow,
+              blurRadius: 6.0,
+              offset: Offset(0, 1),
             ),
           ],
         ),
@@ -73,11 +76,11 @@ class Constellation {
       countBadgePainter = TextPainter(
         text: TextSpan(
           text: '${apps.length} stars',
-          style: TextStyle(
-            color: primaryColor.withValues(alpha: 0.7),
+          style: const TextStyle(
+            color: LuminousHomeTheme.textMuted,
             fontSize: 9.0,
             fontWeight: FontWeight.w500,
-            letterSpacing: 0.8,
+            letterSpacing: 0.1,
           ),
         ),
         textDirection: TextDirection.ltr,
@@ -115,7 +118,7 @@ class Constellation {
     List<String>? customPackageNames,
     double? initialProgress,
     List<AppEntry>? apps,
-  })  : customPackageNames = customPackageNames ?? [],
-        expansionProgress = initialProgress ?? (isExpanded ? 1.0 : 0.0),
-        apps = apps ?? [];
+  }) : customPackageNames = customPackageNames ?? [],
+       expansionProgress = initialProgress ?? (isExpanded ? 1.0 : 0.0),
+       apps = apps ?? [];
 }

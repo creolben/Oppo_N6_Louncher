@@ -1,0 +1,54 @@
+{
+  "name": "ChronoFold Luminous Horizon Tokens",
+  "version": "2.0.0",
+  "colors": {
+    "background": "#050A16",
+    "backgroundTop": "#0A1830",
+    "backgroundDeep": "#020711",
+    "surface": "#10192A",
+    "surfaceRaised": "#141F34",
+    "cobaltHorizon": "#6487FF",
+    "aquaLight": "#70D9FF",
+    "mintSignal": "#69E5C2",
+    "orchidLight": "#B6A1FF",
+    "roseSignal": "#FF8FAB",
+    "amberFavorite": "#FFD27A",
+    "notification": "#FF526B",
+    "textPrimary": "#F7FAFF",
+    "textSecondary": "#DDE8F7",
+    "textMuted": "#C8D5E8"
+  },
+  "shape": {
+    "controlRadius": 18,
+    "iconRadius": 16,
+    "cardRadius": 28,
+    "dockRadius": 32
+  },
+  "spacing": {
+    "screen": 20,
+    "coverScreen": 16,
+    "dock": 14,
+    "controlGap": 8
+  },
+  "motion": {
+    "intent": "luminous_horizon",
+    "ambientFrameIntervalMs": 40,
+    "launcherTransitionMs": 320,
+    "cameraFlyMs": 550,
+    "preserveConstellationGeometry": true,
+    "avoidReplacingSystemMotion": true
+  },
+  "assetGuidance": {
+    "staticWallpaperSource": "wallpapers/chronofold-cosmic-static.svg",
+    "targetRasterSizes": [
+      "1080x2400",
+      "1440x3200"
+    ],
+    "preferredRasterFormats": [
+      "webp",
+      "png"
+    ],
+    "iconRule": "Use only icon assets that the distributor owns or is permitted to redistribute.",
+    "fontRule": "Use the Android system typeface unless a redistributable font license is documented."
+  }
+}

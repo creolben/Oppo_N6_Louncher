@@ -1,0 +1,49 @@
+{
+  "format": "chronofold-hybrid-theme-source/v1",
+  "id": "chronofold-luminous-horizon-hybrid",
+  "name": "ChronoFold Luminous Horizon",
+  "version": "2.0.0",
+  "mode": "non_root_hybrid",
+  "owners": {
+    "home": "com.launcher.chronofold.mylauncher",
+    "ambientWallpaper": "com.launcher.chronofold.mylauncher/.CosmicLiveWallpaperService",
+    "secureLockScreen": "system_keyguard"
+  },
+  "style": {
+    "mode": "dark",
+    "background": "#050A16",
+    "backgroundTop": "#0A1830",
+    "backgroundDeep": "#020711",
+    "surface": "#10192A",
+    "surfaceSoft": "#141F34",
+    "accent": "#70D9FF",
+    "accentCobalt": "#6487FF",
+    "accentMint": "#69E5C2",
+    "accentOrchid": "#B6A1FF",
+    "textPrimary": "#F7FAFF",
+    "textMuted": "#C8D5E8",
+    "cornerRadius": 18
+  },
+  "staticLayers": {
+    "wallpaperSource": "wallpapers/chronofold-cosmic-static.svg",
+    "icons": "owned-icon-assets-required",
+    "fonts": "android-system-or-owned-font-assets-required",
+    "sounds": "owned-sound-assets-required",
+    "previews": "generate-from-target-device"
+  },
+  "runtimeLayers": {
+    "liveWallpaper": "user_selectable_from_android_preview",
+    "launcher": "required_for_interactive-motion",
+    "keyguard": "native_coloros_only"
+  },
+  "safety": {
+    "rootRequired": false,
+    "automaticWallpaperApply": false,
+    "systemUiHooks": false,
+    "proprietaryColorOsAssetsIncluded": false,
+    "rollback": [
+      "change_wallpaper_in_android_settings",
+      "choose_another_home_app"
+    ]
+  }
+}

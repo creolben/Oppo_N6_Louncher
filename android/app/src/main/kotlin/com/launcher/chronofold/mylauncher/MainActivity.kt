@@ -75,9 +75,54 @@ class MainActivity : FlutterActivity() {
     private var returnBridgeLeftForTarget = false
     private var returnBridgeGeneration = 0
 
+    /**
+     * Whether MainActivity is the resumed activity.
+     *
+     * The screen receiver registered in [onCreate] is unregistered only in
+     * [onDestroy], so it keeps firing for the entire time another app is in
+     * front of the launcher. Without this the launcher answered screen events
+     * that had nothing to do with it — see [foreignTaskForeground].
+     */
+    private var launcherResumed = false
+
+    /**
+     * Whether the launcher has deliberately handed the screen to another app
+     * and has not yet come back.
+     *
+     * This is the difference between "the screen went off on the launcher" and
+     * "the screen went off inside the app the launcher opened", and answering
+     * both the same way is what produced a fingerprint prompt on the way back:
+     * the launcher re-raised its own lock surface and re-asserted
+     * `showWhenLocked` while it was paused behind a foreign task, so returning
+     * from that app landed on a keyguard-occluding launcher with a lock panel
+     * mounted, and the next touch went to the platform bouncer.
+     *
+     * Paired with [pausedForForeignTask] rather than read alone, so a transient
+     * resume between the start request and the target actually appearing cannot
+     * be mistaken for the user coming back.
+     */
+    private var foreignTaskForeground = false
+    private var pausedForForeignTask = false
+
+    /** True once a foreign task is genuinely in front of the launcher. */
+    private val foreignTaskOwnsScreen: Boolean
+        get() = foreignTaskForeground && pausedForForeignTask
+
+    /**
+     * Records that the launcher is about to send the user into another app.
+     *
+     * Every external `startActivity` in this class goes through here, including
+     * the settings/uninstall/browser handoffs that do not use the return
+     * bridge: they background the launcher just as thoroughly as an app launch.
+     */
+    private fun markForeignTaskHandoff() {
+        foreignTaskForeground = true
+        pausedForForeignTask = false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#020306")))
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#050A16")))
         // ColorOS owns the lock screen. The launcher starts as an ordinary home
         // app that does NOT draw over the keyguard, which is the only
         // arrangement where the platform's own lock screen is the thing
@@ -97,17 +142,43 @@ class MainActivity : FlutterActivity() {
                     Intent.ACTION_SCREEN_OFF -> {
                         keyguardWasLocked = keyguard?.isKeyguardLocked == true ||
                             keyguard?.isDeviceLocked == true
+                        // A screen-off that happens inside an app the launcher
+                        // opened is not the launcher's lock event. Reporting it
+                        // as one mounted the cosmic panel and re-asserted
+                        // `showWhenLocked` on a paused activity, so closing that
+                        // app returned to a keyguard-occluding launcher and the
+                        // platform asked for a fingerprint.
+                        //
+                        // Nothing is lost by staying quiet: the platform keyguard
+                        // is what locked the device, and it is what authenticates
+                        // the user back in.
+                        if (foreignTaskOwnsScreen) {
+                            android.util.Log.d(
+                                "ChronoFold",
+                                "Screen off while a launched app owns the screen; " +
+                                    "leaving the lock to the platform keyguard",
+                            )
+                            return
+                        }
                         runOnUiThread {
                             appsMethodChannel?.invokeMethod("lockScreen", null)
                         }
                     }
-                    Intent.ACTION_SCREEN_ON ->
+                    Intent.ACTION_SCREEN_ON -> {
+                        // `screenOn` arms the lock panel's fingerprint reader.
+                        // Arming it from behind a foreign task is a biometric
+                        // session the user never asked for, and on a device
+                        // where the system draws the sensor affordance it is a
+                        // prompt appearing out of nowhere.
+                        if (foreignTaskOwnsScreen) return
                         runOnUiThread {
                             appsMethodChannel?.invokeMethod("screenOn", null)
                         }
+                    }
                     Intent.ACTION_USER_PRESENT -> {
                         if (keyguardWasLocked) {
                             keyguardWasLocked = false
+                            if (foreignTaskOwnsScreen) return
                             runOnUiThread {
                                 appsMethodChannel?.invokeMethod("userPresent", null)
                             }
@@ -141,16 +212,33 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onPause() {
+        launcherResumed = false
         // This is set only after the target activity has been accepted for
         // launch, so transient keyguard UI cannot be mistaken for a return.
         if (returnBridgeAwaitingReturn) {
             returnBridgeLeftForTarget = true
         }
+        if (foreignTaskForeground) {
+            pausedForForeignTask = true
+        }
+        // The reader is deliberately NOT cancelled here. Dart owns that
+        // decision, and it tracks whether a session is live; cancelling behind
+        // its back leaves it believing it holds a reader that no longer exists,
+        // which is a dead sensor rather than a spurious prompt. The
+        // `launcherResumed` guard in startFingerprintScan is what keeps a
+        // background arm from happening in the first place.
         super.onPause()
     }
 
     override fun onResume() {
         super.onResume()
+        launcherResumed = true
+        // Back in front: the handoff is over, so ordinary screen events belong
+        // to the launcher again.
+        if (foreignTaskForeground && pausedForForeignTask) {
+            foreignTaskForeground = false
+            pausedForForeignTask = false
+        }
         if (!returnBridgeAwaitingReturn || !returnBridgeLeftForTarget) return
 
         // Keep the native bridge visible until Flutter has painted a fresh
@@ -277,8 +365,11 @@ class MainActivity : FlutterActivity() {
                     "openHomeSettings" -> {
                         val intent = Intent(Settings.ACTION_HOME_SETTINGS)
                         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        startActivity(intent)
+                        startActivityQuietly(intent)
                         result.success(true)
+                    }
+                    "openCosmicLiveWallpaperPreview" -> {
+                        result.success(openCosmicLiveWallpaperPreview())
                     }
                     "getFilesDirPath" -> {
                         result.success(applicationContext.filesDir.absolutePath)
@@ -438,6 +529,35 @@ class MainActivity : FlutterActivity() {
                     listener = null
                 }
             })
+    }
+
+    /**
+     * Opens Android's live-wallpaper chooser for the ambient layer.
+     *
+     * ColorOS renders a lock-screen-shaped surface for the direct preview
+     * intent, which users can mistake for a ChronoFold keyguard. The chooser
+     * keeps the OEM step explicit: the user selects "ChronoFold Ambient
+     * Galaxy" there, then confirms its normal system preview/apply flow.
+     */
+    private fun openCosmicLiveWallpaperPreview(): Boolean {
+        val chooserIntent = Intent(android.app.WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER)
+
+        return try {
+            if (chooserIntent.resolveActivity(packageManager) == null) {
+                false
+            } else {
+                markForeignTaskHandoff()
+                startActivity(chooserIntent)
+                true
+            }
+        } catch (exception: Exception) {
+            android.util.Log.w(
+                "ChronoFold",
+                "Unable to open the cosmic live wallpaper chooser",
+                exception,
+            )
+            false
+        }
     }
 
     private fun fetchInstalledApps(includeIcons: Boolean): List<Map<String, Any?>> {
@@ -706,9 +826,13 @@ class MainActivity : FlutterActivity() {
 
     private fun startActivityQuietly(intent: Intent): Boolean {
         return try {
+            markForeignTaskHandoff()
             startActivity(intent)
             true
         } catch (e: Exception) {
+            // Nothing was handed anywhere, so the launcher still owns the screen.
+            foreignTaskForeground = false
+            pausedForForeignTask = false
             false
         }
     }
@@ -777,7 +901,7 @@ class MainActivity : FlutterActivity() {
             data = Uri.fromParts("package", packageName, null)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        startActivity(intent)
+        startActivityQuietly(intent)
     }
 
     private fun uninstallApplication(packageName: String) {
@@ -785,7 +909,7 @@ class MainActivity : FlutterActivity() {
             data = Uri.fromParts("package", packageName, null)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        startActivity(intent)
+        startActivityQuietly(intent)
     }
 
     private fun isDefaultLauncher(): Boolean {
@@ -802,27 +926,39 @@ class MainActivity : FlutterActivity() {
             if (roleManager != null && roleManager.isRoleAvailable(RoleManager.ROLE_HOME) && !roleManager.isRoleHeld(RoleManager.ROLE_HOME)) {
                 val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME)
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                startActivity(intent)
+                startActivityQuietly(intent)
                 return
             }
         }
         val intent = Intent(Settings.ACTION_HOME_SETTINGS).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        startActivity(intent)
+        startActivityQuietly(intent)
     }
 
+    /**
+     * Allows or forbids MainActivity being drawn over the keyguard.
+     *
+     * Deliberately NOT paired with `setTurnScreenOn`, which it used to be.
+     * `turnScreenOn` asks the platform to wake the display whenever this
+     * activity comes to the front, and the flag was asserted at the exact moment
+     * the screen went off — so the launcher could wake the device by itself and
+     * land on a keyguard with its fingerprint affordance lit, which is what
+     * "it asks for the fingerprint out of the blue" looks like from the outside.
+     *
+     * Occluding the keyguard needs no such power: the user has already woken the
+     * device by the time the cosmic panel is meant to be visible. The flag is
+     * cleared on both paths so an install that had it asserted loses it.
+     */
     private fun setOverlayWhenLocked(enabled: Boolean) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(enabled)
-            setTurnScreenOn(enabled)
+            setTurnScreenOn(false)
         } else {
             @Suppress("DEPRECATION")
             if (enabled) {
-                window.addFlags(
-                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-                )
+                window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
+                window.clearFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
             } else {
                 window.clearFlags(
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
@@ -862,6 +998,23 @@ class MainActivity : FlutterActivity() {
             // goes off, so arming now would only burn the caller's retry budget
             // and leave the sensor dead before the user has touched anything.
             fingerprintEvents?.success(mapOf("type" to "screenOff"))
+            return
+        }
+
+        if (!launcherResumed || foreignTaskOwnsScreen) {
+            // A biometric session opened from a background activity is one the
+            // user never asked for, and on a device whose system UI draws the
+            // sensor affordance for an active session it appears as a prompt out
+            // of nowhere — over whatever app they are actually using.
+            //
+            // This is the last line of defence rather than the first: the Dart
+            // panel is not supposed to ask while it is not the visible surface.
+            // Saying no here means a stale caller cannot make it happen anyway.
+            android.util.Log.d(
+                "ChronoFold",
+                "Refusing to arm the reader: launcher is not the foreground surface",
+            )
+            fingerprintEvents?.success(mapOf("type" to "background"))
             return
         }
 
@@ -1038,6 +1191,7 @@ class MainActivity : FlutterActivity() {
                 addCategory(Intent.CATEGORY_BROWSABLE)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
+            markForeignTaskHandoff()
             startActivity(intent)
             true
         } catch (e: Exception) {
@@ -1061,6 +1215,7 @@ class MainActivity : FlutterActivity() {
                 putExtra(SearchManager.QUERY, query)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
+            markForeignTaskHandoff()
             startActivity(intent)
             true
         } catch (e: Exception) {
