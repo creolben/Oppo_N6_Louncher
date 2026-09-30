@@ -49,18 +49,20 @@ class LockActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Draw over the keyguard and wake the panel: this activity is the lock
-        // surface for a screen that just went off, so it must be the thing the
-        // user sees on wake.
+        // Draw over the keyguard, and never wake the display. This activity
+        // is raised AT screen-off, to already be there for the NEXT wake;
+        // turning the screen on is the power key's or the fingerprint's job.
+        // Measured on ColorOS 16 (CPH2765): while turnScreenOn was asserted,
+        // every screen-off was followed by "wm_set_resumed_activity
+        // .LockActivity" and "screen_toggled 1" ~7 ms later — a wake loop that
+        // also made KEYCODE_SLEEP appear to do nothing. The flag is explicitly
+        // denied so an install that had it set loses it.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
-            setTurnScreenOn(true)
+            setTurnScreenOn(false)
         } else {
             @Suppress("DEPRECATION")
-            window.addFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-            )
+            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED)
         }
 
         // The notification (when one was used to raise this activity) has done
@@ -88,6 +90,14 @@ class LockActivity : FlutterActivity() {
     }
 
     override fun onResume() {
+        // Earliest marker a manual power-key test can read: if the display is
+        // already interactive at this log line, the surface was ready before
+        // the screen came on; if not, the screen woke this activity up.
+        val power = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        android.util.Log.d(
+            TAG,
+            "CF_LOCK: lock activity resumed interactive=${power?.isInteractive}",
+        )
         super.onResume()
         resumed = true
         // Same re-read as the launcher: a theme change resumes this surface
