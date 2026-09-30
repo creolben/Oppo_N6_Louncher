@@ -301,7 +301,14 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   }
 
   /// Silent fingerprint events: `listening`, `failed`, `succeeded`,
-  /// `error` (with `code`/`message`) and `unavailable`.
+  /// `error` (with `code`/`message`), `screenOff`, `background`,
+  /// `keyguardLocked` and `unavailable`.
+  ///
+  /// The refusals carry the reason an arm did not happen, so the caller can
+  /// tell "the sensor said no" from "this state will never say yes":
+  /// `screenOff` and `background` are transient, while `keyguardLocked` means
+  /// the platform keyguard owns the reader for this lock session and the
+  /// request must resolve through the platform's own prompt instead.
   static Stream<Map<String, dynamic>> fingerprintEvents() {
     if (kIsWeb || !Platform.isAndroid) {
       return const Stream<Map<String, dynamic>>.empty();

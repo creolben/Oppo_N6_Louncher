@@ -408,8 +408,15 @@ class _FingerprintAuthPromptState extends State<FingerprintAuthPrompt>
         if (widget.onUseCredential != null) ...[
           const SizedBox(width: 12),
           _pillButton(
-            label: 'USE PIN',
-            semanticLabel: 'Use the device PIN instead of the fingerprint',
+            // Honest copy: this never opens a PIN pad of ours — it defers to
+            // the platform bouncer, which authenticates with whatever
+            // credential the device actually uses (PIN, pattern, password,
+            // biometric). Calling it "USE PIN" promised a keypad it cannot
+            // show; "UNLOCK" promises the outcome and the semantics label
+            // says how it gets there.
+            label: 'UNLOCK',
+            semanticLabel:
+                'Unlock using the device credential instead of the fingerprint',
             onTap: () => widget.onUseCredential!.call(),
             accent: accent,
             filled: true,

@@ -1001,6 +1001,21 @@ class MainActivity : FlutterActivity() {
             return
         }
 
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (keyguard?.isKeyguardLocked == true) {
+            // While the keyguard is locked it owns the power-button sensor, and
+            // this build cancels an app's reader session within ~2 ms of the
+            // arm — cold start, no competing session, key-bound or bare
+            // (repro-fingerprint-unlock Red 1). Every arm in this state was
+            // measured to fail identically, so arming spends the sensor for
+            // nothing and leaves it dead for the requests that matter. Refuse
+            // without touching it and say so with a distinct event, so Dart
+            // resolves the request through the platform's own bouncer — the
+            // only reader a locked keyguard accepts.
+            fingerprintEvents?.success(mapOf("type" to "keyguardLocked"))
+            return
+        }
+
         if (!launcherResumed || foreignTaskOwnsScreen) {
             // A biometric session opened from a background activity is one the
             // user never asked for, and on a device whose system UI draws the
