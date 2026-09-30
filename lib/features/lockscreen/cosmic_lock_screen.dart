@@ -219,10 +219,6 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// can align to one column.
   static const double _hudMaxWidth = 480.0;
 
-  /// The band the field was last confined to, so an unchanged layout does not
-  /// notify the physics engine (and so does not schedule a repaint) in a loop.
-  Rect? _bubbleBand;
-
   /// Fires once the ambient field has been idle for [_ambientIdleWindow].
   ///
   /// A [Timer] rather than a wall-clock comparison because a widget test's
@@ -1242,11 +1238,34 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   void _ensurePhysicsInitialized(Size size) {
     if (size.width <= 0 || size.height <= 0) return;
     if (_physicsEngine.bubbles.isEmpty) {
-      // Provisional vertical padding, but the real horizontal margin: the HUD
-      // column is capped at [_hudMaxWidth] and centred, so the band's left and
-      // right edges do not depend on whether the card is present. The
-      // post-frame band measurement pins the vertical gap before the next
-      // frame is shown.
+      // The panel mounts with `apps: const []` and fills the list on a later
+      // build (see `lock_main.dart`), so this can run after the post-frame
+      // measurement has already pinned the real band. When it has, initialize
+      // straight into that band instead of the provisional guess: the engine
+      // is the source of truth, and re-deriving from `size.height * 0.28`
+      // would put the first row back under the now-playing card.
+      final Rect? measured = _physicsEngine.viewportSize == size
+          ? _physicsEngine.bounds
+          : null;
+      if (measured != null) {
+        _physicsEngine.initializeBubbles(
+          apps: _ambientApps(),
+          size: size,
+          padding: EdgeInsets.fromLTRB(
+            measured.left,
+            measured.top,
+            size.width - measured.right,
+            size.height - measured.bottom,
+          ),
+        );
+        return;
+      }
+
+      // First frame, before any measurement: provisional vertical padding, but
+      // the real horizontal margin. The HUD column is capped at [_hudMaxWidth]
+      // and centred, so the band's left and right edges do not depend on
+      // whether the card is present. The post-frame band measurement pins the
+      // vertical gap before the next frame is shown.
       final double hudWidth = math.max(
         0.0,
         math.min(size.width - 48.0, _hudMaxWidth),
@@ -1316,8 +1335,14 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     }
 
     final Rect band = Rect.fromLTRB(left, top, right, bottom);
-    if (band == _bubbleBand) return;
-    _bubbleBand = band;
+    // The engine is the single source of truth for its own band. A late
+    // `initializeBubbles` resets the engine's padding behind this method's
+    // back, so a widget-side cache of the last band would short-circuit the
+    // re-apply and leave the field under the card. `setBounds` already no-ops
+    // on an identical band, so running every post-frame is cheap.
+    if (_physicsEngine.bounds == band) {
+      return;
+    }
     _physicsEngine.setBounds(band, viewport: field.size);
   }
 
@@ -2101,4 +2126,16 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     ];
     return names[(month - 1) % 12];
   }
+}
+
+/// Test-only seam onto the panel's ambient physics engine.
+///
+/// The state class stays private; a test reaches the engine by typing the
+/// value from `tester.state` as `State<CosmicLockScreen>` and reading
+/// [physicsForTesting]. An extension rather than a public rename, so the
+/// widget's public surface does not grow for tests.
+extension LockScreenPhysics on State<CosmicLockScreen> {
+  @visibleForTesting
+  BouncingPhysicsEngine get physicsForTesting =>
+      (this as _CosmicLockScreenState)._physicsEngine;
 }

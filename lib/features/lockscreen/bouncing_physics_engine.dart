@@ -81,6 +81,23 @@ class BouncingPhysicsEngine extends ChangeNotifier {
   Size get viewportSize => _viewportSize;
   EdgeInsets get safePadding => _safePadding;
 
+  /// The band the simulation is currently confined to, or null before any
+  /// bounds have been applied.
+  ///
+  /// Derived from [_viewportSize] and [_safePadding] rather than cached: the
+  /// engine is the single source of truth, so a caller that reset the padding
+  /// (a late [initializeBubbles] after the app list arrives) cannot leave a
+  /// stale copy behind.
+  Rect? get bounds {
+    if (_viewportSize == Size.zero) return null;
+    return Rect.fromLTRB(
+      _safePadding.left,
+      _safePadding.top,
+      _viewportSize.width - _safePadding.right,
+      _viewportSize.height - _safePadding.bottom,
+    );
+  }
+
   void initializeBubbles({
     required List<AppEntry> apps,
     required Size size,
