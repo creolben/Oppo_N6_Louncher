@@ -8,6 +8,7 @@ import '../models/app_entry.dart';
 import '../models/now_playing.dart';
 import '../models/quick_shortcut.dart';
 import '../ui/theme/luminous_home_theme.dart';
+import '../ui/theme/system_palette.dart';
 
 class LauncherBridge {  static const MethodChannel _appsChannel =
       MethodChannel('com.launcher.chronofold/apps');
@@ -20,6 +21,12 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
 
   static Stream<Map<String, dynamic>>? _shakeStream;
   static Stream<NowPlaying?>? _mediaStream;
+
+  /// Broadcasts the native `onSystemPaletteChanged` pushes. Broadcast so the
+  /// launcher's bootstrap and a future second surface can both listen, and so
+  /// a missed event before the first listener cannot queue up a stale palette.
+  static final StreamController<SystemPalette?> _systemPaletteController =
+      StreamController<SystemPalette?>.broadcast();
 
   /// Edge length icons are decoded at, matching the native side's downscale.
   static const int _iconPixels = 96;
@@ -50,6 +57,9 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
           break;
         case 'userPresent':
           _onUserPresentListener?.call();
+          break;
+        case 'onSystemPaletteChanged':
+          _systemPaletteController.add(SystemPalette.fromMap(call.arguments));
           break;
       }
     });
@@ -353,6 +363,37 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
       }
     }
     return _mediaStream!;
+  }
+
+  /// The device's Material You palette, or null when the platform has none.
+  ///
+  /// ColorOS 16 themes the launcher from the home wallpaper; Android exposes the
+  /// resolved tones as `android.R.color.system_accent*` on API 31+. Older
+  /// devices and any native read failure answer null, and the caller keeps the
+  /// launcher's own aqua accent rather than inventing a tone.
+  static Future<SystemPalette?> getSystemPalette() async {
+    _ensureHandlerInitialized();
+    if (kIsWeb || !Platform.isAndroid) return null;
+    try {
+      final Map<dynamic, dynamic>? raw =
+          await _appsChannel.invokeMethod<Map<dynamic, dynamic>>(
+        'getSystemPalette',
+      );
+      if (raw == null) return null;
+      return SystemPalette.fromMap(Map<String, dynamic>.from(raw));
+    } catch (e) {
+      debugPrint('CF_THEME: reading the system palette failed: $e');
+      return null;
+    }
+  }
+
+  /// Palette pushes from native, one per real change while a surface resumes.
+  ///
+  /// The stream is empty on a host without the platform channel, so a widget
+  /// test that listens to it simply never rebuilds.
+  static Stream<SystemPalette?> get systemPaletteChanges {
+    _ensureHandlerInitialized();
+    return _systemPaletteController.stream;
   }
 
   /// Whether the user has granted notification access, which is the one thing

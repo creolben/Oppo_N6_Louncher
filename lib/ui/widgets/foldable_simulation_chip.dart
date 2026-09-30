@@ -27,23 +27,23 @@ class FoldableSimulationChip extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: LuminousHomeTheme.aquaGlow,
+              color: LuminousHomeTheme.accentGlow,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: LuminousHomeTheme.aqua, width: 0.9),
+              border: Border.all(color: LuminousHomeTheme.accent, width: 0.9),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
+                Icon(
                   Icons.sensors_rounded,
-                  color: LuminousHomeTheme.aqua,
+                  color: LuminousHomeTheme.accent,
                   size: 12,
                 ),
                 const SizedBox(width: 4),
                 Text(
                   'SIMULATED',
                   style: TextStyle(
-                    color: LuminousHomeTheme.aqua,
+                    color: LuminousHomeTheme.accent,
                     fontSize: fontSize,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.8,

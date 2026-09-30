@@ -1,6 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../models/app_entry.dart';
+import 'system_palette.dart';
 
 /// The galaxy constellation palette: a primary glow, a secondary tone, and the
 /// translucent halo. Returned by [LuminousHomeTheme.constellationPalette].
@@ -251,6 +254,85 @@ abstract final class LuminousHomeTheme {
   /// A deeper cyan, one step under [aqua].
   static const Color aquaDeep = Color(0xFF00B8D4);
 
+  // ── Dynamic accent ────────────────────────────────────────────────────────
+  // The one family that follows the device's Material You palette. Everything
+  // else above stays a fixed ChronoFold colour so the launcher keeps its
+  // identity under any accent. [aqua] and its alphas remain the fallback and
+  // the art colour; the `accent*` getters are the role.
+  static Color _accent = aqua;
+  static Color _accentDeep = aquaDeep;
+  static int _paletteRevision = 0;
+
+  /// The launcher's current accent: the system's Material You primary, or
+  /// [aqua] when the platform has none or its tone is too dark to read.
+  static Color get accent => _accent;
+
+  /// A deeper companion to [accent], for pressed and gradient states.
+  static Color get accentDeep => _accentDeep;
+
+  static Color get accentFaint => _accent.withValues(alpha: 0x18 / 255);
+  static Color get accentSoft => _accent.withValues(alpha: 0x22 / 255);
+  static Color get accentGlow => _accent.withValues(alpha: 0x33 / 255);
+  static Color get accentMid => _accent.withValues(alpha: 0x44 / 255);
+  static Color get accentBright => _accent.withValues(alpha: 0x55 / 255);
+  static Color get accentStrong => _accent.withValues(alpha: 0x66 / 255);
+
+  /// Bumps only when [applyPalette] actually changes [accent]/[accentDeep].
+  ///
+  /// `MaterialApp` keys off this so a palette push remounts the tree and every
+  /// widget re-reads the accent instead of keeping a cached `Color`.
+  static int get paletteRevision => _paletteRevision;
+
+  /// Applies [palette] as the accent family, or restores [aqua] when it is null
+  /// or too low-contrast against [background].
+  ///
+  /// The Material dark-theme primary is tone 200; if that is below 3.0:1 on the
+  /// OLED field the guard walks to tone 100 and then 50, and only then keeps
+  /// [aqua]. The step exists because a wallpaper-derived tone can be almost the
+  /// field's own ink and vanish as a focus ring.
+  static void applyPalette(SystemPalette? palette) {
+    Color nextAccent = aqua;
+    Color nextDeep = aquaDeep;
+    String source = 'fallback';
+
+    if (palette != null) {
+      final List<Color?> candidates = <Color?>[
+        palette.accent1(200),
+        palette.accent1(100),
+        palette.accent1(50),
+      ];
+      for (final Color? candidate in candidates) {
+        if (candidate != null && _contrast(candidate, background) >= 3.0) {
+          nextAccent = candidate;
+          nextDeep = palette.accent1(700) ?? aquaDeep;
+          source = 'system';
+          break;
+        }
+      }
+    }
+
+    if (nextAccent == _accent && nextDeep == _accentDeep) return;
+    _accent = nextAccent;
+    _accentDeep = nextDeep;
+    _paletteRevision++;
+    debugPrint(
+      'CF_THEME: palette applied accent=#${_hex(nextAccent)} source=$source',
+    );
+  }
+
+  /// WCAG relative-luminance contrast between two opaque colours.
+  static double _contrast(Color a, Color b) {
+    final double la = a.computeLuminance();
+    final double lb = b.computeLuminance();
+    final double hi = math.max(la, lb);
+    final double lo = math.min(la, lb);
+    return (hi + 0.05) / (lo + 0.05);
+  }
+
+  /// `RRGGBB` for logging, matching how the device reported the source accent.
+  static String _hex(Color color) =>
+      (color.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0');
+
   // ── Ambient wallpaper preview ─────────────────────────────────────────────
   static const Color wallpaperTop = Color(0xFF111B37);
   static const Color wallpaperMid = Color(0xFF060914);
@@ -356,10 +438,10 @@ abstract final class LuminousHomeTheme {
   }
 
   static ThemeData buildTheme() {
-    const scheme = ColorScheme.dark(
-      primary: aqua,
+    final scheme = ColorScheme.dark(
+      primary: accent,
       onPrimary: backgroundDeep,
-      secondary: mint,
+      secondary: accent,
       onSecondary: backgroundDeep,
       error: notification,
       onError: white,

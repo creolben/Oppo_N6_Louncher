@@ -90,11 +90,11 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
               filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
               child: Container(
                 height: MediaQuery.of(context).size.height * 0.70,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: LuminousHomeTheme.panelScrim,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
                   border: Border(
-                    top: BorderSide(color: LuminousHomeTheme.aquaMid, width: 1.2),
+                    top: BorderSide(color: LuminousHomeTheme.accentMid, width: 1.2),
                   ),
                 ),
                 child: Column(
@@ -146,12 +146,12 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                         child: TextField(
                           onChanged: (q) => setModalState(() => searchQuery = q),
                           style: const TextStyle(color: LuminousHomeTheme.white, fontSize: 14),
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             hintText: 'Search apps...',
-                            hintStyle: TextStyle(color: LuminousHomeTheme.white38, fontSize: 14),
-                            prefixIcon: Icon(Icons.search_rounded, color: LuminousHomeTheme.aqua, size: 20),
+                            hintStyle: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 14),
+                            prefixIcon: Icon(Icons.search_rounded, color: LuminousHomeTheme.accent, size: 20),
                             border: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(vertical: 12),
+                            contentPadding: const EdgeInsets.symmetric(vertical: 12),
                           ),
                         ),
                       ),
@@ -196,7 +196,7 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 11),
                               ),
-                              trailing: const Icon(Icons.add_circle_outline_rounded, color: LuminousHomeTheme.aqua),
+                              trailing: Icon(Icons.add_circle_outline_rounded, color: LuminousHomeTheme.accent),
                               onTap: () {
                                 Navigator.of(context).pop();
                                 setState(() {

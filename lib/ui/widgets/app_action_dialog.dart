@@ -86,7 +86,7 @@ class AppActionDialog extends StatelessWidget {
                   context,
                   icon: Icons.launch_rounded,
                   label: 'Launch Application',
-                  color: LuminousHomeTheme.aqua,
+                  color: LuminousHomeTheme.accent,
                   onTap: () {
                     Navigator.of(context).pop();
                     LauncherBridge.launchApp(app);

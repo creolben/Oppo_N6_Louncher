@@ -135,18 +135,18 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                         DecoratedBox(
                           decoration: BoxDecoration(
                             color: LuminousHomeTheme.softTint(
-                              LuminousHomeTheme.aqua,
+                              LuminousHomeTheme.accent,
                               0.14,
                             ),
                             borderRadius: BorderRadius.circular(
                               LuminousHomeTheme.iconRadius,
                             ),
                           ),
-                          child: const SizedBox.square(
+                          child: SizedBox.square(
                             dimension: 40,
                             child: Icon(
                               Icons.screen_rotation_rounded,
-                              color: LuminousHomeTheme.aqua,
+                              color: LuminousHomeTheme.accent,
                               size: 20,
                             ),
                           ),
@@ -214,11 +214,11 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                     const SizedBox(height: 2),
                     SliderTheme(
                       data: SliderTheme.of(context).copyWith(
-                        activeTrackColor: LuminousHomeTheme.aqua,
+                        activeTrackColor: LuminousHomeTheme.accent,
                         inactiveTrackColor: LuminousHomeTheme.hairlineStrong,
                         thumbColor: LuminousHomeTheme.textPrimary,
                         overlayColor: LuminousHomeTheme.softTint(
-                          LuminousHomeTheme.aqua,
+                          LuminousHomeTheme.accent,
                           0.16,
                         ),
                         trackHeight: 3,
@@ -285,7 +285,7 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                     children: [
                       _cockpitIconButton(
                         icon: Icons.search_rounded,
-                        color: LuminousHomeTheme.aqua,
+                        color: LuminousHomeTheme.accent,
                         tooltip: 'Search apps',
                         onTap: widget.onOpenSearch,
                       ),
@@ -311,7 +311,7 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                           widget.onCreateGalaxy != null)
                         _cockpitIconButton(
                           icon: Icons.add_rounded,
-                          color: LuminousHomeTheme.aqua,
+                          color: LuminousHomeTheme.accent,
                           tooltip: 'Create constellation',
                           emphasized: true,
                           onTap:
@@ -332,7 +332,7 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                         _cockpitIconButton(
                           icon: Icons.splitscreen_rounded,
                           color: _showFoldControls
-                              ? LuminousHomeTheme.aqua
+                              ? LuminousHomeTheme.accent
                               : LuminousHomeTheme.textSecondary,
                           tooltip: 'Foldable simulator',
                           emphasized: _showFoldControls,
@@ -486,7 +486,7 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
       label: 'Set posture to $label',
       child: Material(
         color: isSelected
-            ? LuminousHomeTheme.softTint(LuminousHomeTheme.aqua, 0.16)
+            ? LuminousHomeTheme.softTint(LuminousHomeTheme.accent, 0.16)
             : LuminousHomeTheme.glass,
         borderRadius: radius,
         child: InkWell(
@@ -501,7 +501,7 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
               borderRadius: radius,
               border: Border.all(
                 color: isSelected
-                    ? LuminousHomeTheme.aqua.withValues(alpha: 0.48)
+                    ? LuminousHomeTheme.accent.withValues(alpha: 0.48)
                     : LuminousHomeTheme.hairline,
               ),
             ),

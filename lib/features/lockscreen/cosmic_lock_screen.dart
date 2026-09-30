@@ -1665,7 +1665,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                       gradient: RadialGradient(
                         colors: [
                           LuminousHomeTheme.softTint(
-                            LuminousHomeTheme.aqua,
+                            LuminousHomeTheme.accent,
                             0.20,
                           ),
                           LuminousHomeTheme.softTint(
@@ -1808,7 +1808,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                                 shadows: [
                                   Shadow(
                                     color: LuminousHomeTheme.softTint(
-                                      LuminousHomeTheme.aqua,
+                                      LuminousHomeTheme.accent,
                                       0.28,
                                     ),
                                     blurRadius: 18,

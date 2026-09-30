@@ -60,7 +60,7 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
           decoration: BoxDecoration(
             color: LuminousHomeTheme.panelDeep,
             borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: LuminousHomeTheme.aquaStrong),
+            border: Border.all(color: LuminousHomeTheme.accentStrong),
             boxShadow: const [
               BoxShadow(
                 color: LuminousHomeTheme.blackScrim,
@@ -127,14 +127,14 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                         decoration: BoxDecoration(
                           color: LuminousHomeTheme.infoFill,
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: LuminousHomeTheme.aquaGlow),
+                          border: Border.all(color: LuminousHomeTheme.accentGlow),
                         ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Icon(
+                            Icon(
                               Icons.info_outline_rounded,
-                              color: LuminousHomeTheme.aqua,
+                              color: LuminousHomeTheme.accent,
                               size: 18,
                             ),
                             const SizedBox(width: 9),
@@ -173,7 +173,7 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                           textAlign: TextAlign.center,
                         ),
                         style: FilledButton.styleFrom(
-                          backgroundColor: LuminousHomeTheme.aquaDeep,
+                          backgroundColor: LuminousHomeTheme.accentDeep,
                           foregroundColor: LuminousHomeTheme.backgroundDeep,
                           minimumSize: const Size.fromHeight(52),
                           textStyle: const TextStyle(
@@ -213,10 +213,12 @@ class _Eyebrow extends StatelessWidget {
         Container(
           width: 7,
           height: 7,
-          decoration: const BoxDecoration(
-            color: LuminousHomeTheme.aqua,
+          decoration: BoxDecoration(
+            color: LuminousHomeTheme.accent,
             shape: BoxShape.circle,
-            boxShadow: [BoxShadow(color: LuminousHomeTheme.aqua, blurRadius: 8)],
+            boxShadow: [
+              BoxShadow(color: LuminousHomeTheme.accent, blurRadius: 8),
+            ],
           ),
         ),
         const SizedBox(width: 8),
@@ -225,8 +227,8 @@ class _Eyebrow extends StatelessWidget {
         Flexible(
           child: Text(
             label,
-            style: const TextStyle(
-              color: LuminousHomeTheme.aqua,
+            style: TextStyle(
+              color: LuminousHomeTheme.accent,
               fontSize: 10.5,
               fontWeight: FontWeight.w800,
               letterSpacing: 1.45,
@@ -273,11 +275,11 @@ class _OwnershipRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const home = _OwnershipCell(
+    final home = _OwnershipCell(
       icon: Icons.home_rounded,
       label: 'HOME',
       value: 'ChronoFold',
-      color: LuminousHomeTheme.aqua,
+      color: LuminousHomeTheme.accent,
     );
     const lock = _OwnershipCell(
       icon: Icons.lock_outline_rounded,
@@ -290,12 +292,12 @@ class _OwnershipRow extends StatelessWidget {
     // threshold the pair stacks instead of squeezing "ChronoFold" to nothing.
     final scaledLabel = MediaQuery.textScalerOf(context).scale(12);
     if (scaledLabel > 16) {
-      return const Column(
+      return Column(
         children: [home, SizedBox(height: 8), lock],
       );
     }
 
-    return const Row(
+    return Row(
       children: [
         Expanded(child: home),
         SizedBox(width: 8),

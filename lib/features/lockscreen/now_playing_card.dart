@@ -259,7 +259,7 @@ class _NowPlayingCardState extends State<NowPlayingCard> {
               // The track is a hairline-strong tone so the unfilled part is
               // visible against the opaque card, not a hole in it.
               backgroundColor: LuminousHomeTheme.hairlineStrong,
-              color: LuminousHomeTheme.aqua,
+              color: LuminousHomeTheme.accent,
             ),
           ),
         ),

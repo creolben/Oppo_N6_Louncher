@@ -23,7 +23,9 @@ abstract final class CoverStyle {
   static const Color page = LuminousHomeTheme.background;
   static const Color pageTop = LuminousHomeTheme.backgroundTop;
   static const Color pageDeep = LuminousHomeTheme.backgroundDeep;
-  static const Color accent = LuminousHomeTheme.aqua;
+  // The cover's accent is the same dynamic role as the rest of the launcher;
+  // the fixed cobalt/orchid art accents beside it stay put.
+  static Color get accent => LuminousHomeTheme.accent;
   static const Color secondaryAccent = LuminousHomeTheme.cobalt;
   static const Color tertiaryAccent = LuminousHomeTheme.orchid;
   static const Color hairline = LuminousHomeTheme.hairline;
@@ -423,7 +425,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const DecoratedBox(
+                    DecoratedBox(
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: CoverStyle.accent,
@@ -703,7 +705,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 color: LuminousHomeTheme.softTint(CoverStyle.accent, 0.12),
                 borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.add_rounded, size: 15, color: CoverStyle.accent),
@@ -1036,9 +1038,9 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
               Expanded(
                 child: Row(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.screen_rotation_rounded,
-                      color: LuminousHomeTheme.aqua,
+                      color: LuminousHomeTheme.accent,
                       size: 16,
                     ),
                     const SizedBox(width: 6),
