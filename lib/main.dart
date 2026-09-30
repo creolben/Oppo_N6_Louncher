@@ -26,13 +26,14 @@ import 'ui/format/clock_format.dart';
 import 'ui/screens/folded_cover_screen.dart';
 import 'ui/screens/tabletop_cockpit_view.dart';
 import 'ui/theme/luminous_home_theme.dart';
+import 'ui/theme/system_palette.dart';
 
 // The lock activity runs its own engine on the `lockMain` entry point, which
 // lives in its own library. Re-exporting it keeps that entry point in this
 // kernel, so AOT tree-shaking cannot drop the second surface's entry point.
 export 'lock_main.dart' show lockMain;
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -43,6 +44,13 @@ void main() {
     ),
   );
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+  // The accent has to be settled before the first frame, or the launcher would
+  // flash aqua and then re-colour. The timeout is a fail-safe for a platform
+  // that never answers, not the normal path.
+  final SystemPalette? palette = await LauncherBridge.getSystemPalette()
+      .timeout(const Duration(milliseconds: 300), onTimeout: () => null);
+  LuminousHomeTheme.applyPalette(palette);
 
   runApp(const ChronoFoldApp());
 }
@@ -56,11 +64,23 @@ class ChronoFoldApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'ChronoFold Launcher',
-      debugShowCheckedModeBanner: false,
-      theme: LuminousHomeTheme.buildTheme(),
-      home: ChronoFoldHomeScreen(isKeyguardLocked: isKeyguardLocked),
+    return StreamBuilder<SystemPalette?>(
+      stream: LauncherBridge.systemPaletteChanges,
+      builder: (context, snapshot) {
+        // Only an actual push re-applies: before the first event the palette
+        // [main] already applied must survive, and a null event means the
+        // platform withdrew its palette and aqua should come back.
+        if (snapshot.connectionState == ConnectionState.active) {
+          LuminousHomeTheme.applyPalette(snapshot.data);
+        }
+        return MaterialApp(
+          key: ValueKey<int>(LuminousHomeTheme.paletteRevision),
+          title: 'ChronoFold Launcher',
+          debugShowCheckedModeBanner: false,
+          theme: LuminousHomeTheme.buildTheme(),
+          home: ChronoFoldHomeScreen(isKeyguardLocked: isKeyguardLocked),
+        );
+      },
     );
   }
 }
@@ -519,9 +539,9 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       },
       child: Scaffold(
         body: _isLoading
-            ? const Center(
+            ? Center(
                 child: CircularProgressIndicator(
-                  color: LuminousHomeTheme.aqua,
+                  color: LuminousHomeTheme.accent,
                   strokeWidth: 2.0,
                 ),
               )
@@ -874,7 +894,7 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                                     icon: Icons.home_rounded,
                                     label: 'SET DEFAULT',
                                     tooltip: 'Set as default launcher',
-                                    color: LuminousHomeTheme.aqua,
+                                    color: LuminousHomeTheme.accent,
                                     emphasized: true,
                                     onTap: widget.onSetDefaultLauncher!,
                                   ),
@@ -883,7 +903,7 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                                     icon: Icons.wallpaper_rounded,
                                     label: 'AMBIENT',
                                     tooltip: 'Choose ambient wallpaper',
-                                    color: LuminousHomeTheme.aqua,
+                                    color: LuminousHomeTheme.accent,
                                     onTap: widget.onOpenLiveWallpaper!,
                                   ),
                                 if (widget.onToggleNativeMode != null)
@@ -917,7 +937,7 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                                     icon: Icons.splitscreen_rounded,
                                     label: 'COCKPIT',
                                     tooltip: 'Open tabletop cockpit',
-                                    color: LuminousHomeTheme.aqua,
+                                    color: LuminousHomeTheme.accent,
                                     onTap: widget.onToggleCockpit!,
                                   ),
                                 const SizedBox(

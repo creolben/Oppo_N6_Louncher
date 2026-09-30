@@ -112,12 +112,12 @@ class _SearchOverlayState extends State<SearchOverlay> {
     'V', 'W', 'X', 'Y', 'Z',
   ];
 
-  static const List<CategoryTabItem> _categories = [
+  static final List<CategoryTabItem> _categories = [
     CategoryTabItem(
       label: 'All',
       category: null,
       icon: Icons.all_inclusive_rounded,
-      color: LuminousHomeTheme.aqua,
+      color: LuminousHomeTheme.accent,
     ),
     CategoryTabItem(
       label: 'Essentials',
@@ -135,7 +135,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
       label: 'Workspace',
       category: AppCategory.productivity,
       icon: Icons.workspaces_rounded,
-      color: LuminousHomeTheme.aqua,
+      color: LuminousHomeTheme.accent,
     ),
     CategoryTabItem(
       label: 'Studio',
@@ -428,9 +428,9 @@ class _SearchOverlayState extends State<SearchOverlay> {
                             color: LuminousHomeTheme.borderCool.withValues(alpha: 0.35),
                             width: 1.2,
                           ),
-                          boxShadow: const [
+                          boxShadow: [
                             BoxShadow(
-                              color: LuminousHomeTheme.aquaSoft,
+                              color: LuminousHomeTheme.accentSoft,
                               blurRadius: 16,
                               spreadRadius: 1,
                             ),
@@ -445,16 +445,16 @@ class _SearchOverlayState extends State<SearchOverlay> {
                             fontSize: 15,
                             letterSpacing: 0.4,
                           ),
-                          cursorColor: LuminousHomeTheme.aqua,
+                          cursorColor: LuminousHomeTheme.accent,
                           decoration: InputDecoration(
                             hintText: 'Search galaxy applications...',
                             hintStyle: TextStyle(
                               color: LuminousHomeTheme.white.withValues(alpha: 0.42),
                               fontSize: 14,
                             ),
-                            prefixIcon: const Icon(
+                            prefixIcon: Icon(
                               Icons.search_rounded,
-                              color: LuminousHomeTheme.aqua,
+                              color: LuminousHomeTheme.accent,
                               size: 22,
                             ),
                             suffixIcon: _controller.text.isNotEmpty
@@ -642,7 +642,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                 'Reset filter',
                                 style: TextStyle(
                                   color:
-                                      LuminousHomeTheme.aqua.withValues(alpha: 0.85),
+                                      LuminousHomeTheme.accent.withValues(alpha: 0.85),
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -738,7 +738,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                         color: LuminousHomeTheme.fieldFill,
                                         borderRadius: BorderRadius.circular(12),
                                         border: Border.all(
-                                          color: LuminousHomeTheme.aquaFaint,
+                                          color: LuminousHomeTheme.accentFaint,
                                           width: _scrubberBorder,
                                         ),
                                       ),
@@ -757,7 +757,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                                   letter,
                                                   style: TextStyle(
                                                     color: isActive
-                                                        ? LuminousHomeTheme.aqua
+                                                        ? LuminousHomeTheme.accent
                                                         : LuminousHomeTheme
                                                             .white
                                                             .withValues(
@@ -795,10 +795,10 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                 shape: BoxShape.circle,
                                 color: LuminousHomeTheme.panelScrim,
                                 border: Border.all(
-                                    color: LuminousHomeTheme.aqua, width: 1.8),
-                                boxShadow: const [
+                                    color: LuminousHomeTheme.accent, width: 1.8),
+                                boxShadow: [
                                   BoxShadow(
-                                    color: LuminousHomeTheme.aquaBright,
+                                    color: LuminousHomeTheme.accentBright,
                                     blurRadius: 20,
                                     spreadRadius: 2,
                                   ),
@@ -807,8 +807,8 @@ class _SearchOverlayState extends State<SearchOverlay> {
                               alignment: Alignment.center,
                               child: Text(
                                 _activeScrubLetter!,
-                                style: const TextStyle(
-                                  color: LuminousHomeTheme.aqua,
+                                style: TextStyle(
+                                  color: LuminousHomeTheme.accent,
                                   fontSize: 28,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -1003,7 +1003,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.radar_rounded, color: LuminousHomeTheme.aqua, size: 22),
+                  icon: Icon(Icons.radar_rounded, color: LuminousHomeTheme.accent, size: 22),
                   tooltip: 'Locate in galaxy',
                   onPressed: () => _flyToAndLaunch(app),
                 ),

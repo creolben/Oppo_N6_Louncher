@@ -7,6 +7,7 @@ import 'core/launcher_bridge.dart';
 import 'features/lockscreen/cosmic_lock_screen.dart';
 import 'models/app_entry.dart';
 import 'ui/theme/luminous_home_theme.dart';
+import 'ui/theme/system_palette.dart';
 
 /// The entry point for the [LockActivity] engine.
 ///
@@ -15,8 +16,14 @@ import 'ui/theme/luminous_home_theme.dart';
 /// (`getDartEntrypointFunctionName()` returns `lockMain`). `main.dart`
 /// re-exports it so the two entry points stay in one kernel.
 @pragma('vm:entry-point')
-void lockMain() {
+Future<void> lockMain() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // The lock activity is a second engine, so it resolves the accent itself
+  // rather than inheriting the launcher's. Same timeout contract: a platform
+  // that never answers keeps the aqua fallback.
+  final SystemPalette? palette = await LauncherBridge.getSystemPalette()
+      .timeout(const Duration(milliseconds: 300), onTimeout: () => null);
+  LuminousHomeTheme.applyPalette(palette);
   runApp(const LockSurfaceApp());
 }
 
@@ -89,38 +96,50 @@ class _LockSurfaceAppState extends State<LockSurfaceApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'ChronoFold Lock',
-      debugShowCheckedModeBanner: false,
-      // The same design system as the launcher: one source of colour, radius
-      // and type, so the lock surface cannot drift from the HOME panel.
-      theme: LuminousHomeTheme.buildTheme(),
-      home: PopScope(
-        // A lock surface never backs out of itself; the platform keyguard is
-        // the only way out. The native side swallows back as well.
-        canPop: false,
-        // The launcher mounts this panel inside the home Scaffold; the lock
-        // activity has no Scaffold, so provide the Material ancestor the app
-        // tiles' InkWells expect without changing the layout.
-        child: Material(
-          type: MaterialType.transparency,
-          child: CosmicLockScreen(
-            foldable: _foldable,
-            apps: _apps,
-            // This surface stands for a screen-off lock, not a user-raised
-            // privacy panel, so it clears itself if the keyguard is already
-            // gone by the time it can draw.
-            reconcileOnMount: true,
-            isKeyguardLocked: widget.isKeyguardLocked,
-            onUnlock: () {
-              if (_finishRequested) return;
-              _finishRequested = true;
-              final finish = widget.onFinish ?? LauncherBridge.finishLock;
-              unawaited(finish());
-            },
+    return StreamBuilder<SystemPalette?>(
+      stream: LauncherBridge.systemPaletteChanges,
+      builder: (context, snapshot) {
+        // Mirrors the launcher: apply only a real push, so the palette
+        // [lockMain] resolved before the first frame is not reset to aqua by the
+        // stream's empty start, and a null push restores aqua.
+        if (snapshot.connectionState == ConnectionState.active) {
+          LuminousHomeTheme.applyPalette(snapshot.data);
+        }
+        return MaterialApp(
+          key: ValueKey<int>(LuminousHomeTheme.paletteRevision),
+          title: 'ChronoFold Lock',
+          debugShowCheckedModeBanner: false,
+          // The same design system as the launcher: one source of colour, radius
+          // and type, so the lock surface cannot drift from the HOME panel.
+          theme: LuminousHomeTheme.buildTheme(),
+          home: PopScope(
+            // A lock surface never backs out of itself; the platform keyguard is
+            // the only way out. The native side swallows back as well.
+            canPop: false,
+            // The launcher mounts this panel inside the home Scaffold; the lock
+            // activity has no Scaffold, so provide the Material ancestor the app
+            // tiles' InkWells expect without changing the layout.
+            child: Material(
+              type: MaterialType.transparency,
+              child: CosmicLockScreen(
+                foldable: _foldable,
+                apps: _apps,
+                // This surface stands for a screen-off lock, not a user-raised
+                // privacy panel, so it clears itself if the keyguard is already
+                // gone by the time it can draw.
+                reconcileOnMount: true,
+                isKeyguardLocked: widget.isKeyguardLocked,
+                onUnlock: () {
+                  if (_finishRequested) return;
+                  _finishRequested = true;
+                  final finish = widget.onFinish ?? LauncherBridge.finishLock;
+                  unawaited(finish());
+                },
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

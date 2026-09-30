@@ -291,6 +291,9 @@ class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         launcherResumed = true
+        // A wallpaper/theme change resumes the activity; re-read the Material
+        // You palette so the launcher re-colours without a restart.
+        lockSurface?.pushSystemPaletteIfChanged()
         // Back in front: the handoff is over, so ordinary screen events belong
         // to the launcher again.
         if (foreignTaskForeground && pausedForForeignTask) {

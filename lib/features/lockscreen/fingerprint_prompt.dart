@@ -53,8 +53,9 @@ class FingerprintAuthPrompt extends StatefulWidget {
 class _FingerprintAuthPromptState extends State<FingerprintAuthPrompt>
     with TickerProviderStateMixin {
   // The launcher's cosmic tokens, kept in one place so the prompt cannot drift
-  // away from the panel behind it.
-  static const Color _cyan = LuminousHomeTheme.aqua;
+  // away from the panel behind it. The scanning cyan is the dynamic accent
+  // role, so the reader ring follows the device's theme.
+  static Color get _cyan => LuminousHomeTheme.accent;
   static const Color _violet = LuminousHomeTheme.orchid;
   static const Color _glass = LuminousHomeTheme.lockFieldGlow;
 

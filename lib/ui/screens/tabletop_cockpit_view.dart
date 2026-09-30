@@ -217,10 +217,10 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                   ),
                   child: Row(
                     children: [
-                      const DecoratedBox(
+                      DecoratedBox(
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: LuminousHomeTheme.aqua,
+                          color: LuminousHomeTheme.accent,
                         ),
                         child: SizedBox(width: 6, height: 6),
                       ),
@@ -268,12 +268,12 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                           width: 0.8,
                         ),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
                             Icons.fullscreen_rounded,
-                            color: LuminousHomeTheme.aqua,
+                            color: LuminousHomeTheme.accent,
                             size: 16,
                           ),
                           SizedBox(width: 5),
@@ -353,11 +353,11 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                   ),
                   boxShadow: LuminousHomeTheme.floatingShadow,
                 ),
-                child: const Row(
+                child: Row(
                   children: [
                     Icon(
                       Icons.search_rounded,
-                      color: LuminousHomeTheme.aqua,
+                      color: LuminousHomeTheme.accent,
                       size: 16,
                     ),
                     SizedBox(width: 8),
@@ -399,7 +399,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                 colors: [
                   Colors.transparent,
                   LuminousHomeTheme.hairline,
-                  LuminousHomeTheme.aqua.withValues(alpha: 0.28),
+                  LuminousHomeTheme.accent.withValues(alpha: 0.28),
                   LuminousHomeTheme.hairline,
                   Colors.transparent,
                 ],
@@ -424,7 +424,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                   _isLaunchpadCollapsed
                       ? Icons.keyboard_arrow_up_rounded
                       : Icons.keyboard_arrow_down_rounded,
-                  color: LuminousHomeTheme.aqua,
+                  color: LuminousHomeTheme.accent,
                   size: 14,
                 ),
                 const SizedBox(width: 4),
@@ -476,7 +476,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
         _cockpitActionButton(
           icon: Icons.grid_view_rounded,
           label: 'Launchpad',
-          color: LuminousHomeTheme.aqua,
+          color: LuminousHomeTheme.accent,
           onTap: () {
             HapticFeedback.selectionClick();
             setState(() => _isLaunchpadCollapsed = false);
@@ -485,14 +485,14 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
         _cockpitActionButton(
           icon: Icons.search_rounded,
           label: 'Search',
-          color: LuminousHomeTheme.aqua,
+          color: LuminousHomeTheme.accent,
           onTap: widget.onOpenSearch,
         ),
         if (widget.onToggleFullscreen != null)
           _cockpitActionButton(
             icon: Icons.fullscreen_rounded,
             label: 'Fullscreen',
-            color: LuminousHomeTheme.aqua,
+            color: LuminousHomeTheme.accent,
             onTap: widget.onToggleFullscreen!,
           ),
         if (widget.onCreateConstellation != null)
@@ -603,7 +603,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
             _cockpitActionButton(
               icon: Icons.search_rounded,
               label: 'Search',
-              color: LuminousHomeTheme.aqua,
+              color: LuminousHomeTheme.accent,
               onTap: widget.onOpenSearch,
             ),
             if (widget.onCreateConstellation != null)

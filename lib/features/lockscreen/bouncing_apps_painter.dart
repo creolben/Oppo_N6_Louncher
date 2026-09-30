@@ -109,8 +109,8 @@ class BouncingAppsPainter extends CustomPainter {
         Offset.zero,
         painted,
         [
-          LuminousHomeTheme.aqua.withValues(alpha: auraGlow * 0.6),
-          LuminousHomeTheme.aqua.withValues(alpha: auraGlow * 0.2),
+          LuminousHomeTheme.accent.withValues(alpha: auraGlow * 0.6),
+          LuminousHomeTheme.accent.withValues(alpha: auraGlow * 0.2),
           Colors.transparent,
         ],
         const [0.35, 0.7, 1.0],

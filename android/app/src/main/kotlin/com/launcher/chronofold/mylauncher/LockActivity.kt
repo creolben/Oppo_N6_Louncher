@@ -90,6 +90,9 @@ class LockActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         resumed = true
+        // Same re-read as the launcher: a theme change resumes this surface
+        // too, and the lock panel must not keep the old accent.
+        lockSurface?.pushSystemPaletteIfChanged()
     }
 
     override fun onPause() {

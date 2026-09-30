@@ -102,6 +102,14 @@ class LockSurfaceChannels(
 
         /** Longest edge album art is scaled to before it is sent to Dart. */
         private const val MEDIA_ART_MAX_PIXELS = 256
+
+        /**
+         * The Material You tones, in the order [accentTones] reads its resource
+         * ids. Shared so the tone list and the keys can never diverge.
+         */
+        private val SYSTEM_TONES = intArrayOf(
+            0, 10, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000,
+        )
     }
 
     private val appsMethodChannel = MethodChannel(messenger, APPS_CHANNEL)
@@ -134,6 +142,15 @@ class LockSurfaceChannels(
      * channel. Only metadata and transport-state changes reset it.
      */
     private var lastMediaSignature: String? = null
+
+    /**
+     * Signature of the last system palette pushed to Dart, so an `onResume`
+     * that changed nothing (the common case) does not cross the channel.
+     *
+     * Only a map that was actually read is stored; a below-31/null read leaves
+     * this untouched so the first real palette still counts as a change.
+     */
+    private var lastSystemPalette: Map<String, Any?>? = null
 
     /** The listener [MediaListenerService] holds, so [dispose] can remove it. */
     private val mediaListenerCallback: () -> Unit = {
@@ -190,6 +207,11 @@ class LockSurfaceChannels(
                 }
                 "getBatteryState" -> {
                     result.success(getBatteryState())
+                }
+                "getSystemPalette" -> {
+                    // Null on API < 31 and on any read failure: Dart then keeps
+                    // its own aqua accent instead of guessing a Material tone.
+                    result.success(readSystemPalette())
                 }
                 "dismissKeyguard" -> {
                     requestKeyguardDismissal { success ->
@@ -398,6 +420,133 @@ class LockSurfaceChannels(
         unregisterMediaSessionListener()
         MediaListenerService.removeSessionsMayHaveChangedListener(mediaListenerCallback)
         appsMethodChannel.setMethodCallHandler(null)
+    }
+
+    // --- System palette ----------------------------------------------------------------
+
+    /**
+     * Re-reads the ColorOS/Material You palette and pushes it to Dart when it
+     * changed since the last push.
+     *
+     * Called from `onResume` of both activities: a wallpaper or theme change
+     * resumes (or recreates) the activity, so this covers both. A read that
+     * fails or returns nothing below API 31 leaves the last value and the Dart
+     * fallback alone rather than blanking a working accent.
+     */
+    fun pushSystemPaletteIfChanged() {
+        val palette = readSystemPalette() ?: return
+        if (palette == lastSystemPalette) return
+        lastSystemPalette = palette
+        appsMethodChannel.invokeMethod("onSystemPaletteChanged", palette)
+    }
+
+    /**
+     * The Material You tonal palette, or null when it does not exist.
+     *
+     * `android.R.color.system_accent1_*` and friends were added in API 31; the
+     * compiler inlines the resource ids, so the guard is what keeps older
+     * devices from reading them. The map shape mirrors the Dart
+     * `SystemPalette.fromMap`: `"accent1" -> {"200": argb, ...}` plus
+     * `"source"`.
+     */
+    private fun readSystemPalette(): Map<String, Any?>? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+        return try {
+            mapOf(
+                "source" to "system",
+                "accent1" to accentTones(
+                    android.R.color.system_accent1_0,
+                    android.R.color.system_accent1_10,
+                    android.R.color.system_accent1_50,
+                    android.R.color.system_accent1_100,
+                    android.R.color.system_accent1_200,
+                    android.R.color.system_accent1_300,
+                    android.R.color.system_accent1_400,
+                    android.R.color.system_accent1_500,
+                    android.R.color.system_accent1_600,
+                    android.R.color.system_accent1_700,
+                    android.R.color.system_accent1_800,
+                    android.R.color.system_accent1_900,
+                    android.R.color.system_accent1_1000,
+                ),
+                "accent2" to accentTones(
+                    android.R.color.system_accent2_0,
+                    android.R.color.system_accent2_10,
+                    android.R.color.system_accent2_50,
+                    android.R.color.system_accent2_100,
+                    android.R.color.system_accent2_200,
+                    android.R.color.system_accent2_300,
+                    android.R.color.system_accent2_400,
+                    android.R.color.system_accent2_500,
+                    android.R.color.system_accent2_600,
+                    android.R.color.system_accent2_700,
+                    android.R.color.system_accent2_800,
+                    android.R.color.system_accent2_900,
+                    android.R.color.system_accent2_1000,
+                ),
+                "accent3" to accentTones(
+                    android.R.color.system_accent3_0,
+                    android.R.color.system_accent3_10,
+                    android.R.color.system_accent3_50,
+                    android.R.color.system_accent3_100,
+                    android.R.color.system_accent3_200,
+                    android.R.color.system_accent3_300,
+                    android.R.color.system_accent3_400,
+                    android.R.color.system_accent3_500,
+                    android.R.color.system_accent3_600,
+                    android.R.color.system_accent3_700,
+                    android.R.color.system_accent3_800,
+                    android.R.color.system_accent3_900,
+                    android.R.color.system_accent3_1000,
+                ),
+                "neutral1" to accentTones(
+                    android.R.color.system_neutral1_0,
+                    android.R.color.system_neutral1_10,
+                    android.R.color.system_neutral1_50,
+                    android.R.color.system_neutral1_100,
+                    android.R.color.system_neutral1_200,
+                    android.R.color.system_neutral1_300,
+                    android.R.color.system_neutral1_400,
+                    android.R.color.system_neutral1_500,
+                    android.R.color.system_neutral1_600,
+                    android.R.color.system_neutral1_700,
+                    android.R.color.system_neutral1_800,
+                    android.R.color.system_neutral1_900,
+                    android.R.color.system_neutral1_1000,
+                ),
+                "neutral2" to accentTones(
+                    android.R.color.system_neutral2_0,
+                    android.R.color.system_neutral2_10,
+                    android.R.color.system_neutral2_50,
+                    android.R.color.system_neutral2_100,
+                    android.R.color.system_neutral2_200,
+                    android.R.color.system_neutral2_300,
+                    android.R.color.system_neutral2_400,
+                    android.R.color.system_neutral2_500,
+                    android.R.color.system_neutral2_600,
+                    android.R.color.system_neutral2_700,
+                    android.R.color.system_neutral2_800,
+                    android.R.color.system_neutral2_900,
+                    android.R.color.system_neutral2_1000,
+                ),
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Pairs the thirteen Material tones with the resource ids read above.
+     *
+     * The ids arrive in [SYSTEM_TONES] order, so the index is the tone and the
+     * resource name cannot drift from the key Dart looks up.
+     */
+    private fun accentTones(vararg ids: Int): Map<String, Int> {
+        val tones = HashMap<String, Int>()
+        for (index in SYSTEM_TONES.indices) {
+            tones[SYSTEM_TONES[index].toString()] = activity.getColor(ids[index])
+        }
+        return tones
     }
 
     // --- App inventory -----------------------------------------------------------------
