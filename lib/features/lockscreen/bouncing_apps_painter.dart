@@ -1,32 +1,27 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import '../../ui/theme/luminous_home_theme.dart';
 import 'bouncing_physics_engine.dart';
 
-/// High-performance CustomPainter rendering cosmic glassmorphic bouncing app spheres,
-/// constellation filaments, impact contact sparks, and shake shockwaves.
+/// High-performance CustomPainter rendering cosmic glassmorphic ambient app
+/// spheres and their constellation filaments.
 ///
-/// Repaints are driven by the physics engine's [ChangeNotifier] (`repaint:
-/// physics`), so a simulation frame costs one canvas repaint — not a rebuild
-/// of the lock screen widget tree around it.
+/// The field is decoration: the painter draws spheres and their ambient
+/// effects and nothing else. It holds no labels and no touch affordances — the
+/// lock surface's only app targets are the phone and camera shortcuts, so a
+/// bubble is never a thing a user is invited to press.
+///
+/// Repaints are driven by the physics engine's [ChangeNotifier]
+/// (`repaint: physics`), so a simulation frame costs one canvas repaint — not
+/// a rebuild of the lock screen widget tree around it.
 class BouncingAppsPainter extends CustomPainter {
   final BouncingPhysicsEngine physics;
-  final AppBubble? draggedBubble;
-
-  /// Ambient system text scale, so painted app labels grow with the setting the
-  /// same way widget text does.
-  final TextScaler textScaler;
 
   // Statically allocated Paint objects to prevent GC pressure at 60/120 FPS
   static final Paint _filamentPaint = Paint()
     ..style = PaintingStyle.stroke
     ..strokeCap = StrokeCap.round;
-
-  static final Paint _ripplePaint = Paint()
-    ..style = PaintingStyle.stroke;
-
-  static final Paint _sparkPaint = Paint()
-    ..style = PaintingStyle.fill;
 
   static final Paint _auraPaint = Paint()
     ..style = PaintingStyle.fill;
@@ -44,11 +39,7 @@ class BouncingAppsPainter extends CustomPainter {
     ..filterQuality = FilterQuality.medium
     ..isAntiAlias = true;
 
-  BouncingAppsPainter({
-    required this.physics,
-    this.draggedBubble,
-    this.textScaler = TextScaler.noScaling,
-  }) : super(repaint: physics);
+  BouncingAppsPainter({required this.physics}) : super(repaint: physics);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -57,13 +48,7 @@ class BouncingAppsPainter extends CustomPainter {
     // 1. Draw Constellation Proximity Filaments between nearby bubbles
     _drawProximityFilaments(canvas);
 
-    // 2. Draw Cosmic Shockwave Ripples (from shake or major collisions)
-    _drawShockwaveRipples(canvas);
-
-    // 3. Draw Collision Contact Sparks
-    _drawSparks(canvas);
-
-    // 4. Draw App Spheres (Icons, Orbs, Labels)
+    // 2. Draw App Spheres (Icons and Orbs — never labels)
     _drawBubbles(canvas);
   }
 
@@ -103,39 +88,6 @@ class BouncingAppsPainter extends CustomPainter {
     }
   }
 
-  void _drawShockwaveRipples(Canvas canvas) {
-    for (final ripple in physics.ripples) {
-      final double r = ripple.currentRadius;
-      final double alpha = ripple.opacity;
-      if (r <= 0.0 || alpha <= 0.0) continue;
-
-      _ripplePaint
-        ..strokeWidth = 3.5 * (1.0 - ripple.progress * 0.6)
-        ..color = ripple.color.withValues(alpha: alpha * 0.85);
-
-      canvas.drawCircle(ripple.center, r, _ripplePaint);
-
-      // Inner faint harmonic echo
-      if (r > 20.0) {
-        _ripplePaint
-          ..strokeWidth = 1.5
-          ..color = ripple.color.withValues(alpha: alpha * 0.4);
-        canvas.drawCircle(ripple.center, r * 0.75, _ripplePaint);
-      }
-    }
-  }
-
-  void _drawSparks(Canvas canvas) {
-    for (final spark in physics.sparks) {
-      final double progress = (spark.age / spark.maxAge).clamp(0.0, 1.0);
-      final double alpha = (1.0 - progress);
-      final double currentSize = spark.initialSize * (1.0 - progress * 0.5);
-
-      _sparkPaint.color = spark.color.withValues(alpha: alpha);
-      canvas.drawCircle(spark.position, currentSize, _sparkPaint);
-    }
-  }
-
   void _drawBubbles(Canvas canvas) {
     for (final bubble in physics.bubbles) {
       canvas.save();
@@ -148,14 +100,16 @@ class BouncingAppsPainter extends CustomPainter {
 
       final double r = bubble.radius;
       final Color color = bubble.color;
-      final bool isDragged = bubble.isBeingDragged;
+      // The aura is what the eye reads as the sphere, so the engine confines
+      // this painted extent (not just the core) to the band.
+      final double painted = BouncingPhysicsEngine.paintedRadius(r);
 
       // A. Outer Radiant Cosmic Glow Aura
-      final double auraGlow = (0.2 + bubble.glowIntensity * 0.6 + (isDragged ? 0.3 : 0.0))
+      final double auraGlow = (0.2 + bubble.glowIntensity * 0.6)
           .clamp(0.0, 1.0);
       _auraPaint.shader = ui.Gradient.radial(
         Offset.zero,
-        r * 1.55,
+        painted,
         [
           color.withValues(alpha: auraGlow * 0.6),
           color.withValues(alpha: auraGlow * 0.2),
@@ -163,16 +117,16 @@ class BouncingAppsPainter extends CustomPainter {
         ],
         [0.35, 0.7, 1.0],
       );
-      canvas.drawCircle(Offset.zero, r * 1.55, _auraPaint);
+      canvas.drawCircle(Offset.zero, painted, _auraPaint);
 
       // B. Glassmorphic Cosmic Sphere Body
       _bubbleFillPaint.shader = ui.Gradient.radial(
         Offset(-r * 0.32, -r * 0.32),
         r * 1.3,
         [
-          const Color(0xFF1E2846).withValues(alpha: 0.95),
-          const Color(0xFF0D1426).withValues(alpha: 0.92),
-          const Color(0xFF050814).withValues(alpha: 0.96),
+          LuminousHomeTheme.bubbleShellTop.withValues(alpha: 0.95),
+          LuminousHomeTheme.bubbleShellMid.withValues(alpha: 0.92),
+          LuminousHomeTheme.bubbleShellDeep.withValues(alpha: 0.96),
         ],
         [0.0, 0.65, 1.0],
       );
@@ -191,28 +145,20 @@ class BouncingAppsPainter extends CustomPainter {
       );
       canvas.drawCircle(Offset(-r * 0.15, -r * 0.2), r * 0.55, _specularPaint);
 
-      // D. Glowing Neon Edge Border
+      // D. Hairline edge ring. One theme tone instead of a per-app glow
+      // gradient: the ring reads the same on every sphere against the dark
+      // field, and the app's accent lives in the aura and the fill.
       _bubbleBorderPaint
-        ..strokeWidth = isDragged ? 2.8 : 1.8
-        ..shader = ui.Gradient.linear(
-          Offset(-r, -r),
-          Offset(r, r),
-          [
-            color.withValues(alpha: isDragged ? 1.0 : 0.95),
-            color.withValues(alpha: 0.45),
-            color.withValues(alpha: isDragged ? 0.9 : 0.75),
-          ],
-          [0.0, 0.5, 1.0],
-        );
+        ..strokeWidth = 1.5
+        ..shader = null
+        ..color = LuminousHomeTheme.hairlineStrong;
       canvas.drawCircle(Offset.zero, r, _bubbleBorderPaint);
 
-      // E. Render App Icon inside sphere
+      // E. Render App Icon inside sphere. No label follows: the field is
+      // ambient, and a label under a drifting sphere is unreadable anyway.
       _drawAppIcon(canvas, bubble, r);
 
       canvas.restore();
-
-      // F. App Label (Rendered outside the transform matrix to keep text un-squashed)
-      _drawAppLabel(canvas, bubble);
     }
   }
 
@@ -275,57 +221,10 @@ class BouncingAppsPainter extends CustomPainter {
     }
   }
 
-  void _drawAppLabel(Canvas canvas, AppBubble bubble) {
-    final app = bubble.app;
-    app.ensurePainters(bubble.radius, textScaler: textScaler);
-
-    if (app.labelPainter != null) {
-      final double labelX = bubble.position.dx - (app.labelPainter!.width / 2);
-      final double labelY = bubble.position.dy + bubble.radius + 4.0;
-
-      final bool isDragged = bubble.isBeingDragged;
-
-      // Soft pill backdrop for label legibility over dark background
-      final Rect pillRect = Rect.fromLTWH(
-        labelX - (isDragged ? 6.0 : 4.0),
-        labelY - (isDragged ? 2.0 : 1.0),
-        app.labelPainter!.width + (isDragged ? 12.0 : 8.0),
-        app.labelPainter!.height + (isDragged ? 4.0 : 2.0),
-      );
-
-      final Paint pillPaint = Paint()
-        ..color = isDragged
-            ? const Color(0xEE0B162C)
-            : const Color(0x9903050B)
-        ..style = PaintingStyle.fill;
-
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(pillRect, Radius.circular(isDragged ? 8 : 5)),
-        pillPaint,
-      );
-
-      if (isDragged) {
-        final Paint pillBorder = Paint()
-          ..color = bubble.color.withValues(alpha: 0.8)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0;
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(pillRect, const Radius.circular(8)),
-          pillBorder,
-        );
-      }
-
-      app.labelPainter!.paint(canvas, Offset(labelX, labelY));
-    }
-  }
-
   @override
   bool shouldRepaint(covariant BouncingAppsPainter oldDelegate) {
     // Simulation frames arrive through the engine's repaint listenable, so a
-    // rebuild only needs to repaint when what the painter reads from the tree
-    // actually changed.
-    return oldDelegate.draggedBubble != draggedBubble ||
-        oldDelegate.physics != physics ||
-        oldDelegate.textScaler != textScaler;
+    // rebuild only needs to repaint when the engine it reads from changed.
+    return oldDelegate.physics != physics;
   }
 }

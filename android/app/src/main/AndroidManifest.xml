@@ -7,6 +7,17 @@
          FingerprintManager so no biometric system dialog is shown; that legacy
          path requires USE_FINGERPRINT (a normal, install-time permission). -->
     <uses-permission android:name="android.permission.USE_FINGERPRINT" />
+    <!-- The launcher's ambient/cross-app surfaces reach the network (browser
+         handoffs, wallpaper previews); the main manifest was missing it while
+         the debug manifest supplied it, so release builds silently lost it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Raising the lock activity on a screen-off broadcast is a background
+         activity start. The overlay grant is one exemption; without it the
+         lock surface is raised by a full-screen intent instead, which needs
+         these. POST_NOTIFICATIONS is runtime-granted on Android 13+. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="ChronoFold"
@@ -23,14 +34,19 @@
              `setLockScreenOverlayEnabled` channel method, so the occlusion
              exists only while the user has explicitly asked for it rather than
              from the moment the process starts. -->
+        <!-- Both launcher activities pin portrait. This is honoured on the
+             cover display (sw351dp) and deliberately ignored by Android 16 on
+             the inner display (sw692dp): at targetSdk 36 the platform ignores
+             orientation restrictions when the smallest width is >= 600dp, so
+             the inner display must lay out at any aspect ratio. The manifest is
+             the one source; the Dart side must not re-assert orientations. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:taskAffinity=""
             android:theme="@style/LaunchTheme"
-            android:screenOrientation="portrait"
             android:resizeableActivity="true"
+            android:screenOrientation="portrait"
             android:clearTaskOnLaunch="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -50,6 +66,48 @@
                 <category android:name="android.intent.category.DEFAULT"/>
             </intent-filter>
         </activity>
+
+        <!-- The lock surface raised over a foreign task on screen-off. Its own
+             task, so finishing it reveals exactly the app that was underneath
+             instead of the HOME task. It is not exported and has no
+             intent-filter: only this process raises it, and it is never a
+             general entry point. showWhenLocked/turnScreenOn are asserted in
+             the manifest and again in LockActivity.onCreate. -->
+        <activity
+            android:name=".LockActivity"
+            android:exported="false"
+            android:taskAffinity="com.launcher.chronofold.mylauncher.lock"
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:noHistory="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/LaunchTheme"
+            android:resizeableActivity="true"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode">
+            <!-- Same handoff as MainActivity: LaunchTheme until Flutter's first
+                 frame, then the dark NormalTheme, so the lock surface never
+                 flashes the (light) launch background. -->
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+        </activity>
+
+        <!-- The one thing MediaSessionManager needs to answer: an enabled
+             notification listener. It reads nothing and posts nothing; it
+             exists so the lock screen can mirror the active media session.
+             The user grants notification access once (P5 asks); the lock
+             screen itself never nags. -->
+        <service
+            android:name=".MediaListenerService"
+            android:exported="true"
+            android:label="ChronoFold media"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
 
         <!-- The optional, non-root ambient layer of the hybrid theme. Android's
              own preview flow decides whether it is applied; this service never

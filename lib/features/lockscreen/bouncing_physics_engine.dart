@@ -11,6 +11,16 @@ class AppBubble {
   double mass;
   Color color;
 
+  /// The centre of the cell this sphere was laid out in. The drift is gently
+  /// pulled back toward it, and the cell cap in [BouncingPhysicsEngine.update]
+  /// is measured from it.
+  Offset homePosition = Offset.zero;
+
+  /// How far the sphere may drift from [homePosition] on each axis. The cap
+  /// also intersects this with the band, so a sphere laid out on the band edge
+  /// can still drift inward but never paints past the edge.
+  Offset homeRange = Offset.zero;
+
   // Visual effects
   double bounceSquash = 1.0; // 1.0 = round, < 1.0 = squashed along collision
   double glowIntensity = 0.0;
@@ -27,57 +37,6 @@ class AppBubble {
   }) : color = color ?? app.accentColor;
 }
 
-/// Dynamic spark particle generated on bubble collision or shake.
-class BubbleSpark {
-  Offset position;
-  Offset velocity;
-  Color color;
-  double age = 0.0;
-  final double maxAge;
-  final double initialSize;
-
-  BubbleSpark({
-    required this.position,
-    required this.velocity,
-    required this.color,
-    this.maxAge = 0.45,
-    this.initialSize = 3.5,
-  });
-
-  bool get isDead => age >= maxAge;
-
-  void update(double dt) {
-    age += dt;
-    position += velocity * dt;
-    velocity *= 0.94; // Air resistance
-  }
-}
-
-/// Expanding celestial shockwave ripple.
-class CosmicRipple {
-  final Offset center;
-  final Color color;
-  final double maxRadius;
-  final double duration;
-  double age = 0.0;
-
-  CosmicRipple({
-    required this.center,
-    required this.color,
-    this.maxRadius = 140.0,
-    this.duration = 0.6,
-  });
-
-  bool get isDead => age >= duration;
-  double get progress => (age / duration).clamp(0.0, 1.0);
-  double get currentRadius => maxRadius * Curves.easeOutQuad.transform(progress);
-  double get opacity => (1.0 - progress).clamp(0.0, 1.0);
-
-  void update(double dt) {
-    age += dt;
-  }
-}
-
 /// Physics engine governing 2D circular collisions, boundary bounces,
 /// ambient cosmic drifts, and explosive shake dispersion.
 /// Physics simulation for the lock screen's bouncing app bubbles.
@@ -87,12 +46,34 @@ class CosmicRipple {
 /// canvas repaints, instead of the whole lock screen rebuilding per frame.
 class BouncingPhysicsEngine extends ChangeNotifier {
   final List<AppBubble> bubbles = [];
-  final List<BubbleSpark> sparks = [];
-  final List<CosmicRipple> ripples = [];
   final math.Random _random = math.Random();
 
   Size _viewportSize = Size.zero;
   EdgeInsets _safePadding = EdgeInsets.zero;
+
+  /// The empty space kept between two ring edges.
+  ///
+  /// The initial grid leaves it, the band change re-establishes it, and the
+  /// per-frame collision pass treats it as part of the collision distance so
+  /// the gap survives the drift instead of closing as soon as spheres move.
+  static const double minBubbleSeparation = 12.0;
+
+  /// How far the painted aura reaches past a sphere's core radius.
+  ///
+  /// The painter draws the glow at [paintedRadius], so confinement has to use
+  /// the same extent or the aura bleeds under the HUD.
+  static const double auraScale = 1.55;
+
+  /// The radius the painter actually covers for a sphere of [radius].
+  static double paintedRadius(double radius) => radius * auraScale;
+
+  /// A band change larger than this on any side re-runs the cell placement
+  /// instead of clamping the old grid against one edge.
+  static const double rebandThreshold = 8.0;
+
+  /// Spring pull toward the cell centre. Deliberately weak: the drift must
+  /// still read as drift, not as spheres snapping to a lattice.
+  static const double _cellSpring = 0.05;
 
   // Accelerometer Gravity Tilt Vector (-1.0 to 1.0)
   Offset tiltVector = Offset.zero;
@@ -108,8 +89,6 @@ class BouncingPhysicsEngine extends ChangeNotifier {
     _viewportSize = size;
     _safePadding = padding;
     bubbles.clear();
-    sparks.clear();
-    ripples.clear();
 
     if (apps.isEmpty || size.width <= 0 || size.height <= 0) return;
 
@@ -122,52 +101,216 @@ class BouncingPhysicsEngine extends ChangeNotifier {
       return a.label.compareTo(b.label);
     });
 
-    // Curate count so the lockscreen remains elegant, clean, and interactive
-    final bool isWide = size.width > 550;
-    final int maxApps = isWide ? 18 : 12;
-    final curatedApps = sortedApps.take(maxApps).toList();
-
-    // Generous, premium sphere sizing
-    final double baseRadius = isWide ? 35.0 : 32.0;
-
-    final double availableWidth = (size.width - padding.horizontal).clamp(100.0, size.width);
-    final double availableHeight = (size.height - padding.vertical).clamp(100.0, size.height);
-
-    final double centerX = size.width / 2;
-    final double centerY = padding.top + availableHeight * 0.48;
-
-    for (int i = 0; i < curatedApps.length; i++) {
-      final app = curatedApps[i];
-      final double angle = i * 2.3999632; // Golden ratio angle
-      final double distance = 36.0 + (i * 22.0).clamp(0.0, math.min(availableWidth, availableHeight) * 0.40);
-
-      final double x = (centerX + math.cos(angle) * distance)
-          .clamp(padding.left + baseRadius, size.width - padding.right - baseRadius);
-      final double y = (centerY + math.sin(angle) * distance)
-          .clamp(padding.top + baseRadius, size.height - padding.bottom - baseRadius);
-
-      // Tranquil, graceful initial cosmic drift
-      final double speed = 18.0 + _random.nextDouble() * 24.0;
-      final double moveAngle = _random.nextDouble() * 2 * math.pi;
-
+    // The field is ambient decoration now, not a touch surface: eight spheres
+    // are enough to read as a constellation, and more would only collide into
+    // visual noise behind the HUD.
+    final int maxApps = 8;
+    for (final app in sortedApps.take(maxApps)) {
       bubbles.add(
         AppBubble(
           app: app,
-          position: Offset(x, y),
-          velocity: Offset(math.cos(moveAngle) * speed, math.sin(moveAngle) * speed),
-          radius: baseRadius,
+          position: Offset(size.width / 2, size.height / 2),
+          velocity: Offset.zero,
           color: app.accentColor,
         ),
       );
     }
 
+    _placeInBand(preserveVelocity: false);
     notifyListeners();
   }
 
+  /// Lays the spheres out in evenly spaced cells across the current band.
+  ///
+  /// Each row spans the full usable width — one sphere per slot, the outermost
+  /// flush with the usable edge — so the field reads across the band instead of
+  /// piling against one side after a re-band. A little vertical jitter keeps a
+  /// row from looking ruled. [preserveVelocity] carries the existing drift
+  /// through a re-band; a fresh field gets a new slow drift instead.
+  void _placeInBand({bool preserveVelocity = true}) {
+    final int count = bubbles.length;
+    if (count == 0 || _viewportSize == Size.zero) return;
+
+    final bool isWide = _viewportSize.width > 550;
+    final double radius = isWide ? 30.0 : 26.0;
+    final double painted = paintedRadius(radius);
+    final double minX = _safePadding.left;
+    final double maxX = _viewportSize.width - _safePadding.right;
+    final double minY = _safePadding.top;
+    final double maxY = _viewportSize.height - _safePadding.bottom;
+    final double usableLeft = minX + painted;
+    final double usableRight = maxX - painted;
+    final double usableTop = minY + painted;
+    final double usableBottom = maxY - painted;
+    final double usableW = math.max(0.0, usableRight - usableLeft);
+    final double usableH = math.max(0.0, usableBottom - usableTop);
+
+    // A near-square column count keeps the rows balanced whatever the band.
+    int cols = 1;
+    if (count > 1 && usableW > 0 && usableH > 0) {
+      cols = math.sqrt(count * usableW / usableH).ceil().clamp(1, count);
+    }
+    final int rows = (count / cols).ceil();
+    final double cellH = rows > 0 ? usableH / rows : usableH;
+
+    for (int i = 0; i < count; i++) {
+      final bubble = bubbles[i];
+      bubble.radius = radius;
+
+      final int row = i ~/ cols;
+      final int col = i % cols;
+      final int rowCount = math.min(cols, count - row * cols);
+
+      final double centreY = usableH <= 0
+          ? (usableTop + usableBottom) / 2
+          : usableTop + cellH * (row + 0.5);
+      final double centreX = rowCount <= 1
+          ? usableLeft + usableW / 2
+          : usableLeft + usableW * col / (rowCount - 1);
+
+      // A sphere may drift half a cell from home on each axis; the cap in
+      // [update] intersects that with the band so the painted aura stays in.
+      final double halfSpacing = rowCount > 1
+          ? (usableW / (rowCount - 1)) / 2
+          : usableW / 2;
+      final double jitterY = cellH * 0.25;
+
+      bubble.homePosition = Offset(centreX, centreY);
+      bubble.homeRange = Offset(halfSpacing, cellH / 2);
+      bubble.position = Offset(
+        centreX,
+        _clamp(
+          centreY + (_random.nextDouble() * 2 - 1) * jitterY,
+          usableTop,
+          usableBottom,
+        ),
+      );
+
+      if (!preserveVelocity || bubble.velocity == Offset.zero) {
+        // A slow, tidal drift — the field should look alive, never busy.
+        final double speed = 7.0 + _random.nextDouble() * 10.0;
+        final double angle = _random.nextDouble() * 2 * math.pi;
+        bubble.velocity = Offset(math.cos(angle) * speed, math.sin(angle) * speed);
+      }
+    }
+
+    _resolveOverlaps();
+  }
+
   void resize(Size newSize, {EdgeInsets? padding}) {
+    final bool sizeChanged = _viewportSize != newSize;
     _viewportSize = newSize;
     if (padding != null) _safePadding = padding;
+    if (sizeChanged && bubbles.isNotEmpty) {
+      // A different viewport is a different grid, not a clamp.
+      _placeInBand();
+    } else {
+      _clampAllToBounds();
+      _resolveOverlaps();
+    }
     notifyListeners();
+  }
+
+  /// Confines the simulation to [bounds] in viewport coordinates.
+  ///
+  /// The lock surface hands the physics layer the rectangle between its last
+  /// HUD element and the unlock hint, measured after layout. A band that
+  /// changes (the now-playing card appearing, a text-scale change) re-lays the
+  /// spheres out inside the new band, so the field spreads across it instead of
+  /// clamping the old grid against one edge; only a band that barely moved is
+  /// handled by a fresh clamp.
+  void setBounds(Rect bounds, {Size? viewport}) {
+    final Size size = viewport ?? _viewportSize;
+    if (size.width <= 0 || size.height <= 0) return;
+    final EdgeInsets next = EdgeInsets.fromLTRB(
+      bounds.left,
+      bounds.top,
+      size.width - bounds.right,
+      size.height - bounds.bottom,
+    );
+    if (_viewportSize == size && _safePadding == next) return;
+    final bool sizeChanged = _viewportSize != size;
+    final bool bandMoved =
+        (_safePadding.left - next.left).abs() > rebandThreshold ||
+        (_safePadding.right - next.right).abs() > rebandThreshold ||
+        (_safePadding.top - next.top).abs() > rebandThreshold ||
+        (_safePadding.bottom - next.bottom).abs() > rebandThreshold;
+    _viewportSize = size;
+    _safePadding = next;
+    if (bubbles.isNotEmpty && (sizeChanged || bandMoved)) {
+      // The old grid is the wrong shape for this band: lay it out again
+      // instead of clamping every sphere against the nearer edge.
+      _placeInBand();
+    } else {
+      _clampAllToBounds();
+      _resolveOverlaps();
+    }
+    notifyListeners();
+  }
+
+  /// Keeps a value inside [lower]..[upper], tolerating an inverted pair.
+  ///
+  /// A band narrower than a sphere's diameter would otherwise make
+  /// `num.clamp` throw; the midpoint is the only honest answer there, and the
+  /// panel never leaves the band that tight in practice.
+  static double _clamp(double value, double lower, double upper) {
+    if (upper <= lower) return (lower + upper) / 2;
+    return value.clamp(lower, upper);
+  }
+
+  void _clampAllToBounds() {
+    if (_viewportSize == Size.zero) return;
+    for (final bubble in bubbles) {
+      final double painted = paintedRadius(bubble.radius);
+      bubble.position = Offset(
+        _clamp(
+          bubble.position.dx,
+          _safePadding.left + painted,
+          _viewportSize.width - _safePadding.right - painted,
+        ),
+        _clamp(
+          bubble.position.dy,
+          _safePadding.top + painted,
+          _viewportSize.height - _safePadding.bottom - painted,
+        ),
+      );
+    }
+  }
+
+  /// Pushes apart any pair closer than their radii plus [minBubbleSeparation].
+  ///
+  /// Used when the band changes rather than per frame: a re-clamp can squeeze
+  /// the outer row inward, and waiting for the ticker to untangle it would show
+  /// overlapping rings for one frame. A handful of passes settles <= 8 spheres;
+  /// the per-frame collision pass in [update] holds the gap afterwards.
+  void _resolveOverlaps() {
+    if (bubbles.length < 2) return;
+    for (int pass = 0; pass < 4; pass++) {
+      var moved = false;
+      for (int i = 0; i < bubbles.length; i++) {
+        for (int j = i + 1; j < bubbles.length; j++) {
+          final b1 = bubbles[i];
+          final b2 = bubbles[j];
+          final double dx = b2.position.dx - b1.position.dx;
+          final double dy = b2.position.dy - b1.position.dy;
+          final double distSq = dx * dx + dy * dy;
+          final double minDist =
+              b1.radius + b2.radius + minBubbleSeparation;
+          if (distSq >= minDist * minDist) continue;
+
+          final double dist = math.sqrt(distSq);
+          final Offset normal = dist > 0.001
+              ? Offset(dx / dist, dy / dist)
+              : const Offset(1.0, 0.0);
+          final double overlap = (minDist - dist) * 0.5;
+          b1.position -= normal * overlap;
+          b2.position += normal * overlap;
+          moved = true;
+        }
+      }
+      _clampAllToBounds();
+      if (!moved) break;
+    }
   }
 
   void update(double dt) {
@@ -182,7 +325,7 @@ class BouncingPhysicsEngine extends ChangeNotifier {
     final double maxY = _viewportSize.height - _safePadding.bottom;
 
     const double restitution = 0.85;
-    const double minDriftSpeed = 20.0;
+    const double minDriftSpeed = 7.0;
     const double maxSpeed = 1200.0;
 
     // 1. Position & velocity update + wall bouncing
@@ -196,6 +339,13 @@ class BouncingPhysicsEngine extends ChangeNotifier {
 
       // Update position
       bubble.position += bubble.velocity * clampedDt;
+
+      // A weak spring pulls the drift back toward the sphere's own cell. Weak
+      // on purpose: the field must still read as drift, not as a lattice.
+      if (bubble.homeRange != Offset.zero) {
+        bubble.velocity +=
+            (bubble.homePosition - bubble.position) * _cellSpring * clampedDt;
+      }
 
       // Decay glow & squash recovery
       if (bubble.glowIntensity > 0) {
@@ -221,30 +371,30 @@ class BouncingPhysicsEngine extends ChangeNotifier {
         bubble.velocity = Offset(math.cos(angle) * minDriftSpeed, math.sin(angle) * minDriftSpeed);
       }
 
+      // The aura is what the eye reads as the sphere, so the wall bounce keeps
+      // the painted extent inside the band, not just the core.
+      final double painted = paintedRadius(bubble.radius);
+
       // Left boundary
-      if (bubble.position.dx - bubble.radius < minX) {
-        bubble.position = Offset(minX + bubble.radius, bubble.position.dy);
+      if (bubble.position.dx - painted < minX) {
+        bubble.position = Offset(minX + painted, bubble.position.dy);
         bubble.velocity = Offset(-bubble.velocity.dx * restitution, bubble.velocity.dy);
-        _triggerWallSpark(bubble.position, const Offset(1, 0), bubble.color);
       }
       // Right boundary
-      else if (bubble.position.dx + bubble.radius > maxX) {
-        bubble.position = Offset(maxX - bubble.radius, bubble.position.dy);
+      else if (bubble.position.dx + painted > maxX) {
+        bubble.position = Offset(maxX - painted, bubble.position.dy);
         bubble.velocity = Offset(-bubble.velocity.dx * restitution, bubble.velocity.dy);
-        _triggerWallSpark(bubble.position, const Offset(-1, 0), bubble.color);
       }
 
       // Top boundary
-      if (bubble.position.dy - bubble.radius < minY) {
-        bubble.position = Offset(bubble.position.dx, minY + bubble.radius);
+      if (bubble.position.dy - painted < minY) {
+        bubble.position = Offset(bubble.position.dx, minY + painted);
         bubble.velocity = Offset(bubble.velocity.dx, -bubble.velocity.dy * restitution);
-        _triggerWallSpark(bubble.position, const Offset(0, 1), bubble.color);
       }
       // Bottom boundary
-      else if (bubble.position.dy + bubble.radius > maxY) {
-        bubble.position = Offset(bubble.position.dx, maxY - bubble.radius);
+      else if (bubble.position.dy + painted > maxY) {
+        bubble.position = Offset(bubble.position.dx, maxY - painted);
         bubble.velocity = Offset(bubble.velocity.dx, -bubble.velocity.dy * restitution);
-        _triggerWallSpark(bubble.position, const Offset(0, -1), bubble.color);
       }
     }
 
@@ -257,7 +407,8 @@ class BouncingPhysicsEngine extends ChangeNotifier {
         final double dx = b2.position.dx - b1.position.dx;
         final double dy = b2.position.dy - b1.position.dy;
         final double distSq = dx * dx + dy * dy;
-        final double minDist = b1.radius + b2.radius;
+        final double minDist =
+            b1.radius + b2.radius + minBubbleSeparation;
 
         if (distSq < minDist * minDist) {
           final double dist = math.sqrt(distSq);
@@ -296,27 +447,42 @@ class BouncingPhysicsEngine extends ChangeNotifier {
             b2.bounceSquash = (1.0 - impactIntensity * 0.18).clamp(0.78, 1.0);
             b1.glowIntensity = math.min(1.0, b1.glowIntensity + impactIntensity * 0.8);
             b2.glowIntensity = math.min(1.0, b2.glowIntensity + impactIntensity * 0.8);
-
-            // Spawn collision contact sparks
-            final Offset contactPoint = b1.position + normal * b1.radius;
-            _spawnCollisionSparks(contactPoint, b1.color, b2.color, impactIntensity);
           }
         }
       }
     }
 
-    // 3. Update sparks
-    for (int i = sparks.length - 1; i >= 0; i--) {
-      final spark = sparks[i];
-      spark.update(clampedDt);
-      if (spark.isDead) sparks.removeAt(i);
-    }
-
-    // 4. Update ripples
-    for (int i = ripples.length - 1; i >= 0; i--) {
-      final ripple = ripples[i];
-      ripple.update(clampedDt);
-      if (ripple.isDead) ripples.removeAt(i);
+    // 3. Cap each sphere to its own cell, intersected with the band. Applied
+    // after the collision pass so a resolution is never undone by the cap; a
+    // sphere laid out on the band edge can still drift inward, but its painted
+    // aura never leaves the band.
+    for (final bubble in bubbles) {
+      if (bubble.isBeingDragged || bubble.homeRange == Offset.zero) continue;
+      final double painted = paintedRadius(bubble.radius);
+      bubble.position = Offset(
+        _clamp(
+          bubble.position.dx,
+          math.max(
+            bubble.homePosition.dx - bubble.homeRange.dx,
+            minX + painted,
+          ),
+          math.min(
+            bubble.homePosition.dx + bubble.homeRange.dx,
+            maxX - painted,
+          ),
+        ),
+        _clamp(
+          bubble.position.dy,
+          math.max(
+            bubble.homePosition.dy - bubble.homeRange.dy,
+            minY + painted,
+          ),
+          math.min(
+            bubble.homePosition.dy + bubble.homeRange.dy,
+            maxY - painted,
+          ),
+        ),
+      );
     }
 
     // The painter listens to this and repaints only its own layer.
@@ -332,26 +498,6 @@ class BouncingPhysicsEngine extends ChangeNotifier {
 
     final Offset center = focalPoint ??
         Offset(_viewportSize.width / 2, _viewportSize.height * 0.52);
-
-    // Spawn massive shockwave ripple
-    ripples.add(
-      CosmicRipple(
-        center: center,
-        color: const Color(0xFF00E5FF),
-        maxRadius: math.max(_viewportSize.width, _viewportSize.height) * 0.85,
-        duration: 0.75,
-      ),
-    );
-
-    // Secondary warm ripple
-    ripples.add(
-      CosmicRipple(
-        center: center,
-        color: const Color(0xFF7C4DFF),
-        maxRadius: math.max(_viewportSize.width, _viewportSize.height) * 0.65,
-        duration: 0.85,
-      ),
-    );
 
     for (int i = 0; i < bubbles.length; i++) {
       final bubble = bubbles[i];
@@ -372,9 +518,6 @@ class BouncingPhysicsEngine extends ChangeNotifier {
       bubble.velocity = Offset(math.cos(angle) * speed, math.sin(angle) * speed);
       bubble.glowIntensity = 1.0;
       bubble.bounceSquash = 0.82;
-
-      // Spawn trail of sparks per bubble
-      _spawnCollisionSparks(bubble.position, bubble.color, const Color(0xFF00E5FF), 1.0, count: 5);
     }
 
     notifyListeners();
@@ -397,48 +540,5 @@ class BouncingPhysicsEngine extends ChangeNotifier {
       }
     }
     return null;
-  }
-
-  void _triggerWallSpark(Offset pos, Offset normal, Color color) {
-    if (sparks.length > 80) return;
-    for (int i = 0; i < 3; i++) {
-      final double angle = math.atan2(normal.dy, normal.dx) +
-          (_random.nextDouble() - 0.5) * 1.2;
-      final double speed = 50.0 + _random.nextDouble() * 100.0;
-      sparks.add(
-        BubbleSpark(
-          position: pos,
-          velocity: Offset(math.cos(angle) * speed, math.sin(angle) * speed),
-          color: color,
-          maxAge: 0.35,
-          initialSize: 3.0,
-        ),
-      );
-    }
-  }
-
-  void _spawnCollisionSparks(
-    Offset contactPoint,
-    Color color1,
-    Color color2,
-    double intensity, {
-    int count = 4,
-  }) {
-    if (sparks.length > 90) return;
-    final int actualCount = (count * intensity).clamp(2, 6).toInt();
-    for (int i = 0; i < actualCount; i++) {
-      final double angle = _random.nextDouble() * 2 * math.pi;
-      final double speed = (60.0 + _random.nextDouble() * 160.0) * intensity;
-      final Color sparkColor = _random.nextBool() ? color1 : color2;
-      sparks.add(
-        BubbleSpark(
-          position: contactPoint,
-          velocity: Offset(math.cos(angle) * speed, math.sin(angle) * speed),
-          color: sparkColor,
-          maxAge: 0.28 + _random.nextDouble() * 0.15,
-          initialSize: 2.5 + intensity * 1.5,
-        ),
-      );
-    }
   }
 }

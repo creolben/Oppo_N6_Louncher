@@ -5,6 +5,61 @@ import 'package:mylauncher/features/lockscreen/bouncing_physics_engine.dart';
 import 'package:mylauncher/features/lockscreen/cosmic_lock_screen.dart';
 import 'package:mylauncher/models/app_entry.dart';
 
+/// Eight ambient apps, enough to fill the engine's cap and exercise the grid.
+List<AppEntry> _eightApps() => List<AppEntry>.generate(
+  8,
+  (i) => AppEntry(
+    packageName: 'com.test.ambient$i',
+    label: 'Ambient $i',
+    category: AppCategory.tools,
+    accentColor: Colors.primaries[i % Colors.primaries.length],
+  ),
+);
+
+/// The smallest surface-to-surface distance between any two rings.
+double _minRingGap(List<AppBubble> bubbles) {
+  var gap = double.infinity;
+  for (int i = 0; i < bubbles.length; i++) {
+    for (int j = i + 1; j < bubbles.length; j++) {
+      final double centre = (bubbles[i].position - bubbles[j].position).distance;
+      final double surface = centre - bubbles[i].radius - bubbles[j].radius;
+      if (surface < gap) gap = surface;
+    }
+  }
+  return gap;
+}
+
+/// Asserts every sphere's painted aura lies inside [band].
+void _expectPaintedInside(
+  BouncingPhysicsEngine engine,
+  Rect band, {
+  double tolerance = 0.01,
+}) {
+  for (final bubble in engine.bubbles) {
+    final double painted = BouncingPhysicsEngine.paintedRadius(bubble.radius);
+    expect(
+      bubble.position.dx - painted,
+      greaterThanOrEqualTo(band.left - tolerance),
+      reason: '${bubble.app.label} paints past the left edge',
+    );
+    expect(
+      bubble.position.dx + painted,
+      lessThanOrEqualTo(band.right + tolerance),
+      reason: '${bubble.app.label} paints past the right edge',
+    );
+    expect(
+      bubble.position.dy - painted,
+      greaterThanOrEqualTo(band.top - tolerance),
+      reason: '${bubble.app.label} paints past the top edge',
+    );
+    expect(
+      bubble.position.dy + painted,
+      lessThanOrEqualTo(band.bottom + tolerance),
+      reason: '${bubble.app.label} paints past the bottom edge',
+    );
+  }
+}
+
 void main() {
   group('BouncingPhysicsEngine Tests', () {
     late BouncingPhysicsEngine engine;
@@ -67,7 +122,13 @@ void main() {
       // Should have bounced off right boundary and reversed horizontal velocity
       expect(b.velocity.dx, lessThan(0));
       expect(b.position.dx, lessThanOrEqualTo(size.width - 20));
-      expect(engine.sparks.isNotEmpty, isTrue);
+      // The bounce confines the painted aura, not just the core ring.
+      expect(
+        b.position.dx,
+        lessThanOrEqualTo(
+          size.width - 20 - BouncingPhysicsEngine.paintedRadius(b.radius) + 0.001,
+        ),
+      );
     });
 
     test(
@@ -100,6 +161,95 @@ void main() {
       },
     );
 
+    test('initial placement keeps the rings separated', () {
+      const size = Size(800, 600);
+      engine.initializeBubbles(apps: _eightApps(), size: size);
+      engine.setBounds(
+        const Rect.fromLTRB(60, 120, 740, 520),
+        viewport: size,
+      );
+
+      expect(
+        _minRingGap(engine.bubbles),
+        greaterThanOrEqualTo(
+          BouncingPhysicsEngine.minBubbleSeparation - 0.5,
+        ),
+      );
+    });
+
+    test('re-lays a band 300 dp wide across its width, not one edge', () {
+      const size = Size(400, 900);
+      engine.initializeBubbles(apps: _eightApps(), size: size);
+
+      // A band much narrower than the provisional one is exactly the case
+      // that used to end with every sphere clamped against one edge.
+      engine.setBounds(
+        const Rect.fromLTRB(50, 200, 350, 700),
+        viewport: size,
+      );
+
+      final xs = engine.bubbles.map((bubble) => bubble.position.dx).toList();
+      final double span =
+          xs.reduce((a, b) => a > b ? a : b) -
+          xs.reduce((a, b) => a < b ? a : b);
+
+      expect(
+        span,
+        greaterThanOrEqualTo(0.60 * 300.0),
+        reason: 'a re-band must spread the grid across the band',
+      );
+    });
+
+    test('painted auras stay inside the band through init, re-band and drift', () {
+      const size = Size(400, 900);
+      engine.initializeBubbles(
+        apps: _eightApps(),
+        size: size,
+        padding: const EdgeInsets.all(40),
+      );
+      _expectPaintedInside(engine, const Rect.fromLTRB(40, 40, 360, 860));
+
+      const band = Rect.fromLTRB(50, 200, 350, 700);
+      engine.setBounds(band, viewport: size);
+      _expectPaintedInside(engine, band);
+
+      for (int i = 0; i < 600; i++) {
+        engine.update(0.016);
+      }
+      _expectPaintedInside(engine, band);
+    });
+
+    test('collision handling keeps two drifting rings separated', () {
+      const size = Size(500, 500);
+      engine.initializeBubbles(
+        apps: testApps.take(2).toList(),
+        size: size,
+        padding: const EdgeInsets.all(20),
+      );
+
+      final b1 = engine.bubbles[0]..radius = 30.0;
+      final b2 = engine.bubbles[1]..radius = 30.0;
+      // Start overlapped and closing: the first step must part them to the
+      // separation and every later collision must hold it.
+      b1.position = const Offset(200, 250);
+      b2.position = const Offset(250, 250);
+      b1.velocity = const Offset(80, 0);
+      b2.velocity = const Offset(-80, 0);
+
+      for (int i = 0; i < 120; i++) {
+        engine.update(0.016);
+        final double gap =
+            (b2.position - b1.position).distance - b1.radius - b2.radius;
+        expect(
+          gap,
+          greaterThanOrEqualTo(
+            BouncingPhysicsEngine.minBubbleSeparation - 0.5,
+          ),
+          reason: 'the rings must keep the separation at frame $i',
+        );
+      }
+    });
+
     test(
       'triggerShakeScatter disperses all bubbles outwards with high speed',
       () {
@@ -108,7 +258,7 @@ void main() {
 
         engine.triggerShakeScatter(strength: 1.5);
 
-        expect(engine.ripples.isNotEmpty, isTrue);
+        expect(engine.bubbles, isNotEmpty);
         for (final bubble in engine.bubbles) {
           // High dispersion velocity after shake
           expect(bubble.velocity.distance, greaterThan(500.0));
@@ -182,7 +332,7 @@ void main() {
   });
 
   group('CosmicLockScreen Widget Tests', () {
-    testWidgets('Renders bouncing apps lock screen and triggers shake button', (
+    testWidgets('Renders the calm lock screen and swipes up once unlocked', (
       tester,
     ) async {
       final foldable = FoldableController();
@@ -212,37 +362,28 @@ void main() {
               foldable: foldable,
               apps: apps,
               onUnlock: () => unlocked = true,
-              initialAuthenticated: true,
-              // This test is about rendering and the shake trigger, and it ends
-              // with a swipe. The swipe only clears the panel for someone the
-              // platform has authenticated, so the device is reported unlocked
-              // here to keep the assertion about the gesture rather than about
-              // the keyguard. The keyguard contract has its own tests.
+              // This test is about rendering and the swipe. The swipe only
+              // clears the panel for someone the platform has authenticated,
+              // so the device is reported unlocked here to keep the assertion
+              // about the gesture rather than about the keyguard. The keyguard
+              // contract has its own tests.
               isKeyguardLocked: () async => false,
             ),
           ),
         ),
       );
+      await tester.pump(const Duration(milliseconds: 300));
 
-      // Verify custom painter is present
+      // The field is painted; the chip row and the SHAKE control are gone;
+      // the hint names only the gesture the panel actually owns.
       expect(find.byType(CustomPaint), findsWidgets);
-      expect(find.text('SHAKE'), findsOneWidget);
-      expect(
-        find.text('TAP APP TO LAUNCH • SWIPE UP TO ENTER'),
-        findsOneWidget,
-      );
+      expect(find.text('SHAKE'), findsNothing);
+      expect(find.text('★ Featured'), findsNothing);
+      expect(find.text('Core'), findsNothing);
+      expect(find.text('Locked'), findsOneWidget);
+      expect(find.text('Swipe up to unlock'), findsOneWidget);
 
-      // Tap SHAKE button
-      await tester.tap(find.text('SHAKE'));
-      await tester.pump(const Duration(milliseconds: 100));
-
-      // Verify turbulence indicator appears
-      expect(
-        find.text('⚡ COSMIC SHAKE DETECTED • APPS DISPERSED'),
-        findsOneWidget,
-      );
-
-      // Perform swipe up from the bottom unlock area
+      // Perform swipe up from the bottom unlock area.
       await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
       for (int i = 0; i < 12; i++) {
         await tester.pump(const Duration(milliseconds: 40));
@@ -250,57 +391,6 @@ void main() {
 
       expect(unlocked, isTrue);
     });
-
-    testWidgets(
-      'Bouncing apps and category chips are immediately accessible on lock screen',
-      (tester) async {
-        final foldable = FoldableController();
-        bool unlocked = false;
-
-        final apps = [
-          AppEntry(
-            packageName: 'com.test.phone',
-            label: 'Phone',
-            category: AppCategory.core,
-            accentColor: Colors.green,
-            fallbackIcon: Icons.phone,
-          ),
-        ];
-
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: CosmicLockScreen(
-                foldable: foldable,
-                apps: apps,
-                onUnlock: () => unlocked = true,
-                // See the note above: the swipe at the end of this test is not the
-                // subject, so the device is reported already unlocked.
-                isKeyguardLocked: () async => false,
-              ),
-            ),
-          ),
-        );
-
-        // Bouncing apps canvas and category chips are always visible
-        expect(find.byType(CustomPaint), findsWidgets);
-        expect(find.text('★ Featured'), findsOneWidget);
-        expect(find.text('Core'), findsOneWidget);
-        expect(find.text('Social'), findsOneWidget);
-        expect(
-          find.text('TAP APP TO LAUNCH • SWIPE UP TO ENTER'),
-          findsOneWidget,
-        );
-        expect(find.text('LOCKED'), findsOneWidget);
-
-        // Swipe up enters the launcher once the device is not locked
-        await tester.dragFrom(const Offset(400, 550), const Offset(0, -300));
-        for (int i = 0; i < 12; i++) {
-          await tester.pump(const Duration(milliseconds: 40));
-        }
-        expect(unlocked, isTrue);
-      },
-    );
 
     testWidgets(
       'Swipe up does NOT enter the launcher while the device is locked',

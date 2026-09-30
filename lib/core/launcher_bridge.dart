@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/app_entry.dart';
+import '../models/now_playing.dart';
 import '../models/quick_shortcut.dart';
 
 class LauncherBridge {  static const MethodChannel _appsChannel =
@@ -13,8 +14,11 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
       EventChannel('com.launcher.chronofold/shake');
   static const EventChannel _fingerprintChannel =
       EventChannel('com.launcher.chronofold/fingerprint');
+  static const EventChannel _mediaChannel =
+      EventChannel('com.launcher.chronofold/media');
 
   static Stream<Map<String, dynamic>>? _shakeStream;
+  static Stream<NowPlaying?>? _mediaStream;
 
   /// Edge length icons are decoded at, matching the native side's downscale.
   static const int _iconPixels = 96;
@@ -281,12 +285,24 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
 
   /// Arms the sensor without showing any system UI, so a touch on the reader
   /// authenticates straight away. Results arrive on [fingerprintEvents].
-  static Future<void> startFingerprintScan() async {
-    if (kIsWeb || !Platform.isAndroid) return;
+  ///
+  /// Returns whether a session genuinely started. Every refusal reports
+  /// `false` alongside its event, so an arm that never happened cannot
+  /// masquerade as a live session: the caller's armed state is "a scan was
+  /// started and no terminal event has arrived", built from this answer —
+  /// never from the arrival of `listening`, which the platform now emits
+  /// only on real sensor activity (a partial read) and which a clean first
+  /// touch never triggers at all. A bare touch needs no prompt, so a missing
+  /// `listening` costs nothing.
+  static Future<bool> startFingerprintScan() async {
+    if (kIsWeb || !Platform.isAndroid) return false;
     try {
-      await _appsChannel.invokeMethod('startFingerprintScan');
+      final bool? started =
+          await _appsChannel.invokeMethod('startFingerprintScan');
+      return started ?? false;
     } catch (e) {
       debugPrint('Starting fingerprint scan failed: $e');
+      return false;
     }
   }
 
@@ -316,6 +332,80 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return _fingerprintChannel
         .receiveBroadcastStream()
         .map((event) => Map<String, dynamic>.from(event as Map));
+  }
+
+  /// The platform's current now-playing session, or null when there is none.
+  ///
+  /// The native side emits only on metadata/transport changes, not on every
+  /// position tick; the card extrapolates position itself. On a non-Android
+  /// host there is no session to observe, so the stream is empty rather than a
+  /// channel that would fail on every listen in a test.
+  static Stream<NowPlaying?> get mediaStream {
+    if (_mediaStream == null) {
+      if (!kIsWeb && Platform.isAndroid) {
+        _mediaStream = _mediaChannel.receiveBroadcastStream().map((event) {
+          if (event == null) return null;
+          return NowPlaying.fromMap(Map<String, dynamic>.from(event as Map));
+        });
+      } else {
+        _mediaStream = const Stream<NowPlaying?>.empty();
+      }
+    }
+    return _mediaStream!;
+  }
+
+  /// Whether the user has granted notification access, which is the one thing
+  /// `MediaSessionManager.getActiveSessions` requires. False on a host that has
+  /// no such setting, so the caller hides the card rather than promising media
+  /// it cannot see.
+  static Future<bool> hasMediaAccess() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? granted = await _appsChannel.invokeMethod('hasMediaAccess');
+        return granted ?? false;
+      } catch (e) {
+        debugPrint('CF_MEDIA: checking notification-listener access failed: $e');
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /// Opens the system's notification-access settings.
+  ///
+  /// The platform owns this grant and only the user can give it, so this is a
+  /// handoff, not a request dialog. Returns whether the settings screen could be
+  /// opened.
+  static Future<bool> requestMediaAccess() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? opened =
+            await _appsChannel.invokeMethod('requestMediaAccess');
+        return opened ?? false;
+      } catch (e) {
+        debugPrint('CF_MEDIA: opening notification-listener settings failed: $e');
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /// Sends `playPause`, `next` or `previous` to the primary media session.
+  /// Returns whether the platform reported the transport control handled it.
+  static Future<bool> mediaCommand(String command) async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? handled = await _appsChannel.invokeMethod(
+          'mediaCommand',
+          {'command': command},
+        );
+        return handled ?? false;
+      } catch (e) {
+        debugPrint('CF_MEDIA: media command "$command" failed: $e');
+        return false;
+      }
+    }
+    return false;
   }
 
   static Future<bool> isDefaultLauncher() async {
@@ -359,6 +449,62 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return true;
   }
 
+  /// Whether any credential (PIN, pattern, fingerprint) protects this device.
+  ///
+  /// Full lock ownership is the settled product decision — the launcher
+  /// mounts its own lock surface on a device with no secure lock too — so
+  /// this is not a gate for mounting anything. The panel uses it to stay
+  /// honest on such a device: with no credential there is no fingerprint
+  /// that could ever be enrolled, so it neither arms a reader nor asks for
+  /// one. A missing answer is treated as secure (the capability gate still
+  /// refuses a scan on a device with nothing enrolled), because answering
+  /// "not secure" to a failed probe would silently take the reader away from
+  /// a device that has one.
+  static Future<bool> isDeviceSecure() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? secure = await _appsChannel.invokeMethod('isDeviceSecure');
+        return secure ?? true;
+      } catch (e) {
+        debugPrint('Check device secure failed: $e');
+        return true;
+      }
+    }
+    // Non-Android test hosts simulate a locked keyguard for the lockscreen
+    // fixtures (see [isKeyguardLocked]), and a locked keyguard implies a
+    // credential; the panel's behaviour there stays on the secure path.
+    return true;
+  }
+
+  /// The real battery state for the lock surface — level 0-100 and whether
+  /// the device is charging — or null when the platform cannot report a
+  /// level.
+  ///
+  /// The lock panel used to hardcode `92%` under an always-lit charging
+  /// glyph, and a lock screen that lies about the battery is the opposite of
+  /// feeling native. Unknown travels as null rather than a sentinel number
+  /// so the panel can hide the percentage instead of inventing one: a
+  /// sentinel could not be told apart from a genuine answer downstream.
+  static Future<BatteryState?> batteryState() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final Map<Object?, Object?>? raw = await _appsChannel
+            .invokeMethod<Map<Object?, Object?>>('getBatteryState');
+        if (raw == null) return null;
+        return BatteryState(
+          level: raw['level'] as int?,
+          charging: raw['charging'] == true,
+        );
+      } catch (e) {
+        debugPrint('Reading battery state failed: $e');
+        return null;
+      }
+    }
+    // No platform to ask: unknown, which the panel renders as a glyph with
+    // no percentage.
+    return null;
+  }
+
   /// Asks the platform to authenticate the user and clear the keyguard, without
   /// launching anything.
   ///
@@ -396,6 +542,63 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
       }
     }
     return true;
+  }
+
+  /// Leaves the lock surface so the user lands on whatever is underneath.
+  ///
+  /// Only meaningful for the lock activity (`lockMain`): dismissing the panel
+  /// there has to finish the activity, not merely unmount a widget, or the
+  /// empty lock task would sit over the app. The launcher's own panel
+  /// acknowledges the request without closing the HOME activity. Returns
+  /// whether the native host accepted it.
+  static Future<bool> finishLock() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? finished = await _appsChannel.invokeMethod('finishLock');
+        return finished ?? false;
+      } catch (e) {
+        debugPrint('CF_LOCK: finishLock failed: $e');
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /// Whether this app may draw over other apps.
+  ///
+  /// That grant is the one exemption from Android's background-activity-launch
+  /// limits, so it decides whether the lock surface can be raised directly on
+  /// screen-off or needs a full-screen-intent notification instead.
+  static Future<bool> hasOverlayAccess() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? granted = await _appsChannel.invokeMethod('hasOverlayAccess');
+        return granted ?? false;
+      } catch (e) {
+        debugPrint('CF_LOCK: checking overlay access failed: $e');
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /// Opens the system's "display over other apps" page for this app.
+  ///
+  /// The platform owns this grant and only the user can give it, so this is a
+  /// handoff, not a request dialog. Returns whether the settings screen could
+  /// be opened.
+  static Future<bool> requestOverlayAccess() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? opened =
+            await _appsChannel.invokeMethod('requestOverlayAccess');
+        return opened ?? false;
+      } catch (e) {
+        debugPrint('CF_LOCK: opening overlay settings failed: $e');
+        return false;
+      }
+    }
+    return false;
   }
 
   /// Tells Android that Flutter has produced a new launcher frame after a
@@ -866,6 +1069,31 @@ class FingerprintCapability {
 
   /// True only when a scan can actually be armed.
   bool get isReady => hardware && enrolled;
+}
+
+/// What the platform reports about the battery, for the lock surface.
+class BatteryState {
+  /// Remaining charge, 0-100. Null when the platform could not report a
+  /// level — the lock surface then hides the percentage rather than
+  /// inventing one.
+  final int? level;
+
+  /// Whether the device is currently charging.
+  final bool charging;
+
+  const BatteryState({required this.level, required this.charging});
+
+  /// What the lock surface shows for the level: `'92%'`, or null when the
+  /// level is unknown. Pure on purpose, so the unknown rule — hide, never
+  /// invent — is pinned by a unit test without pumping a widget.
+  String? get percentage => level == null ? null : '$level%';
+
+  /// The glyph the lock surface shows: the charging glyph while plugged in,
+  /// a plain battery otherwise. The old row lit the charging glyph forever.
+  IconData get icon =>
+      charging
+          ? Icons.battery_charging_full_rounded
+          : Icons.battery_std_rounded;
 }
 
 /// How `ACTION_WEB_SEARCH` resolves on this device.

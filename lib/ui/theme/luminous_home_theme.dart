@@ -34,6 +34,19 @@ abstract final class LuminousHomeTheme {
   static const Color shadow = Color(0x7A00040C);
   static const Color notification = Color(0xFFFF526B);
 
+  // The lock surface's own field. It is a deeper, quieter version of the home
+  // background because the lock screen is seen at night, at low brightness, and
+  // must not compete with the clock.
+  static const Color lockFieldGlow = Color(0xFF0D1426);
+  static const Color lockField = Color(0xFF070A14);
+  static const Color lockFieldDeep = Color(0xFF020306);
+
+  // Ambient bubble shells. Kept here rather than in the painter so the palette
+  // stays in one place; the sphere reads as one glass object, not three colours.
+  static const Color bubbleShellTop = Color(0xFF1E2846);
+  static const Color bubbleShellMid = Color(0xFF0D1426);
+  static const Color bubbleShellDeep = Color(0xFF050814);
+
   static const double screenGutter = 20;
   static const double cardRadius = 28;
   static const double controlRadius = 18;
