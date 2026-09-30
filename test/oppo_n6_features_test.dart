@@ -4,7 +4,6 @@ import 'package:mylauncher/core/galaxy_layout_engine.dart';
 import 'package:mylauncher/core/foldable_controller.dart';
 import 'package:mylauncher/canvas/camera_controller.dart';
 import 'package:mylauncher/models/app_entry.dart';
-import 'package:mylauncher/features/lockscreen/bouncing_physics_engine.dart';
 import 'package:mylauncher/ui/widgets/search_overlay.dart';
 import 'package:mylauncher/ui/screens/tabletop_cockpit_view.dart';
 import 'package:mylauncher/canvas/galaxy_interactive_canvas.dart';
@@ -39,26 +38,6 @@ void main() {
       expect(engine.isAppHidden('com.test.secret'), isFalse);
       final prodConstellation = engine.constellations.firstWhere((c) => c.id == 'productivity');
       expect(prodConstellation.apps.any((a) => a.packageName == 'com.test.secret'), isTrue);
-    });
-
-    test('BouncingPhysicsEngine accelerates bubbles with gravity tilt vector', () {
-      final engine = BouncingPhysicsEngine();
-      final testApp = AppEntry(packageName: 'com.test.bubble', label: 'Test Bubble');
-      engine.initializeBubbles(
-        apps: [testApp],
-        size: const Size(400, 800),
-      );
-
-      expect(engine.bubbles.length, 1);
-      final bubble = engine.bubbles.first;
-      bubble.velocity = Offset.zero;
-
-      // Apply rightward tilt
-      engine.tiltVector = const Offset(1.0, 0.0);
-      engine.update(1.0 / 60.0);
-
-      // Bubble should have gained positive dx velocity
-      expect(bubble.velocity.dx, greaterThan(0.0));
     });
 
     testWidgets('SearchOverlay renders A-Z scrubber rail and Hidden sector tab', (tester) async {

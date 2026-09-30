@@ -233,10 +233,6 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   String? _turbulenceMessage;
   Timer? _turbulenceTimer;
 
-  /// The native accelerometer stream, kept only for gravity tilt. Shake-to-
-  /// scatter is gone; the field leans with the phone instead of reacting to it.
-  StreamSubscription<Map<String, dynamic>>? _motionSubscription;
-
   // Silent fingerprint sensor. The reader is the side power button, not the
   // panel, so the lock screen deliberately draws no fingerprint affordance:
   // no image can be touched to unlock. This flag only records that the sensor
@@ -557,6 +553,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       _ambientIdleTimer?.cancel();
       _ambientIdleTimer = null;
       if (_physicsTicker.isActive) _physicsTicker.stop();
+      // No ticker means no breath: park the field so reduce-motion gets a
+      // static grid rather than a frozen frame of the animation.
+      _physicsEngine.settleToHome();
       return;
     }
     _touchAmbientMotion();
@@ -625,22 +624,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     // 60/120 FPS Physics simulation loop
     _physicsTicker = createTicker(_onPhysicsTick);
 
-    // Native Android gravity tilt stream. Shake-to-scatter was removed with
-    // the interactive field: a lock screen that launches apps on a shake is a
-    // liability, and the field is decoration now.
-    _motionSubscription = LauncherBridge.getShakeStream().listen((event) {
-      if (!mounted) return;
-      final type = event['type'] as String? ?? 'tilt';
-      if (type == 'tilt') {
-        final x = (event['x'] as num?)?.toDouble() ?? 0.0;
-        final y = (event['y'] as num?)?.toDouble() ?? 0.0;
-        // Map phone coordinate system: tilting right (+x) accelerates right (+dx), tilting top toward user accelerates down (+dy)
-        // Normal gravity on flat table is ~0 on X, ~0 on Y, ~9.8 on Z.
-        final tiltX = (x / 9.8).clamp(-1.0, 1.0);
-        final tiltY = (y / 9.8).clamp(-1.0, 1.0);
-        _physicsEngine.tiltVector = Offset(-tiltX, tiltY);
-      }
-    });
+    // The field is deliberately deaf to the accelerometer. An ambient grid
+    // that leans with the phone reads as broken on an upright device (gravity
+    // pinned every sphere to one edge), so the panel no longer subscribes to
+    // the shake/tilt stream at all.
 
     // The panel turning on is the first moment the reader can be held again,
     // and it arrives before the activity resumes.
@@ -1607,7 +1594,6 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     LauncherBridge.stopFingerprintScan();
     _physicsTicker.dispose();
     _slideController.dispose();
-    _motionSubscription?.cancel();
     super.dispose();
   }
 
@@ -1700,13 +1686,13 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
               // frames repaint this canvas alone, and HUD state changes never
               // repaint the spheres.
               //
-              // The field takes no touches and sits at 70% (35% while a
-              // session plays), so it reads as ambiance rather than as a set
-              // of buttons behind the HUD.
+              // The field takes no touches and sits at 80% (55% while a
+              // session plays): calmer than the now-playing card, but bright
+              // enough that a dark app mark stays legible on its plate.
               Positioned.fill(
                 child: IgnorePointer(
                   child: AnimatedOpacity(
-                    opacity: _mediaPlaying ? 0.35 : 0.70,
+                    opacity: _mediaPlaying ? 0.55 : 0.80,
                     duration: const Duration(milliseconds: 250),
                     child: RepaintBoundary(
                       key: _bubbleFieldKey,
@@ -1828,7 +1814,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                                     blurRadius: 18,
                                   ),
                                   const Shadow(
-                                    color: Colors.black,
+                                    color: LuminousHomeTheme.black,
                                     blurRadius: 12,
                                   ),
                                 ],
@@ -1844,7 +1830,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                                 fontWeight: FontWeight.w500,
                                 letterSpacing: 0.2,
                                 shadows: [
-                                  Shadow(color: Colors.black, blurRadius: 8),
+                                  Shadow(color: LuminousHomeTheme.black, blurRadius: 8),
                                 ],
                               ),
                             ),
@@ -1971,7 +1957,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                                 fontWeight: FontWeight.w500,
                                 letterSpacing: 0.3,
                                 shadows: [
-                                  Shadow(color: Colors.black, blurRadius: 6),
+                                  Shadow(color: LuminousHomeTheme.black, blurRadius: 6),
                                 ],
                               ),
                             ),

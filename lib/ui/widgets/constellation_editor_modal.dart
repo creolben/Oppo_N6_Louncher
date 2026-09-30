@@ -5,6 +5,7 @@ import '../../models/app_entry.dart';
 import '../../models/constellation.dart';
 import '../../core/galaxy_layout_engine.dart';
 import '../../core/galaxy_storage_service.dart';
+import '../theme/luminous_home_theme.dart';
 
 class ConstellationEditorModal extends StatefulWidget {
   final Constellation constellation;
@@ -91,7 +92,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
               child: Container(
                 height: MediaQuery.of(context).size.height * 0.72,
                 decoration: BoxDecoration(
-                  color: const Color(0xEE0D1224),
+                  color: LuminousHomeTheme.panelScrim,
                   borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
                   border: Border(
                     top: BorderSide(
@@ -107,7 +108,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: Colors.white24,
+                        color: LuminousHomeTheme.white24,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
@@ -126,7 +127,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                 ? 'Swap Star in ${widget.constellation.name}'
                                 : 'Add Star to ${widget.constellation.name}',
                             style: const TextStyle(
-                              color: Colors.white,
+                              color: LuminousHomeTheme.white,
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
                             ),
@@ -150,16 +151,16 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                       child: Container(
                         height: 46,
                         decoration: BoxDecoration(
-                          color: const Color(0xFF161B30),
+                          color: LuminousHomeTheme.panelRaised,
                           borderRadius: BorderRadius.circular(23),
-                          border: Border.all(color: Colors.white12),
+                          border: Border.all(color: LuminousHomeTheme.white12),
                         ),
                         child: TextField(
                           onChanged: (q) => setModalState(() => searchQuery = q),
-                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                          style: const TextStyle(color: LuminousHomeTheme.white, fontSize: 14),
                           decoration: InputDecoration(
                             hintText: 'Search apps...',
-                            hintStyle: const TextStyle(color: Colors.white38, fontSize: 14),
+                            hintStyle: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 14),
                             prefixIcon: Icon(Icons.search_rounded,
                                 color: widget.constellation.primaryColor, size: 20),
                             border: InputBorder.none,
@@ -178,7 +179,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                           return Container(
                             margin: const EdgeInsets.only(bottom: 6),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF13182C).withValues(alpha: 0.6),
+                              color: LuminousHomeTheme.panel.withValues(alpha: 0.6),
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(color: app.accentColor.withValues(alpha: 0.2)),
                             ),
@@ -200,13 +201,13 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                               ),
                               title: Text(
                                 app.label,
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                                style: const TextStyle(color: LuminousHomeTheme.white, fontWeight: FontWeight.w600),
                               ),
                               subtitle: Text(
                                 app.packageName,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: Colors.white38, fontSize: 11),
+                                style: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 11),
                               ),
                               trailing: Icon(
                                 Icons.add_circle_outline_rounded,
@@ -253,7 +254,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
           margin: const EdgeInsets.symmetric(horizontal: 20),
           padding: const EdgeInsets.all(22),
           decoration: BoxDecoration(
-            color: const Color(0xEE0B0E1E),
+            color: LuminousHomeTheme.panelScrim,
             borderRadius: BorderRadius.circular(28),
             border: Border.all(
               color: c.primaryColor.withValues(alpha: 0.4),
@@ -292,7 +293,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                           Text(
                             c.name,
                             style: const TextStyle(
-                              color: Colors.white,
+                              color: LuminousHomeTheme.white,
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 0.5,
@@ -305,7 +306,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                 ? '${_constellationApps.length}/6 Stars Active'
                                 : '${_constellationApps.length}/8 Stars Active',
                             style: const TextStyle(
-                              color: Colors.white54,
+                              color: LuminousHomeTheme.white54,
                               fontSize: 12,
                             ),
                           ),
@@ -313,7 +314,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 22),
+                      icon: const Icon(Icons.close_rounded, color: LuminousHomeTheme.white70, size: 22),
                       onPressed: () => Navigator.of(context).pop(),
                     ),
                   ],
@@ -356,7 +357,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                               ),
                             ],
                           ),
-                          child: const Icon(Icons.auto_awesome, color: Color(0xFF101424), size: 22),
+                          child: const Icon(Icons.auto_awesome, color: LuminousHomeTheme.panel, size: 22),
                         ),
                         ...List.generate(6, (index) {
                           final angle = (index * 2 * math.pi / 6) - (math.pi / 2);
@@ -384,12 +385,12 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                     decoration: BoxDecoration(
                                       borderRadius: BorderRadius.circular(13),
                                       color: isFilled
-                                          ? const Color(0xFF161C32)
-                                          : const Color(0xFF101424).withValues(alpha: 0.5),
+                                          ? LuminousHomeTheme.panelRaised
+                                          : LuminousHomeTheme.panel.withValues(alpha: 0.5),
                                       border: Border.all(
                                         color: isFilled
                                             ? c.primaryColor.withValues(alpha: 0.7)
-                                            : Colors.white24,
+                                            : LuminousHomeTheme.white24,
                                         width: 1.2,
                                       ),
                                     ),
@@ -400,7 +401,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                                 ? Image.memory(app.iconBytes!, fit: BoxFit.cover)
                                                 : Icon(app.fallbackIcon, color: app.accentColor, size: 20),
                                           )
-                                        : const Icon(Icons.add_rounded, color: Colors.white38, size: 20),
+                                        : const Icon(Icons.add_rounded, color: LuminousHomeTheme.white38, size: 20),
                                   ),
                                   if (isFilled)
                                     Positioned(
@@ -412,9 +413,9 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                           padding: const EdgeInsets.all(2),
                                           decoration: const BoxDecoration(
                                             shape: BoxShape.circle,
-                                            color: Color(0xFFFF3B5C),
+                                            color: LuminousHomeTheme.dangerDeep,
                                           ),
-                                          child: const Icon(Icons.close_rounded, color: Colors.white, size: 12),
+                                          child: const Icon(Icons.close_rounded, color: LuminousHomeTheme.white, size: 12),
                                         ),
                                       ),
                                     ),
@@ -454,7 +455,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                               width: 48,
                                               height: 48,
                                               decoration: BoxDecoration(
-                                                color: const Color(0xFF161C32),
+                                                color: LuminousHomeTheme.panelRaised,
                                                 borderRadius: BorderRadius.circular(14),
                                                 border: Border.all(
                                                   color: c.primaryColor.withValues(alpha: 0.5),
@@ -478,16 +479,16 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                                   padding: const EdgeInsets.all(3),
                                                   decoration: const BoxDecoration(
                                                     shape: BoxShape.circle,
-                                                    color: Color(0xFFFF3B5C),
+                                                    color: LuminousHomeTheme.dangerDeep,
                                                     boxShadow: [
                                                       BoxShadow(
-                                                        color: Color(0x66FF3B5C),
+                                                        color: LuminousHomeTheme.dangerDeepGlow,
                                                         blurRadius: 4,
                                                       ),
                                                     ],
                                                   ),
                                                   child: const Icon(Icons.close_rounded,
-                                                      color: Colors.white, size: 12),
+                                                      color: LuminousHomeTheme.white, size: 12),
                                                 ),
                                               ),
                                             ),
@@ -500,7 +501,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                           overflow: TextOverflow.ellipsis,
                                           textAlign: TextAlign.center,
                                           style: const TextStyle(
-                                            color: Colors.white70,
+                                            color: LuminousHomeTheme.white70,
                                             fontSize: 10.5,
                                             fontWeight: FontWeight.w500,
                                           ),
@@ -562,7 +563,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                       ? '${_constellationApps.length} of 6 slots active. Tap slot to swap or add.'
                       : '${_constellationApps.length} of 8 slots active. Tap (✕) to remove or (+) to add.',
                   style: const TextStyle(
-                    color: Colors.white54,
+                    color: LuminousHomeTheme.white54,
                     fontSize: 12,
                     letterSpacing: 0.3,
                   ),
@@ -578,7 +579,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: c.primaryColor,
-                      foregroundColor: const Color(0xFF0F1424),
+                      foregroundColor: LuminousHomeTheme.nodeFill,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(23)),
                     ),
                     onPressed: () => Navigator.of(context).pop(),

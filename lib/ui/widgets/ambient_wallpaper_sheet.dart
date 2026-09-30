@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../theme/luminous_home_theme.dart';
 
 /// A transparent handoff between ChronoFold's animated visual language and
 /// Android's OEM-owned wallpaper picker.
@@ -57,12 +58,12 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
         child: Container(
           decoration: BoxDecoration(
-            color: const Color(0xFF090D1A),
+            color: LuminousHomeTheme.panelDeep,
             borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: const Color(0x6600E5FF)),
+            border: Border.all(color: LuminousHomeTheme.aquaStrong),
             boxShadow: const [
               BoxShadow(
-                color: Color(0x99000000),
+                color: LuminousHomeTheme.blackScrim,
                 blurRadius: 36,
                 offset: Offset(0, -8),
               ),
@@ -80,7 +81,7 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                 height: 4,
                 margin: const EdgeInsets.only(top: 12),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.3),
+                  color: LuminousHomeTheme.white.withValues(alpha: 0.3),
                   borderRadius: BorderRadius.circular(99),
                 ),
               ),
@@ -101,7 +102,7 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                       const Text(
                         'Your galaxy, beyond Home.',
                         style: TextStyle(
-                          color: Colors.white,
+                          color: LuminousHomeTheme.white,
                           fontSize: 22,
                           fontWeight: FontWeight.w700,
                           letterSpacing: -0.3,
@@ -113,7 +114,7 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                         'The optional live wallpaper carries only the ambient stars, '
                         'nebulae, meteors, and astrolabe core into ColorOS.',
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.68),
+                          color: LuminousHomeTheme.white.withValues(alpha: 0.68),
                           fontSize: 13.5,
                           height: 1.42,
                         ),
@@ -124,16 +125,16 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: const Color(0x1418BFEA),
+                          color: LuminousHomeTheme.infoFill,
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: const Color(0x3300E5FF)),
+                          border: Border.all(color: LuminousHomeTheme.aquaGlow),
                         ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Icon(
                               Icons.info_outline_rounded,
-                              color: Color(0xFF00E5FF),
+                              color: LuminousHomeTheme.aqua,
                               size: 18,
                             ),
                             const SizedBox(width: 9),
@@ -145,7 +146,7 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                                 'native preview and apply screen. That does not '
                                 'replace your ChronoFold launcher.',
                                 style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.77),
+                                  color: LuminousHomeTheme.white.withValues(alpha: 0.77),
                                   fontSize: 12.5,
                                   height: 1.38,
                                 ),
@@ -172,8 +173,8 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                           textAlign: TextAlign.center,
                         ),
                         style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF00B8D4),
-                          foregroundColor: const Color(0xFF00141A),
+                          backgroundColor: LuminousHomeTheme.aquaDeep,
+                          foregroundColor: LuminousHomeTheme.backgroundDeep,
                           minimumSize: const Size.fromHeight(52),
                           textStyle: const TextStyle(
                             fontSize: 12,
@@ -213,9 +214,9 @@ class _Eyebrow extends StatelessWidget {
           width: 7,
           height: 7,
           decoration: const BoxDecoration(
-            color: Color(0xFF00E5FF),
+            color: LuminousHomeTheme.aqua,
             shape: BoxShape.circle,
-            boxShadow: [BoxShadow(color: Color(0xFF00E5FF), blurRadius: 8)],
+            boxShadow: [BoxShadow(color: LuminousHomeTheme.aqua, blurRadius: 8)],
           ),
         ),
         const SizedBox(width: 8),
@@ -225,7 +226,7 @@ class _Eyebrow extends StatelessWidget {
           child: Text(
             label,
             style: const TextStyle(
-              color: Color(0xFF00E5FF),
+              color: LuminousHomeTheme.aqua,
               fontSize: 10.5,
               fontWeight: FontWeight.w800,
               letterSpacing: 1.45,
@@ -276,13 +277,13 @@ class _OwnershipRow extends StatelessWidget {
       icon: Icons.home_rounded,
       label: 'HOME',
       value: 'ChronoFold',
-      color: Color(0xFF00E5FF),
+      color: LuminousHomeTheme.aqua,
     );
     const lock = _OwnershipCell(
       icon: Icons.lock_outline_rounded,
       label: 'LOCK',
       value: 'ColorOS',
-      color: Color(0xFFB388FF),
+      color: LuminousHomeTheme.wallpaperViolet,
     );
 
     // Two cells side by side stop fitting once the font scale grows, so past a
@@ -342,7 +343,7 @@ class _OwnershipCell extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.48),
+                    color: LuminousHomeTheme.white.withValues(alpha: 0.48),
                     fontSize: 9,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 1.1,
@@ -386,7 +387,7 @@ class _AmbientPreviewPainter extends CustomPainter {
     paint.shader = RadialGradient(
       center: const Alignment(0, 0.15),
       radius: 1.05,
-      colors: const [Color(0xFF111B37), Color(0xFF060914), Color(0xFF010204)],
+      colors: const [LuminousHomeTheme.wallpaperTop, LuminousHomeTheme.wallpaperMid, LuminousHomeTheme.wallpaperDeep],
       stops: const [0, 0.54, 1],
     ).createShader(bounds);
     canvas.drawRect(bounds, paint);
@@ -399,7 +400,7 @@ class _AmbientPreviewPainter extends CustomPainter {
         size.width * (0.25 + math.sin(time * 0.18) * 0.025),
         size.height * (0.30 + math.cos(time * 0.16) * 0.03),
       ),
-      const Color(0xFF5830AF),
+      LuminousHomeTheme.wallpaperNebula,
       0.28,
     );
     _drawNebula(
@@ -410,7 +411,7 @@ class _AmbientPreviewPainter extends CustomPainter {
         size.width * (0.76 + math.cos(time * 0.14) * 0.025),
         size.height * (0.70 + math.sin(time * 0.17) * 0.035),
       ),
-      const Color(0xFF007D9F),
+      LuminousHomeTheme.wallpaperNebulaCool,
       0.22,
     );
 
@@ -423,7 +424,7 @@ class _AmbientPreviewPainter extends CustomPainter {
       final radius = 0.6 + (index % 4) * 0.34;
       paint
         ..shader = null
-        ..color = const Color(0xFFE9F8FF).withValues(alpha: twinkle);
+        ..color = LuminousHomeTheme.wallpaperStar.withValues(alpha: twinkle);
       canvas.drawCircle(Offset(x, y), radius, paint);
     }
 
@@ -431,8 +432,8 @@ class _AmbientPreviewPainter extends CustomPainter {
     final coreRadius = size.shortestSide * 0.13;
     paint.shader = RadialGradient(
       colors: [
-        const Color(0xFFFFD54F).withValues(alpha: 0.34),
-        const Color(0xFFFF8A00).withValues(alpha: 0.1),
+        LuminousHomeTheme.accentCore.withValues(alpha: 0.34),
+        LuminousHomeTheme.wallpaperCoreDeep.withValues(alpha: 0.1),
         Colors.transparent,
       ],
     ).createShader(Rect.fromCircle(center: center, radius: coreRadius * 3.2));
@@ -443,7 +444,7 @@ class _AmbientPreviewPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.1;
     for (final multiplier in [1.0, 1.48, 2.0]) {
-      paint.color = const Color(0xFF64B5F6)
+      paint.color = LuminousHomeTheme.borderCool
           .withValues(alpha: multiplier == 1 ? 0.42 : 0.18);
       canvas.drawCircle(center, coreRadius * multiplier, paint);
     }
@@ -452,7 +453,7 @@ class _AmbientPreviewPainter extends CustomPainter {
     canvas.translate(center.dx, center.dy);
     canvas.rotate(time * 9);
     canvas.translate(-center.dx, -center.dy);
-    paint.color = const Color(0xFF00E5FF).withValues(alpha: 0.44);
+    paint.color = LuminousHomeTheme.aqua.withValues(alpha: 0.44);
     for (var index = 0; index < 8; index++) {
       final angle = index * math.pi / 4;
       final start = Offset(
@@ -470,7 +471,7 @@ class _AmbientPreviewPainter extends CustomPainter {
     paint
       ..style = PaintingStyle.fill
       ..shader = RadialGradient(
-        colors: const [Color(0xFFFFF7D2), Color(0xFFFFB300), Color(0xFF10172B)],
+        colors: const [LuminousHomeTheme.wallpaperHorizon, LuminousHomeTheme.ember, LuminousHomeTheme.wallpaperHorizonMid],
         stops: const [0, 0.44, 1],
       ).createShader(Rect.fromCircle(center: center, radius: coreRadius));
     canvas.drawCircle(center, coreRadius * 0.62, paint);
@@ -487,8 +488,8 @@ class _AmbientPreviewPainter extends CustomPainter {
           begin: Alignment.topRight,
           end: Alignment.bottomLeft,
           colors: [
-            Colors.white.withValues(alpha: 0.9),
-            const Color(0xFF8DEBFF).withValues(alpha: 0.42),
+            LuminousHomeTheme.white.withValues(alpha: 0.9),
+            LuminousHomeTheme.wallpaperAurora.withValues(alpha: 0.42),
             Colors.transparent,
           ],
         ).createShader(Rect.fromPoints(tail, head))

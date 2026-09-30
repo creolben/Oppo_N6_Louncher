@@ -21,13 +21,15 @@ List<AppEntry> _manyApps() => [
           ),
     ];
 
-Future<void> _pumpOverlay(WidgetTester tester, Size size) async {
+Future<void> _pumpOverlay(
+  WidgetTester tester,
+  Size size, {
+  double keyboardInset = 0,
+}) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
-  addTearDown(() {
-    tester.view.resetPhysicalSize();
-    tester.view.resetDevicePixelRatio();
-  });
+  tester.view.viewInsets = FakeViewPadding(bottom: keyboardInset);
+  addTearDown(tester.view.reset);
 
   final engine = GalaxyLayoutEngine()..assignApps(_manyApps());
 
@@ -112,6 +114,59 @@ void main() {
 
       expect(_scrollOffset(tester), greaterThan(0),
           reason: 'tapping the Z rail letter did not jump the list');
+    });
+
+    testWidgets('the rail shrinks instead of overflowing with the keyboard up',
+        (tester) async {
+      // The cover display with the keyboard up: 27 fixed 12dp rows no longer
+      // fit, which used to overflow the rail's column.
+      await _pumpOverlay(tester, const Size(351, 805), keyboardInset: 300);
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'the rail overflowed its column with the keyboard up',
+      );
+
+      // The rows are shorter now, but a tap still maps to the letter under
+      // the finger: the rail's vertical middle is index 13, 'M'.
+      final rail = find.byWidgetPredicate(
+        (w) => w is GestureDetector && w.onVerticalDragUpdate != null,
+      );
+      expect(rail, findsOneWidget);
+      await tester.tapAt(tester.getRect(rail).center);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('M0pp'),
+        findsOneWidget,
+        reason: 'a tap at the rail middle did not jump to M',
+      );
+    });
+
+    testWidgets('the results never paint under the rail', (tester) async {
+      // The rail is a 48dp overlay on the right edge; the grid must reserve
+      // that width so its right column cannot slide underneath it.
+      await _pumpOverlay(tester, const Size(351, 805));
+
+      final rail = find.byWidgetPredicate(
+        (w) => w is GestureDetector && w.onVerticalDragUpdate != null,
+      );
+      expect(rail, findsOneWidget);
+      final double railLeft = tester.getRect(rail).left;
+
+      final tiles = find.descendant(
+        of: find.byType(GridView),
+        matching: find.byType(InkWell),
+      );
+      expect(tiles, findsWidgets);
+      for (int i = 0; i < tiles.evaluate().length; i++) {
+        expect(
+          tester.getRect(tiles.at(i)).right,
+          lessThanOrEqualTo(railLeft + 0.001),
+          reason: 'a grid tile paints under the A-Z rail',
+        );
+      }
     });
   });
 }

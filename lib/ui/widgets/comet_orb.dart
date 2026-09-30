@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../theme/luminous_home_theme.dart';
 
 /// Palette for the comet web-search surface.
 ///
@@ -14,29 +15,29 @@ class CometPalette {
   const CometPalette._();
 
   /// Primary amber. Matches the core halo in the galaxy painter.
-  static const Color amber = Color(0xFFFFB300);
+  static const Color amber = LuminousHomeTheme.ember;
 
   /// Deep amber used for gradient tails and the orbit trail's far end.
-  static const Color amberDeep = Color(0xFFFF6F00);
+  static const Color amberDeep = LuminousHomeTheme.emberDeep;
 
   /// Near-white hot centre of the comet head.
-  static const Color ember = Color(0xFFFFF3D6);
+  static const Color ember = LuminousHomeTheme.emberHot;
 
   /// Glass fill, matching the app-search capsule's `#141A30` family.
-  static const Color glass = Color(0xFF141A30);
+  static const Color glass = LuminousHomeTheme.glassCool;
 
   /// Node fill, lifted from the galaxy's app nodes.
-  static const Color nodeFill = Color(0xFF0F1424);
+  static const Color nodeFill = LuminousHomeTheme.nodeFill;
 
   /// Panel fill for the answer card.
-  static const Color panel = Color(0xFF101528);
+  static const Color panel = LuminousHomeTheme.glassPanel;
 
   /// The scrim used by the app-search overlay, reused verbatim so the two
   /// palettes are visibly siblings.
-  static const Color scrim = Color(0xCC04060E);
+  static const Color scrim = LuminousHomeTheme.scrim;
 
   /// Border tint shared with app search, so the capsules match.
-  static const Color borderCool = Color(0xFF64B5F6);
+  static const Color borderCool = LuminousHomeTheme.borderCool;
 }
 
 /// The comet sigil: the control that summons web search.

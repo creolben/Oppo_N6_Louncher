@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/web_search.dart';
+import '../theme/luminous_home_theme.dart';
 
 /// A run of answer text, or a citation marker pointing at a [SearchSource].
 ///
@@ -93,7 +94,7 @@ class AnswerBody extends StatelessWidget {
       textScaler: MediaQuery.textScalerOf(context),
       text: TextSpan(
         style: const TextStyle(
-          color: Color(0xFFE8ECF5),
+          color: LuminousHomeTheme.textPrimary,
           fontSize: 14.5,
           height: 1.55,
           letterSpacing: 0.1,
@@ -138,17 +139,17 @@ class _CitationMarker extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
             decoration: BoxDecoration(
-              color: const Color(0xFFFFB300).withValues(alpha: 0.16),
+              color: LuminousHomeTheme.ember.withValues(alpha: 0.16),
               borderRadius: BorderRadius.circular(6),
               border: Border.all(
-                color: const Color(0xFFFFB300).withValues(alpha: 0.45),
+                color: LuminousHomeTheme.ember.withValues(alpha: 0.45),
                 width: 0.9,
               ),
             ),
             child: Text(
               '$number',
               style: const TextStyle(
-                color: Color(0xFFFFC64D),
+                color: LuminousHomeTheme.emberLight,
                 fontSize: 10.5,
                 fontWeight: FontWeight.bold,
                 height: 1.3,

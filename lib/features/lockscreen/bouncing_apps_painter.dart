@@ -35,6 +35,9 @@ class BouncingAppsPainter extends CustomPainter {
   static final Paint _specularPaint = Paint()
     ..style = PaintingStyle.fill;
 
+  static final Paint _iconPlatePaint = Paint()
+    ..style = PaintingStyle.fill;
+
   static final Paint _iconImgPaint = Paint()
     ..filterQuality = FilterQuality.medium
     ..isAntiAlias = true;
@@ -93,29 +96,24 @@ class BouncingAppsPainter extends CustomPainter {
       canvas.save();
       canvas.translate(bubble.position.dx, bubble.position.dy);
 
-      // Squash and stretch scale transform on bounce
-      if (bubble.bounceSquash < 1.0) {
-        canvas.scale(2.0 - bubble.bounceSquash, bubble.bounceSquash);
-      }
-
       final double r = bubble.radius;
-      final Color color = bubble.color;
       // The aura is what the eye reads as the sphere, so the engine confines
       // this painted extent (not just the core) to the band.
       final double painted = BouncingPhysicsEngine.paintedRadius(r);
 
-      // A. Outer Radiant Cosmic Glow Aura
-      final double auraGlow = (0.2 + bubble.glowIntensity * 0.6)
-          .clamp(0.0, 1.0);
+      // A. Outer Radiant Cosmic Glow Aura. One theme colour and one constant
+      // alpha for every sphere: a per-bubble `glowIntensity` term made one row
+      // glow warm while the next read flat, which the device showed plainly.
+      const double auraGlow = 0.32;
       _auraPaint.shader = ui.Gradient.radial(
         Offset.zero,
         painted,
         [
-          color.withValues(alpha: auraGlow * 0.6),
-          color.withValues(alpha: auraGlow * 0.2),
+          LuminousHomeTheme.aqua.withValues(alpha: auraGlow * 0.6),
+          LuminousHomeTheme.aqua.withValues(alpha: auraGlow * 0.2),
           Colors.transparent,
         ],
-        [0.35, 0.7, 1.0],
+        const [0.35, 0.7, 1.0],
       );
       canvas.drawCircle(Offset.zero, painted, _auraPaint);
 
@@ -137,8 +135,8 @@ class BouncingAppsPainter extends CustomPainter {
         Offset(-r * 0.3, -r * 0.35),
         r * 0.6,
         [
-          Colors.white.withValues(alpha: 0.35),
-          Colors.white.withValues(alpha: 0.05),
+          LuminousHomeTheme.white.withValues(alpha: 0.35),
+          LuminousHomeTheme.white.withValues(alpha: 0.05),
           Colors.transparent,
         ],
         [0.0, 0.6, 1.0],
@@ -147,7 +145,7 @@ class BouncingAppsPainter extends CustomPainter {
 
       // D. Hairline edge ring. One theme tone instead of a per-app glow
       // gradient: the ring reads the same on every sphere against the dark
-      // field, and the app's accent lives in the aura and the fill.
+      // field, and the app's accent lives in the icon disc and the filaments.
       _bubbleBorderPaint
         ..strokeWidth = 1.5
         ..shader = null
@@ -166,6 +164,11 @@ class BouncingAppsPainter extends CustomPainter {
     final app = bubble.app;
     final double iconDiameter = r * 1.22;
     final double iconRadius = iconDiameter / 2;
+
+    // A plate one step lighter than the shell. A dark or purple app mark that
+    // otherwise disappears into the sphere gets a readable backing disc.
+    _iconPlatePaint.color = LuminousHomeTheme.backgroundRaised;
+    canvas.drawCircle(Offset.zero, iconRadius, _iconPlatePaint);
 
     if (app.decodedIcon != null) {
       canvas.save();

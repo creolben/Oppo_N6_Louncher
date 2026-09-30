@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/luminous_home_theme.dart';
 
 /// Horizontal chip row that fades whichever edge still has content off-screen.
 ///
@@ -11,7 +12,7 @@ class FadingHorizontalScroll extends StatefulWidget {
     super.key,
     required this.children,
     this.fadeWidth = 36.0,
-    this.fadeColor = const Color(0xFF020306),
+    this.fadeColor = LuminousHomeTheme.lockFieldDeep,
     this.center = false,
   });
 

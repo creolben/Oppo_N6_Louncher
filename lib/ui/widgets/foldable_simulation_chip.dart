@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/foldable_controller.dart';
+import '../theme/luminous_home_theme.dart';
 
 /// Compact "SIMULATED" chip shown while the in-app posture simulator is
 /// overriding the hardware hinge sensor. Tapping it hands control back to the
@@ -26,23 +27,23 @@ class FoldableSimulationChip extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
-              color: const Color(0x3300E5FF),
+              color: LuminousHomeTheme.aquaGlow,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFF00E5FF), width: 0.9),
+              border: Border.all(color: LuminousHomeTheme.aqua, width: 0.9),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(
                   Icons.sensors_rounded,
-                  color: Color(0xFF00E5FF),
+                  color: LuminousHomeTheme.aqua,
                   size: 12,
                 ),
                 const SizedBox(width: 4),
                 Text(
                   'SIMULATED',
                   style: TextStyle(
-                    color: const Color(0xFF00E5FF),
+                    color: LuminousHomeTheme.aqua,
                     fontSize: fontSize,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.8,
