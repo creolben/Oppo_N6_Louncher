@@ -5,13 +5,13 @@ import 'package:mylauncher/core/launcher_bridge.dart';
 import 'package:mylauncher/features/lockscreen/cosmic_lock_screen.dart';
 import 'package:mylauncher/models/app_entry.dart';
 
-/// The lock surface's battery cluster.
+/// The lock surface's battery line.
 ///
 /// The panel used to hardcode `92%` under a charging glyph that never went
 /// out — a lock screen that lies about the battery is the opposite of
-/// feeling native. Two rules are pinned here: the percentage shows only a
-/// level the platform actually reported, and an unknown level hides it
-/// rather than inventing a number.
+/// feeling native. The line is now shown only while charging, because the
+/// status bar already carries a discharging percentage; an unknown level
+/// hides the number rather than inventing one.
 
 List<AppEntry> _apps() => [
   AppEntry(
@@ -63,8 +63,8 @@ void main() {
     });
   });
 
-  group('Lock screen battery row (through the seam)', () {
-    testWidgets('a known level shows the percentage from the seam', (
+  group('Lock screen battery line (through the seam)', () {
+    testWidgets('a charging level shows one line under the date', (
       tester,
     ) async {
       await _pumpLockScreen(
@@ -72,33 +72,49 @@ void main() {
         battery: () async => const BatteryState(level: 92, charging: true),
       );
 
-      expect(find.text('92%'), findsOneWidget);
-      expect(find.byIcon(Icons.battery_charging_full_rounded), findsOneWidget);
+      expect(find.text('Charging · 92 %'), findsOneWidget);
     });
 
-    testWidgets('an unknown level hides the percentage but keeps the row up', (
-      tester,
-    ) async {
-      await _pumpLockScreen(tester, battery: () async => null);
+    testWidgets('a full charge reads as Charged', (tester) async {
+      await _pumpLockScreen(
+        tester,
+        battery: () async => const BatteryState(level: 100, charging: true),
+      );
 
-      // No invented number: the platform could not report a level.
+      expect(find.text('Charged'), findsOneWidget);
       expect(find.textContaining('%'), findsNothing);
-      // The cluster keeps its glyph, so the telemetry row does not collapse.
-      expect(find.byIcon(Icons.battery_std_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.battery_charging_full_rounded), findsNothing);
     });
 
-    testWidgets('a known level on battery power shows the plain glyph', (
+    testWidgets('an unknown charging level keeps the line without a number', (
       tester,
     ) async {
+      await _pumpLockScreen(
+        tester,
+        battery: () async => const BatteryState(level: null, charging: true),
+      );
+
+      expect(find.text('Charging'), findsOneWidget);
+      expect(find.textContaining('%'), findsNothing);
+    });
+
+    testWidgets('discharging shows no line at all', (tester) async {
       await _pumpLockScreen(
         tester,
         battery: () async => const BatteryState(level: 47, charging: false),
       );
 
-      expect(find.text('47%'), findsOneWidget);
-      expect(find.byIcon(Icons.battery_std_rounded), findsOneWidget);
-      expect(find.byIcon(Icons.battery_charging_full_rounded), findsNothing);
+      // The status bar owns the discharging percentage; repeating it on the
+      // lock screen would be noise. Assert on the `%` the line would carry
+      // rather than the level number, which the wall clock can also contain.
+      expect(find.textContaining('%'), findsNothing);
+      expect(find.textContaining('Charg'), findsNothing);
+    });
+
+    testWidgets('no battery answer shows no line at all', (tester) async {
+      await _pumpLockScreen(tester, battery: () async => null);
+
+      expect(find.textContaining('%'), findsNothing);
+      expect(find.textContaining('Charg'), findsNothing);
     });
   });
 }

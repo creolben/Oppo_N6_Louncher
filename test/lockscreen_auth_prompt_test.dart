@@ -125,14 +125,12 @@ Future<void> _settle(WidgetTester tester) async {
   }
 }
 
-/// Activates an app bubble the way a finger on the canvas would, through the
-/// semantics node the panel publishes for it.
-Future<void> _tapBubble(WidgetTester tester, String label) async {
-  final node = tester.getSemantics(find.bySemanticsLabel(label));
-  tester.binding.pipelineOwner.semanticsOwner!.performAction(
-    node.id,
-    SemanticsAction.tap,
-  );
+/// Taps the camera quick shortcut, the panel's remaining app target.
+///
+/// The ambient bubble field is decoration now and launches nothing, so an
+/// authentication-flow request starts here, exactly as it does for a user.
+Future<void> _tapCameraShortcut(WidgetTester tester) async {
+  await tester.tap(find.byIcon(Icons.camera_alt_rounded));
   await _settle(tester);
 }
 
@@ -186,13 +184,13 @@ void main() {
   });
 
   group('Lock screen fingerprint prompt', () {
-    testWidgets("tapping an app bubble raises the panel's own prompt", (
+    testWidgets("tapping the camera shortcut raises the panel's own prompt", (
       tester,
     ) async {
       final semantics = tester.ensureSemantics();
       await _pumpLockScreen(tester, reader: reader);
 
-      await _tapBubble(tester, 'Camera');
+      await _tapCameraShortcut(tester);
       await _handOverReader(tester, reader);
 
       // The element asking for the fingerprint is drawn by the launcher, not
@@ -213,7 +211,9 @@ void main() {
       await _settle(tester);
     });
 
-    testWidgets('a sensor match opens the app the user tapped', (tester) async {
+    testWidgets('a sensor match opens the app the shortcut names', (
+      tester,
+    ) async {
       final semantics = tester.ensureSemantics();
       var unlocked = false;
       await _pumpLockScreen(
@@ -223,13 +223,13 @@ void main() {
       );
 
       await spy.capture(() async {
-        await _tapBubble(tester, 'Notes');
+        await _tapCameraShortcut(tester);
         await _handOverReader(tester, reader);
         reader.emit({'type': 'succeeded'});
         await _settleLaunch(tester);
       });
 
-      expect(spy.launchedPackages, equals(['com.test.notes']));
+      expect(spy.launchedPackages, equals(['com.test.camera']));
       // A successful launch dismisses the custom overlay so closing the app
       // returns to the cover or home content rather than recreating the
       // fingerprint surface.
@@ -274,7 +274,7 @@ void main() {
       // live. Re-arming it is what lost the reader on the tested device — the
       // framework tears the running session down, and ColorOS refuses the
       // replacement instead of taking it over.
-      await _tapBubble(tester, 'Camera');
+      await _tapCameraShortcut(tester);
       expect(starts, equals(1));
       expect(find.byType(FingerprintAuthPrompt), findsOneWidget);
 
@@ -299,7 +299,7 @@ void main() {
       );
 
       await spy.capture(() async {
-        await _tapBubble(tester, 'Camera');
+        await _tapCameraShortcut(tester);
         await _handOverReader(tester, reader);
         await tester.tap(find.text('CANCEL'));
         await _settleLaunch(tester);
@@ -320,7 +320,7 @@ void main() {
       final semantics = tester.ensureSemantics();
       await _pumpLockScreen(tester, reader: reader);
 
-      await _tapBubble(tester, 'Camera');
+      await _tapCameraShortcut(tester);
       await _handOverReader(tester, reader);
       reader.emit({'type': 'failed'});
       await _settle(tester);
@@ -369,7 +369,7 @@ void main() {
       );
 
       await spy.capture(() async {
-        await _tapBubble(tester, 'Camera');
+        await _tapCameraShortcut(tester);
         // No card answers the tap before the reader is consulted: the reader
         // has not been handed over, so nothing honest can be drawn yet.
         expect(find.byType(FingerprintAuthPrompt), findsNothing);
@@ -414,7 +414,7 @@ void main() {
       );
 
       await spy.capture(() async {
-        await _tapBubble(tester, 'Camera');
+        await _tapCameraShortcut(tester);
         reader.emit({'type': 'error', 'code': 5, 'message': 'canceled'});
         await _settle(tester);
         reader.emit({'type': 'error', 'code': 5, 'message': 'canceled'});
@@ -430,7 +430,7 @@ void main() {
         // refused, so the request goes straight to the credential hook — no
         // further arm. No card appears for it either: it would be an ask for
         // a finger the platform has already refused twice.
-        await _tapBubble(tester, 'Camera');
+        await _tapCameraShortcut(tester);
         expect(find.byType(FingerprintAuthPrompt), findsNothing);
         expect(asks, equals(2));
 
@@ -458,7 +458,7 @@ void main() {
         await _pumpLockScreen(tester, reader: reader);
 
         await spy.capture(() async {
-          await _tapBubble(tester, 'Camera');
+          await _tapCameraShortcut(tester);
           expect(find.byType(FingerprintAuthPrompt), findsNothing);
 
           reader.emit({'type': 'error', 'code': 5, 'message': 'canceled'});
@@ -492,7 +492,7 @@ void main() {
       await _pumpLockScreen(tester, reader: reader);
 
       await spy.capture(() async {
-        await _tapBubble(tester, 'Camera');
+        await _tapCameraShortcut(tester);
         reader.emit({'type': 'keyguardLocked'});
         await _settleLaunch(tester);
       });
@@ -510,7 +510,7 @@ void main() {
       final semantics = tester.ensureSemantics();
       await _pumpLockScreen(tester, reader: reader);
 
-      await _tapBubble(tester, 'Camera');
+      await _tapCameraShortcut(tester);
       await _handOverReader(tester, reader);
       expect(find.text('UNLOCK'), findsNothing);
 
@@ -541,7 +541,7 @@ void main() {
         );
 
         await spy.capture(() async {
-          await _tapBubble(tester, 'Camera');
+          await _tapCameraShortcut(tester);
           await _settleLaunch(tester);
         });
 
@@ -558,7 +558,7 @@ void main() {
       final semantics = tester.ensureSemantics();
       await _pumpLockScreen(tester, reader: reader);
 
-      await _tapBubble(tester, 'Camera');
+      await _tapCameraShortcut(tester);
       await _handOverReader(tester, reader);
 
       final prompt = tester.getSemantics(find.byType(FingerprintAuthPrompt));
@@ -586,7 +586,7 @@ void main() {
         final semantics = tester.ensureSemantics();
         await _pumpLockScreen(tester, reader: reader);
 
-        await _tapBubble(tester, 'Camera');
+        await _tapCameraShortcut(tester);
         await _handOverReader(tester, reader);
         expect(find.byType(FingerprintAuthPrompt), findsOneWidget);
 

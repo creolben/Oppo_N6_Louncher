@@ -3,18 +3,19 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/foldable_controller.dart';
 import '../../models/app_entry.dart';
 import '../../core/launcher_bridge.dart';
+import '../../models/now_playing.dart';
 import '../../models/quick_shortcut.dart';
+import '../../ui/theme/luminous_home_theme.dart';
 import '../../ui/format/clock_format.dart';
-import '../../ui/widgets/fading_horizontal_scroll.dart';
 import 'bouncing_physics_engine.dart';
 import 'bouncing_apps_painter.dart';
 import 'fingerprint_prompt.dart';
+import 'now_playing_card.dart';
 import 'quick_shortcut_resolver.dart';
 
 /// What an authentication attempt on this panel actually established.
@@ -131,6 +132,27 @@ class CosmicLockScreen extends StatefulWidget {
   /// out).
   final Future<BatteryState?> Function()? battery;
 
+  /// The current media session, or null when nothing is playing, defaulting to
+  /// [LauncherBridge.mediaStream].
+  ///
+  /// Injectable so the card's show/hide rule can be exercised without a
+  /// platform channel: the lock screen never asks whether access was granted,
+  /// it simply renders whatever session the platform reports, so a device with
+  /// no notification access naturally shows nothing.
+  final Stream<NowPlaying?>? mediaStream;
+
+  /// Sends a transport command to the primary session, defaulting to
+  /// [LauncherBridge.mediaCommand].
+  final Future<bool> Function(String command)? mediaCommand;
+
+  /// Launches an app after authentication, defaulting to
+  /// [LauncherBridge.launchApp].
+  ///
+  /// Injectable so a widget test can prove the ambient bubble field launches
+  /// nothing: the field is decoration, and the only app targets are the phone
+  /// and camera shortcuts.
+  final Future<bool> Function(AppEntry app)? launchApp;
+
   const CosmicLockScreen({
     super.key,
     required this.foldable,
@@ -146,6 +168,9 @@ class CosmicLockScreen extends StatefulWidget {
     this.reconcileOnMount = false,
     this.dismissKeyguard,
     this.battery,
+    this.mediaStream,
+    this.mediaCommand,
+    this.launchApp,
   });
 
   @override
@@ -171,21 +196,50 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   late final Ticker _physicsTicker;
   Duration _lastElapsed = Duration.zero;
   final BouncingPhysicsEngine _physicsEngine = BouncingPhysicsEngine();
-  StreamSubscription? _shakeSubscription;
 
-  // Touch state for dragging / flinging bubbles vs swiping to unlock
-  AppBubble? _draggedBubble;
-  Offset? _dragStartPos;
-  Offset? _lastPointerPos;
-  DateTime? _lastPointerTime;
-  Offset _pointerVelocity = Offset.zero;
-  bool _isDraggingApp = false;
+  /// The ambient field's canvas. Its render box is the coordinate space the
+  /// measured bubble band is expressed in.
+  final GlobalKey _bubbleFieldKey = GlobalKey();
+
+  /// The empty gap between the last HUD element and the unlock hint.
+  ///
+  /// Putting a key on the [Spacer] gives the field its band directly: the
+  /// spacer's top is the bottom of the card (or the clock block) and its
+  /// bottom is the top of the hint, whatever the HUD above it is doing.
+  final GlobalKey _bubbleGapKey = GlobalKey();
+
+  /// The centred HUD column, measured so the bubble band can align with it.
+  final GlobalKey _hudColumnKey = GlobalKey();
+
+  /// The widest the HUD (status, clock, date, battery, card) is allowed to be.
+  ///
+  /// On the inner display — where Android 16 ignores the portrait lock — this
+  /// keeps the block readable in the middle of a wide landscape window instead
+  /// of stretching it edge to edge. The card shares the cap, so the bubble band
+  /// can align to one column.
+  static const double _hudMaxWidth = 480.0;
+
+  /// The band the field was last confined to, so an unchanged layout does not
+  /// notify the physics engine (and so does not schedule a repaint) in a loop.
+  Rect? _bubbleBand;
+
+  /// Fires once the ambient field has been idle for [_ambientIdleWindow].
+  ///
+  /// A [Timer] rather than a wall-clock comparison because a widget test's
+  /// `pump(Duration)` advances fake time but not `DateTime.now()`, and the
+  /// "no frames after 10 s" contract has to hold there too.
+  Timer? _ambientIdleTimer;
+  static const Duration _ambientIdleWindow = Duration(seconds: 10);
+
+  /// Reduce-motion, cached from the last dependency change.
+  bool _reduceMotion = false;
+
   String? _turbulenceMessage;
   Timer? _turbulenceTimer;
 
-  // Power & Idle Throttling (saves battery on Oppo N6 large OLED screen)
-  DateTime _lastInteractionTime = DateTime.now();
-  int _physicsFrameCount = 0;
+  /// The native accelerometer stream, kept only for gravity tilt. Shake-to-
+  /// scatter is gone; the field leans with the phone instead of reacting to it.
+  StreamSubscription<Map<String, dynamic>>? _motionSubscription;
 
   // Silent fingerprint sensor. The reader is the side power button, not the
   // panel, so the lock screen deliberately draws no fingerprint affordance:
@@ -226,11 +280,33 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// fingerprint could ever answer it.
   bool? _deviceSecure;
 
+  /// True once the capability probe reported a reader with something enrolled.
+  ///
+  /// Only the unlock hint reads it: on a device whose side power key can
+  /// authenticate, the honest hint names that key instead of promising a swipe
+  /// alone will open the panel.
+  bool _fingerprintEnrolled = false;
+
   /// The battery the platform last reported for the telemetry row, or null
   /// while no answer has arrived (and for an answer that cannot report a
   /// level). The row renders null as a glyph with no percentage rather than
   /// an invented number — the old `92%` was a lie about exactly this value.
   BatteryState? _batteryState;
+
+  /// The primary media session the platform last reported, or null when there
+  /// is none. Non-null puts the now-playing card on the panel.
+  NowPlaying? _nowPlaying;
+
+  /// The `media` event subscription, held from initState to dispose.
+  StreamSubscription<NowPlaying?>? _mediaSubscription;
+
+  /// True while a pointer is down on the now-playing card.
+  ///
+  /// The card sits inside the panel's swipe-to-unlock `Listener`, so the raw
+  /// pointer stream reaches both. The card's own listener runs first (events
+  /// dispatch leaf-first), which lets the panel's handlers refuse a pointer the
+  /// card owns instead of dragging the bubble painted underneath it.
+  bool _pointerOnMediaCard = false;
 
   /// The app the cosmic fingerprint prompt is currently authenticating for.
   ///
@@ -471,76 +547,41 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     }
   }
 
-  /// Whether a screen reader is running, i.e. whether the semantics layer is
-  /// worth building at all.
-  bool get _screenReaderActive => SemanticsBinding.instance.semanticsEnabled;
-
-  /// Smallest focus rectangle a screen reader can reliably land on.
-  static const double _minSemanticTarget = 48.0;
-
-  /// One focusable node per bubble, at the position the canvas paints it.
+  /// Runs the ambient field only when it is both wanted and useful.
   ///
-  /// A reader navigates these linearly, so their positions matter for touch
-  /// exploration rather than for reaching them — which is why the simulation is
-  /// held still while one is active (see [_syncPhysicsLoop]).
-  Widget _buildBubbleSemantics() {
-    return Stack(
-      children: [
-        for (final bubble in _physicsEngine.bubbles)
-          () {
-            final rect = Rect.fromCircle(
-              center: bubble.position,
-              radius: bubble.radius * 1.3,
-            );
-            final target =
-                rect.width >= _minSemanticTarget &&
-                    rect.height >= _minSemanticTarget
-                ? rect
-                : Rect.fromCenter(
-                    center: rect.center,
-                    width: math.max(rect.width, _minSemanticTarget),
-                    height: math.max(rect.height, _minSemanticTarget),
-                  );
-            return Positioned(
-              left: target.left,
-              top: target.top,
-              width: target.width,
-              height: target.height,
-              child: Semantics(
-                container: true,
-                button: true,
-                label: bubble.app.label,
-                hint: 'Open app',
-                onTap: () => _unlockAndLaunchApp(bubble.app),
-                child: const SizedBox.expand(),
-              ),
-            );
-          }(),
-      ],
-    );
-  }
-
-  void _onSemanticsEnabledChanged() {
-    if (!mounted) return;
-    setState(() {});
-    _syncPhysicsLoop();
-  }
-
-  /// Runs the simulation only when it is both wanted and useful.
-  ///
-  /// Held still for reduce-motion (the drift is decorative, not informative) and
-  /// while a screen reader is active, so its targets are not moving out from
-  /// under a reader's finger and the node rectangles do not need rebuilding
-  /// every frame. Drags still repaint, because they go through [markDirty].
+  /// Held still for reduce-motion (the drift is decorative, not informative).
+  /// Otherwise it runs for one idle window and then stops entirely — no
+  /// ticker, so no frame callbacks, so no frames — until a touch or the
+  /// platform's screen-on gives it another window. This is the battery
+  /// contract on the N6's large panel: a decorative field must not keep the
+  /// display compositor awake all night.
   void _syncPhysicsLoop() {
-    final bool holdStill =
-        (MediaQuery.maybeDisableAnimationsOf(context) ?? false) ||
-        _screenReaderActive;
-    if (holdStill) {
+    _reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (_reduceMotion) {
+      _ambientIdleTimer?.cancel();
+      _ambientIdleTimer = null;
       if (_physicsTicker.isActive) _physicsTicker.stop();
-    } else if (!_physicsTicker.isActive) {
+      return;
+    }
+    _touchAmbientMotion();
+  }
+
+  /// Gives the field another idle window, starting it if it had stopped.
+  void _touchAmbientMotion() {
+    if (_reduceMotion) return;
+    _ambientIdleTimer?.cancel();
+    _ambientIdleTimer = Timer(_ambientIdleWindow, _pauseAmbientMotion);
+    if (!_physicsTicker.isActive) {
+      // The ticker reports elapsed since its own start, so a restarted ticker
+      // must not be handed a stale baseline.
+      _lastElapsed = Duration.zero;
       _physicsTicker.start();
     }
+  }
+
+  void _pauseAmbientMotion() {
+    _ambientIdleTimer = null;
+    if (_physicsTicker.isActive) _physicsTicker.stop();
   }
 
   @override
@@ -553,12 +594,6 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-
-    // A reader can be switched on while this panel is already up, and nothing
-    // else here rebuilds when that happens.
-    SemanticsBinding.instance.addSemanticsEnabledListener(
-      _onSemanticsEnabledChanged,
-    );
 
     _slideController = AnimationController(
       vsync: this,
@@ -594,16 +629,13 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     // 60/120 FPS Physics simulation loop
     _physicsTicker = createTicker(_onPhysicsTick);
 
-    // Native Android accelerometer shake & gravity tilt stream
-    _shakeSubscription = LauncherBridge.getShakeStream().listen((event) {
+    // Native Android gravity tilt stream. Shake-to-scatter was removed with
+    // the interactive field: a lock screen that launches apps on a shake is a
+    // liability, and the field is decoration now.
+    _motionSubscription = LauncherBridge.getShakeStream().listen((event) {
       if (!mounted) return;
       final type = event['type'] as String? ?? 'tilt';
-      if (type == 'shake') {
-        _lastInteractionTime = DateTime.now();
-        _triggerShakeScatter(
-          strength: ((event['magnitude'] as num?)?.toDouble() ?? 12.0) / 10.0,
-        );
-      } else if (type == 'tilt') {
+      if (type == 'tilt') {
         final x = (event['x'] as num?)?.toDouble() ?? 0.0;
         final y = (event['y'] as num?)?.toDouble() ?? 0.0;
         // Map phone coordinate system: tilting right (+x) accelerates right (+dx), tilting top toward user accelerates down (+dy)
@@ -611,10 +643,6 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         final tiltX = (x / 9.8).clamp(-1.0, 1.0);
         final tiltY = (y / 9.8).clamp(-1.0, 1.0);
         _physicsEngine.tiltVector = Offset(-tiltX, tiltY);
-        // Subtle tilt activity keeps simulation responsive
-        if (tiltX.abs() > 0.15 || tiltY.abs() > 0.15) {
-          _lastInteractionTime = DateTime.now();
-        }
       }
     });
 
@@ -632,6 +660,18 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     // platform's `screenOn` signal and on the clock's minute rollover — no
     // timer of its own.
     _refreshBattery();
+
+    // The now-playing card follows the platform's primary session. Nothing is
+    // asked of the user here: with no notification access the native stream is
+    // simply silent, so no card appears and the lock screen never nags for a
+    // grant (that flow is P5's).
+    _mediaSubscription =
+        (widget.mediaStream ?? LauncherBridge.mediaStream).listen(
+          _onNowPlaying,
+          onError: (Object error) {
+            debugPrint('CF_MEDIA: media stream error: $error');
+          },
+        );
 
     if (widget.reconcileOnMount) {
       // Post-frame on purpose: the launcher cannot draw behind a foreign
@@ -703,6 +743,95 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     setState(() => _batteryState = state);
   }
 
+  /// The single charging line under the date, or null when none should show.
+  ///
+  /// The status bar already carries the level, so a discharging lock screen
+  /// that repeats a percentage is noise: ColorOS shows the line only on
+  /// charge. At 100% the line says "Charged" rather than "100 %", which is
+  /// what the device is actually doing by then.
+  String? get _batteryLabel {
+    final state = _batteryState;
+    if (state == null || !state.charging) return null;
+    final level = state.level;
+    if (level == null) return 'Charging';
+    if (level >= 100) return 'Charged';
+    return 'Charging · $level %';
+  }
+
+  /// The hint under the field.
+  ///
+  /// Three honest variants, one per device state: a credential-less device
+  /// opens (nothing to authenticate), an enrolled reader is named because the
+  /// side power key — not the panel — is the reader, and everything else
+  /// promises only the swipe.
+  String get _unlockHint {
+    if (_deviceSecure == false) return 'Swipe up to open';
+    if (_fingerprintEnrolled) return 'Swipe up or touch the power key';
+    return 'Swipe up to unlock';
+  }
+
+  /// Whether a media session is actively playing.
+  ///
+  /// This — not merely "a card is visible" — is what freezes and dims the
+  /// bubble field: a paused card is informational and leaves the panel usable,
+  /// while a playing one means the user's attention is on the transport.
+  bool get _mediaPlaying => _nowPlaying?.isPlaying == true;
+
+  /// Applies the platform's latest primary session.
+  ///
+  /// Null means "nothing to show". A session replaces the previous one
+  /// wholesale; the model's equality deliberately ignores position, so a
+  /// repeated snapshot is still applied (the progress line may have moved)
+  /// without the native side having to tick.
+  void _onNowPlaying(NowPlaying? media) {
+    if (!mounted || _disposed) return;
+    if (media == null) {
+      if (_nowPlaying == null) return;
+      debugPrint('CF_MEDIA: no active session; hiding now-playing card');
+      setState(() => _nowPlaying = null);
+      return;
+    }
+    debugPrint(
+      'CF_MEDIA: ${media.appLabel} — ${media.title ?? '(untitled)'} '
+      '[${media.state}]',
+    );
+    setState(() => _nowPlaying = media);
+  }
+
+  Future<bool> _sendMediaCommand(String command) async {
+    final handler = widget.mediaCommand ?? LauncherBridge.mediaCommand;
+    try {
+      return await handler(command);
+    } catch (error) {
+      debugPrint('CF_MEDIA: command "$command" failed: $error');
+      return false;
+    }
+  }
+
+  /// The now-playing card, or null when there is no session.
+  ///
+  /// Wrapped in its own [Listener] so a pointer that goes down on the card is
+  /// marked before the panel's raw pointer handlers see it; those handlers then
+  /// refuse to pick up the bubble painted underneath. Tapping the art or title
+  /// does nothing in this phase — opening the app is P2.
+  Widget _buildNowPlayingCard() {
+    final media = _nowPlaying;
+    if (media == null) return const SizedBox.shrink();
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: _hudMaxWidth),
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: (_) => _pointerOnMediaCard = true,
+        onPointerUp: (_) => _pointerOnMediaCard = false,
+        onPointerCancel: (_) => _pointerOnMediaCard = false,
+        child: NowPlayingCard(
+          nowPlaying: media,
+          onCommand: _sendMediaCommand,
+        ),
+      ),
+    );
+  }
+
   /// The platform authenticated someone and the keyguard is gone, so this
   /// overlay clears with it. While the launcher draws over the keyguard its own
   /// reader session is usually preempted, so the platform's success is the
@@ -757,6 +886,8 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     // to show it; panel-on is the natural refresh moment, and reusing this
     // signal adds no timer of its own.
     _refreshBattery();
+    // The panel has just come back; the field gets a fresh idle window.
+    _touchAmbientMotion();
   }
 
   /// Arms the reader as soon as the lock screen appears.
@@ -792,6 +923,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
           '(hardware: ${capability.hardware}, enrolled: ${capability.enrolled})',
         );
         return;
+      }
+
+      if (mounted && !_fingerprintEnrolled) {
+        setState(() => _fingerprintEnrolled = true);
       }
 
       // Subscribed once and kept for the panel's lifetime.
@@ -860,7 +995,6 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
   void _onFingerprintEvent(Map<String, dynamic> event) {
     if (!mounted || _disposed) return;
-    _lastInteractionTime = DateTime.now();
 
     switch (event['type'] as String?) {
       case 'listening':
@@ -1077,170 +1211,146 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     }
     final double dt = (elapsed - _lastElapsed).inMicroseconds / 1000000.0;
     _lastElapsed = elapsed;
-
-    // Idle Battery Saver: After 12s without touch or active movement, throttle to 30 FPS
-    final isIdle =
-        DateTime.now().difference(_lastInteractionTime).inSeconds > 12;
-    _physicsFrameCount++;
-    if (isIdle && (_physicsFrameCount % 3 != 0)) {
-      return;
-    }
+    if (dt <= 0.0) return;
 
     // The engine notifies the painter, which repaints only its own layer —
     // the widget tree around it does not rebuild per simulation frame.
     _physicsEngine.update(dt);
   }
 
-  AppCategory? _selectedCategory;
-
-  List<AppEntry> get _filteredApps {
-    if (_selectedCategory == null) {
-      return widget.apps;
-    }
-    final filtered = widget.apps
-        .where((a) => a.category == _selectedCategory)
-        .toList();
-    return filtered.isNotEmpty ? filtered : widget.apps;
-  }
-
-  void _onCategorySelected(AppCategory? cat) {
-    if (_selectedCategory == cat) return;
-    setState(() {
-      _selectedCategory = cat;
-    });
-    HapticFeedback.selectionClick();
-    if (_physicsEngine.viewportSize != Size.zero) {
-      _physicsEngine.initializeBubbles(
-        apps: _filteredApps,
-        size: _physicsEngine.viewportSize,
-        padding: _physicsEngine.safePadding,
-      );
-    }
+  /// The app set the ambient field may draw.
+  ///
+  /// Two exclusions: the apps the corner shortcuts already stand for — a bubble
+  /// that duplicates the camera shortcut both wastes a sphere and muddies the
+  /// target — and apps the platform gave no icon bytes for, which the painter
+  /// can only draw as a flat fallback glyph.
+  List<AppEntry> _ambientApps() {
+    final shortcutPackages = <String>{};
+    final phone = QuickShortcutResolver.phone(widget.apps);
+    if (phone != null) shortcutPackages.add(phone.packageName);
+    final camera = QuickShortcutResolver.camera(widget.apps);
+    if (camera != null) shortcutPackages.add(camera.packageName);
+    return [
+      for (final app in widget.apps)
+        if (!shortcutPackages.contains(app.packageName) &&
+            app.iconBytes != null &&
+            app.iconBytes!.isNotEmpty)
+          app,
+    ];
   }
 
   void _ensurePhysicsInitialized(Size size) {
     if (size.width <= 0 || size.height <= 0) return;
-
-    final padding = EdgeInsets.fromLTRB(
-      20.0,
-      size.height * 0.28, // Room below top clock & category filters
-      20.0,
-      210.0, // Room above the gesture hints and quick shortcuts
-    );
-
     if (_physicsEngine.bubbles.isEmpty) {
+      // Provisional vertical padding, but the real horizontal margin: the HUD
+      // column is capped at [_hudMaxWidth] and centred, so the band's left and
+      // right edges do not depend on whether the card is present. The
+      // post-frame band measurement pins the vertical gap before the next
+      // frame is shown.
+      final double hudWidth = math.max(
+        0.0,
+        math.min(size.width - 48.0, _hudMaxWidth),
+      );
+      final double margin = (size.width - hudWidth) / 2.0;
       _physicsEngine.initializeBubbles(
-        apps: _filteredApps,
+        apps: _ambientApps(),
         size: size,
-        padding: padding,
+        padding: EdgeInsets.fromLTRB(
+          margin,
+          size.height * 0.28,
+          margin,
+          210.0,
+        ),
       );
     } else if (_physicsEngine.viewportSize != size) {
-      _physicsEngine.resize(size, padding: padding);
+      _physicsEngine.resize(size);
     }
   }
 
-  void _triggerShakeScatter({double strength = 1.0, Offset? focalPoint}) {
-    HapticFeedback.heavyImpact();
-    _physicsEngine.triggerShakeScatter(
-      strength: strength.clamp(0.8, 2.2),
-      focalPoint: focalPoint,
-    );
+  /// Confines the ambient field to the empty gap between the HUD and the hint.
+  ///
+  /// Measured after layout because the gap depends on whether a now-playing
+  /// card is present and on the ambient text scale. The band keeps 24dp of
+  /// vertical clearance (the brief's floor is 16dp), and its horizontal edges
+  /// follow the HUD column, so the spheres align with the card. The engine
+  /// re-clamps immediately, so nothing is ever drawn outside the band while the
+  /// next tick waits.
+  void _syncBubbleBand() {
+    if (!mounted || _disposed) return;
+    final RenderBox? field =
+        _bubbleFieldKey.currentContext?.findRenderObject() as RenderBox?;
+    final RenderBox? gap =
+        _bubbleGapKey.currentContext?.findRenderObject() as RenderBox?;
+    final RenderBox? hud =
+        _hudColumnKey.currentContext?.findRenderObject() as RenderBox?;
+    if (field == null || gap == null || !field.hasSize || !gap.hasSize) return;
 
-    setState(() {
-      _turbulenceMessage = '⚡ COSMIC SHAKE DETECTED • APPS DISPERSED';
-    });
-    _turbulenceTimer?.cancel();
-    _turbulenceTimer = Timer(const Duration(milliseconds: 2200), () {
-      if (mounted) {
-        setState(() {
-          _turbulenceMessage = null;
-        });
-      }
-    });
+    final Offset gapOrigin = field.globalToLocal(gap.localToGlobal(Offset.zero));
+    final double top = gapOrigin.dy + 24.0;
+    final double bottom = gapOrigin.dy + gap.size.height - 24.0;
+    // A band this thin cannot hold a sphere without painting over the HUD;
+    // leave the field where it is.
+    if (bottom - top < 40.0) return;
+
+    // Horizontal inset = the HUD column's margin, so the spheres line up with
+    // the card rather than the raw screen. Falls back to the outer padding
+    // until the column has laid out.
+    double left = 24.0;
+    double right = field.size.width - 24.0;
+    if (hud != null &&
+        hud.hasSize &&
+        hud.size.width > 0 &&
+        field.size.width > 48.0) {
+      final Offset hudOrigin = field.globalToLocal(
+        hud.localToGlobal(Offset.zero),
+      );
+      left = hudOrigin.dx.clamp(24.0, field.size.width - 24.0);
+      right = (hudOrigin.dx + hud.size.width).clamp(
+        24.0,
+        field.size.width - 24.0,
+      );
+    }
+    if (right - left < 80.0) {
+      left = 24.0;
+      right = field.size.width - 24.0;
+    }
+
+    final Rect band = Rect.fromLTRB(left, top, right, bottom);
+    if (band == _bubbleBand) return;
+    _bubbleBand = band;
+    _physicsEngine.setBounds(band, viewport: field.size);
   }
 
-  // Pointer event handlers
+  // Pointer event handlers. The ambient field is not a touch target: the only
+  // gestures the panel owns are the swipe-up to unlock and the two corner
+  // shortcuts.
   void _onPointerDown(PointerDownEvent event) {
     // The prompt is modal: the Listener is an ancestor of the barrier, so it
     // still receives these events and has to refuse them itself.
     if (_authTarget != null) return;
-    _lastInteractionTime = DateTime.now();
-    final hit = _physicsEngine.findBubbleAt(event.localPosition);
-    if (hit != null) {
-      _draggedBubble = hit;
-      _draggedBubble!.isBeingDragged = true;
-      _isDraggingApp = true;
-      _dragStartPos = event.localPosition;
-      _lastPointerPos = event.localPosition;
-      _lastPointerTime = DateTime.now();
-      _pointerVelocity = Offset.zero;
-      HapticFeedback.selectionClick();
-    } else {
-      _isDraggingApp = false;
-      _dragStartPos = event.localPosition;
-    }
+    // A pointer that began on the now-playing card belongs to the card's own
+    // buttons; the panel must not also swipe under it.
+    if (_pointerOnMediaCard) return;
+    _touchAmbientMotion();
   }
 
   void _onPointerMove(PointerMoveEvent event) {
     if (_authTarget != null) return;
-    _lastInteractionTime = DateTime.now();
-    final now = DateTime.now();
-    if (_isDraggingApp && _draggedBubble != null) {
-      if (_lastPointerPos != null && _lastPointerTime != null) {
-        final double dt =
-            (now.difference(_lastPointerTime!).inMicroseconds) / 1000000.0;
-        if (dt > 0.002) {
-          _pointerVelocity = (event.localPosition - _lastPointerPos!) / dt;
-        }
-      }
-      _lastPointerPos = event.localPosition;
-      _lastPointerTime = now;
-      _draggedBubble!.position = event.localPosition;
-      // Repaint immediately: a drag must follow the finger even when the
-      // simulation ticker is stopped.
-      _physicsEngine.markDirty();
-    } else if (!_isDraggingApp) {
-      // Swiping up on background. The notifier drives the transform, so a
-      // finger drag does not rebuild the tree per pointer move.
-      _panelOffset.value = (_panelOffset.value - event.delta.dy).clamp(
-        0.0,
-        600.0,
-      );
-    }
+    if (_pointerOnMediaCard) return;
+    // Swiping up on the background. The notifier drives the transform, so a
+    // finger drag does not rebuild the tree per pointer move.
+    _panelOffset.value = (_panelOffset.value - event.delta.dy).clamp(
+      0.0,
+      600.0,
+    );
   }
 
   void _onPointerUp(PointerUpEvent event) {
     if (_authTarget != null) return;
-    if (_isDraggingApp && _draggedBubble != null) {
-      final appToLaunch = _draggedBubble!.app;
-      final bool wasTap =
-          _dragStartPos != null &&
-          (event.localPosition - _dragStartPos!).distance < 12.0;
-
-      _draggedBubble!.isBeingDragged = false;
-
-      if (wasTap) {
-        // Tapped bouncy app directly: authenticate & launch!
-        _draggedBubble = null;
-        _isDraggingApp = false;
-        _unlockAndLaunchApp(appToLaunch);
-        return;
-      }
-
-      // Thrown / fling momentum
-      if (_pointerVelocity.distance > 80.0) {
-        final double speed = _pointerVelocity.distance.clamp(100.0, 1500.0);
-        _draggedBubble!.velocity =
-            (_pointerVelocity / _pointerVelocity.distance) * speed;
-      }
-      _draggedBubble = null;
-      _isDraggingApp = false;
-    } else if (!_isDraggingApp) {
-      if (_panelOffset.value > 140.0) {
-        _enterLauncher();
-      } else {
-        _snapBack();
-      }
+    if (_panelOffset.value > 140.0) {
+      _enterLauncher();
+    } else {
+      _snapBack();
     }
   }
 
@@ -1313,7 +1423,8 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     if (pending != null) {
       _handingOffLaunch = true;
       await LauncherBridge.stopFingerprintScan();
-      final launched = await LauncherBridge.launchApp(pending);
+      final launch = widget.launchApp ?? LauncherBridge.launchApp;
+      final launched = await launch(pending);
       _handingOffLaunch = false;
       if (!mounted) return;
       _unlockStarted = false;
@@ -1458,21 +1569,20 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   @override
   void dispose() {
     _disposed = true;
-    SemanticsBinding.instance.removeSemanticsEnabledListener(
-      _onSemanticsEnabledChanged,
-    );
     _panelOffset.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _clockTimer.cancel();
+    _ambientIdleTimer?.cancel();
     _turbulenceTimer?.cancel();
     _authResolveTimer?.cancel();
     _fingerprintSubscription?.cancel();
+    _mediaSubscription?.cancel();
     LauncherBridge.setScreenOnListener(null);
     LauncherBridge.setUserPresentListener(null);
     LauncherBridge.stopFingerprintScan();
     _physicsTicker.dispose();
     _slideController.dispose();
-    _shakeSubscription?.cancel();
+    _motionSubscription?.cancel();
     super.dispose();
   }
 
@@ -1480,6 +1590,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
     _ensurePhysicsInitialized(screenSize);
+    // The band depends on the laid-out HUD, so it can only be measured after
+    // this frame. Registering here (rather than from a layout callback) keeps
+    // the measurement to once per real HUD change; the paint-only frame the
+    // engine's notify schedules does not re-run build, so this cannot loop.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncBubbleBand());
 
     // The shared helper follows the platform's 12/24-hour setting, so the
     // large clock cannot disagree with the ColorOS keyguard it replaces. In
@@ -1517,9 +1632,9 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
               center: Alignment(0.0, -0.2),
               radius: 1.3,
               colors: [
-                Color(0xFF0D1426), // Deep cosmic glow
-                Color(0xFF070A14), // Dark indigo void
-                Color(0xFF020306), // Pitch black OLED
+                LuminousHomeTheme.lockFieldGlow,
+                LuminousHomeTheme.lockField,
+                LuminousHomeTheme.lockFieldDeep,
               ],
               stops: [0.0, 0.55, 1.0],
             ),
@@ -1534,12 +1649,18 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                   child: Container(
                     width: 300,
                     height: 300,
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: RadialGradient(
                         colors: [
-                          Color(0x3300E5FF),
-                          Color(0x1564B5F6),
+                          LuminousHomeTheme.softTint(
+                            LuminousHomeTheme.aqua,
+                            0.20,
+                          ),
+                          LuminousHomeTheme.softTint(
+                            LuminousHomeTheme.cobalt,
+                            0.08,
+                          ),
                           Colors.transparent,
                         ],
                         stops: [0.0, 0.45, 1.0],
@@ -1549,38 +1670,31 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                 ),
               ),
 
-              // CustomPaint canvas rendering bouncing apps. The boundary
+              // CustomPaint canvas rendering the ambient field. The boundary
               // gives the physics layer its own repaint scope: simulation
-              // frames repaint this canvas alone, and HUD state changes
-              // never repaint the bubbles.
+              // frames repaint this canvas alone, and HUD state changes never
+              // repaint the spheres.
+              //
+              // The field takes no touches and sits at 70% (35% while a
+              // session plays), so it reads as ambiance rather than as a set
+              // of buttons behind the HUD.
               Positioned.fill(
-                child: RepaintBoundary(
-                  child: CustomPaint(
-                    painter: BouncingAppsPainter(
-                      physics: _physicsEngine,
-                      draggedBubble: _draggedBubble,
-                      textScaler: MediaQuery.textScalerOf(context),
+                child: IgnorePointer(
+                  child: AnimatedOpacity(
+                    opacity: _mediaPlaying ? 0.35 : 0.70,
+                    duration: const Duration(milliseconds: 250),
+                    child: RepaintBoundary(
+                      key: _bubbleFieldKey,
+                      child: CustomPaint(
+                        painter: BouncingAppsPainter(physics: _physicsEngine),
+                      ),
                     ),
                   ),
                 ),
               ),
 
-              // Screen reader targets for the bubbles, which are painted into
-              // the canvas and would otherwise be unreachable — the same
-              // defect the galaxy home screen had. They are never wrapped in
-              // IgnorePointer: that sets isBlockingUserActions and would strip
-              // the tap action back off them. Each is a bare SizedBox, so it
-              // takes no touch and the panel gestures below still work.
-              if (_screenReaderActive)
-                Positioned.fill(
-                  child: ListenableBuilder(
-                    listenable: _physicsEngine,
-                    builder: (context, _) => _buildBubbleSemantics(),
-                  ),
-                ),
-
               // Scrim: keeps the unlock cluster and gesture hints readable
-              // while bouncing bubbles keep moving behind them.
+              // while the spheres keep drifting behind them.
               Positioned(
                 left: 0,
                 right: 0,
@@ -1593,9 +1707,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          const Color(0xFF020306).withValues(alpha: 0.0),
-                          const Color(0xFF020306).withValues(alpha: 0.72),
-                          const Color(0xFF020306),
+                          LuminousHomeTheme.lockFieldDeep.withValues(alpha: 0.0),
+                          LuminousHomeTheme.lockFieldDeep.withValues(
+                            alpha: 0.72,
+                          ),
+                          LuminousHomeTheme.lockFieldDeep,
                         ],
                         stops: const [0.0, 0.5, 1.0],
                       ),
@@ -1614,195 +1730,139 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Top Telemetry Bar with interactive Shake Trigger Button
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          // The badge claims a lock, so it is drawn only
-                          // where one exists: on a device with no secure
-                          // credential the panel is a cover, not a lock,
-                          // and labelling it LOCKED would be the same
-                          // pretend as asking for a fingerprint there. The
-                          // swipe hint below stays "SWIPE UP TO ENTER"
-                          // either way — on such a device that is exactly
-                          // what it is, a plain dismiss.
-                          if (_deviceSecure != false)
-                            const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.lock_outline_rounded,
-                                  color: Color(0xFF00E5FF),
-                                  size: 16,
-                                ),
-                                SizedBox(width: 6),
-                                Text(
-                                  'LOCKED',
-                                  style: TextStyle(
-                                    color: Color(0xFF00E5FF),
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 1.5,
-                                  ),
-                                ),
-                              ],
-                            ),
-
-                          // Interactive Shake / Scatter Button. It carried no
-                          // button trait, so a reader heard the word "SHAKE"
-                          // without being told it was actionable. The action
-                          // is declared here rather than left to the gesture
-                          // detector, so the node a reader lands on is the one
-                          // that carries both the label and the action.
-                          Semantics(
-                            container: true,
-                            button: true,
-                            label: 'Scatter apps',
-                            onTap: () => _triggerShakeScatter(),
-                            child: GestureDetector(
-                              onTap: () => _triggerShakeScatter(),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 5,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0x3300E5FF),
-                                  borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(
-                                    color: const Color(0x6600E5FF),
-                                    width: 1.0,
-                                  ),
-                                  boxShadow: const [
-                                    BoxShadow(
-                                      color: Color(0x2200E5FF),
-                                      blurRadius: 8,
-                                    ),
-                                  ],
-                                ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.vibration_rounded,
-                                      color: Color(0xFF00E5FF),
-                                      size: 14,
-                                    ),
-                                    SizedBox(width: 4),
-                                    Text(
-                                      'SHAKE',
-                                      style: TextStyle(
-                                        color: Color(0xFF00E5FF),
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.bold,
-                                        letterSpacing: 1.2,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
+                      // The HUD is one centred column capped at [_hudMaxWidth]:
+                      // on the inner display it stays a readable width in the
+                      // middle of a wide (even landscape) window, while the
+                      // hint and the corner shortcuts below stay full-width.
+                      // The bubble band is measured from this column, so the
+                      // spheres align with the card rather than the raw screen.
+                      Center(
+                        child: ConstrainedBox(
+                          key: _hudColumnKey,
+                          constraints: const BoxConstraints(
+                            maxWidth: _hudMaxWidth,
                           ),
-
-                          // The real battery, not a hardcoded "92%": this
-                          // row used to claim a charge the platform never
-                          // reported, under a glyph that said "charging"
-                          // forever. The level comes from the seam; when
-                          // the platform cannot report one the percentage
-                          // is hidden rather than invented, and the
-                          // fixed-width box keeps the row from collapsing
-                          // while it is hidden — scaling the reading down
-                          // rather than overflowing under accessibility
-                          // text scale.
-                          Row(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(
-                                _batteryState?.icon ??
-                                    Icons.battery_std_rounded,
-                                color: Colors.white70,
-                                size: 16,
+                      // Status line. The reader is the side power key, so the
+                      // panel names the lock but draws no fingerprint target.
+                      // Hidden on a credential-less device, where the badge
+                      // would be a claim with nothing behind it.
+                      if (_deviceSecure != false)
+                        const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.lock_outline_rounded,
+                              color: LuminousHomeTheme.textSecondary,
+                              size: 14,
+                            ),
+                            SizedBox(width: 6),
+                            Text(
+                              'Locked',
+                              style: TextStyle(
+                                color: LuminousHomeTheme.textSecondary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: 0.3,
                               ),
-                              const SizedBox(width: 4),
-                              SizedBox(
-                                width: 34,
-                                child: FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    _batteryState?.percentage ?? '',
-                                    style: TextStyle(
-                                      color: Colors.white.withValues(
-                                        alpha: 0.8,
-                                      ),
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
+                            ),
+                          ],
+                        ),
 
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 10),
 
-                      // Centerpiece Cosmic Clock HUD (wrapped in IgnorePointer to allow bubble interaction)
+                      // Clock, date and — only while charging — the battery
+                      // line. One block, so the field has a single bottom
+                      // anchor when no card is present. The status bar already
+                      // carries a discharging percentage; repeating it here
+                      // would be noise.
                       IgnorePointer(
                         child: Column(
                           children: [
                             Text(
                               timeString,
                               style: TextStyle(
-                                color: Colors.white,
+                                color: LuminousHomeTheme.textPrimary,
                                 fontSize: isTabletop
                                     ? 52
                                     : (isUnfolded ? 76 : 64),
-                                fontWeight: FontWeight.w100,
+                                fontWeight: FontWeight.w200,
                                 letterSpacing: -2.0,
                                 height: 1.0,
                                 fontFeatures: const [
                                   FontFeature.tabularFigures(),
                                 ],
-                                shadows: const [
+                                shadows: [
                                   Shadow(
-                                    color: Color(0x6600E5FF),
-                                    blurRadius: 26,
+                                    color: LuminousHomeTheme.softTint(
+                                      LuminousHomeTheme.aqua,
+                                      0.28,
+                                    ),
+                                    blurRadius: 18,
                                   ),
-                                  Shadow(color: Colors.black, blurRadius: 12),
+                                  const Shadow(
+                                    color: Colors.black,
+                                    blurRadius: 12,
+                                  ),
                                 ],
                               ),
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              dateFormatted.toUpperCase(),
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.8),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: 2.8,
-                                shadows: const [
+                              dateFormatted,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: LuminousHomeTheme.textSecondary,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: 0.2,
+                                shadows: [
                                   Shadow(color: Colors.black, blurRadius: 8),
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 10),
-                            if (_turbulenceMessage != null)
+                            if (_batteryLabel != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                _batteryLabel!,
+                                style: const TextStyle(
+                                  color: LuminousHomeTheme.textSecondary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  fontFeatures: [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            if (_turbulenceMessage != null) ...[
+                              const SizedBox(height: 10),
                               Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 14,
                                   vertical: 6,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xCC7C4DFF),
+                                  color: LuminousHomeTheme.softTint(
+                                    LuminousHomeTheme.orchid,
+                                    0.80,
+                                  ),
                                   borderRadius: BorderRadius.circular(16),
                                   border: Border.all(
-                                    color: const Color(0xFFB388FF),
+                                    color: LuminousHomeTheme.softTint(
+                                      LuminousHomeTheme.orchid,
+                                      0.95,
+                                    ),
                                     width: 1.0,
                                   ),
-                                  boxShadow: const [
+                                  boxShadow: [
                                     BoxShadow(
-                                      color: Color(0x667C4DFF),
+                                      color: LuminousHomeTheme.softTint(
+                                        LuminousHomeTheme.orchid,
+                                        0.40,
+                                      ),
                                       blurRadius: 16,
                                     ),
                                   ],
@@ -1810,62 +1870,82 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                                 child: Text(
                                   _turbulenceMessage!,
                                   style: const TextStyle(
-                                    color: Colors.white,
+                                    color: LuminousHomeTheme.textPrimary,
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
                                     letterSpacing: 1.0,
                                   ),
                                 ),
                               ),
+                            ],
                           ],
                         ),
                       ),
 
-                      const SizedBox(height: 12),
-                      // Interactive Curated Category Chips Bar
-                      FadingHorizontalScroll(
-                        center: true,
-                        fadeColor: const Color(0xFF090D1A),
-                        children: [
-                          _categoryFilterChip('★ Featured', null),
-                          const SizedBox(width: 8),
-                          _categoryFilterChip('Core', AppCategory.core),
-                          const SizedBox(width: 8),
-                          _categoryFilterChip('Social', AppCategory.social),
-                          const SizedBox(width: 8),
-                          _categoryFilterChip(
-                            'Media',
-                            AppCategory.entertainment,
-                          ),
-                          const SizedBox(width: 8),
-                          _categoryFilterChip('Work', AppCategory.productivity),
-                          const SizedBox(width: 8),
-                          _categoryFilterChip('Tools', AppCategory.tools),
-                        ],
+                      if (_nowPlaying != null) const SizedBox(height: 16),
+
+                      // The now-playing card, under the date and above the
+                      // bubble field. The switcher cross-fades it in with a
+                      // slight upward slide while the rest of the panel stays
+                      // put; a null session swaps in a zero-size child, so
+                      // there is nothing to show and nothing to nag about.
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: (child, animation) {
+                          final slide = Tween<Offset>(
+                            begin: const Offset(0, 0.08),
+                            end: Offset.zero,
+                          ).animate(animation);
+                          return FadeTransition(
+                            opacity: animation,
+                            child: SlideTransition(
+                              position: slide,
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: _nowPlaying == null
+                            ? const SizedBox.shrink(key: ValueKey('no-media'))
+                            : KeyedSubtree(
+                                key: const ValueKey('now-playing'),
+                                child: _buildNowPlayingCard(),
+                              ),
                       ),
 
-                      const Spacer(),
+                            ],
+                          ),
+                        ),
+                      ),
 
-                      // Secondary gesture hints: the reader is the side power
-                      // button, so no fingerprint affordance is drawn here or
-                      // anywhere else on the panel.
+                      // The band the ambient field drifts in. The key lets the
+                      // field read this gap back after layout, so the spheres
+                      // can never be painted over the card above or the hint
+                      // below, whatever the now-playing card is doing.
+                      Spacer(key: _bubbleGapKey),
+
+                      // Unlock hint. The reader is the side power key, so no
+                      // fingerprint affordance is drawn here or anywhere else
+                      // on the panel; the wording changes with what the device
+                      // can actually do.
                       IgnorePointer(
                         child: Column(
                           children: [
                             const Icon(
                               Icons.keyboard_arrow_up_rounded,
-                              color: Color(0xFF00E5FF),
+                              color: LuminousHomeTheme.textSecondary,
                               size: 22,
                             ),
                             Text(
-                              'TAP APP TO LAUNCH • SWIPE UP TO ENTER',
+                              _unlockHint,
                               textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.72),
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1.6,
-                                shadows: const [
+                              style: const TextStyle(
+                                color: LuminousHomeTheme.textSecondary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                letterSpacing: 0.3,
+                                shadows: [
                                   Shadow(color: Colors.black, blurRadius: 6),
                                 ],
                               ),
@@ -1877,21 +1957,22 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                       const SizedBox(height: 14),
 
                       // Quick shortcuts: phone on the left, camera on the
-                      // right. Nothing sits between them, so the swipe-up
-                      // gesture has clear panel to travel across.
+                      // right. These and the three media controls are the only
+                      // app targets on the panel; the field between them is
+                      // decoration.
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           _quickActionCircle(
                             icon: Icons.phone_rounded,
-                            tooltip: 'Open Phone',
+                            label: 'Phone',
                             onTap: () =>
                                 _openQuickShortcut(QuickShortcut.phone),
                           ),
                           _quickActionCircle(
                             icon: Icons.camera_alt_rounded,
-                            tooltip: 'Open Camera',
+                            label: 'Camera',
                             onTap: () =>
                                 _openQuickShortcut(QuickShortcut.camera),
                           ),
@@ -1917,7 +1998,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                         child: ModalBarrier(
                           dismissible: false,
                           barrierSemanticsDismissible: false,
-                          color: Color(0xCC020306),
+                          color: LuminousHomeTheme.lockFieldDeep,
                         ),
                       ),
                       Positioned.fill(
@@ -1945,84 +2026,44 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     );
   }
 
+  /// A 48dp corner shortcut with its own Semantics label.
+  ///
+  /// These are the only app targets on the panel now, so their labels name
+  /// the app rather than the action a reader cannot see.
   Widget _quickActionCircle({
     required IconData icon,
-    required String tooltip,
+    required String label,
     required VoidCallback onTap,
   }) {
     return Tooltip(
-      message: tooltip,
+      message: label,
       child: Semantics(
         button: true,
-        label: tooltip,
+        label: label,
         child: Material(
           color: Colors.transparent,
           child: InkWell(
             onTap: onTap,
-            borderRadius: BorderRadius.circular(28),
+            borderRadius: BorderRadius.circular(24),
             child: Container(
-              width: 52,
-              height: 52,
+              width: LuminousHomeTheme.minimumTouchTarget,
+              height: LuminousHomeTheme.minimumTouchTarget,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0x8A11172A),
-                border: Border.all(color: const Color(0x4DFFFFFF), width: 1.0),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x66000000),
-                    blurRadius: 14,
-                    offset: Offset(0, 4),
-                  ),
-                ],
+                color: LuminousHomeTheme.backgroundRaised.withValues(
+                  alpha: 0.54,
+                ),
+                border: Border.all(
+                  color: LuminousHomeTheme.hairlineStrong,
+                  width: 1.0,
+                ),
+                boxShadow: LuminousHomeTheme.floatingShadow,
               ),
-              child: Icon(icon, color: Colors.white, size: 23),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _categoryFilterChip(String label, AppCategory? category) {
-    final bool isSelected = _selectedCategory == category;
-    return Semantics(
-      button: true,
-      selected: isSelected,
-      label: '$label apps',
-      child: GestureDetector(
-        onTap: () => _onCategorySelected(category),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 44),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: isSelected
-                ? const Color(0x3D00E5FF)
-                : const Color(0x3310172C),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: isSelected
-                  ? const Color(0xFF00E5FF)
-                  : const Color(0x2EFFFFFF),
-              width: isSelected ? 1.2 : 0.8,
-            ),
-            boxShadow: isSelected
-                ? const [
-                    BoxShadow(
-                      color: Color(0x3300E5FF),
-                      blurRadius: 10,
-                      offset: Offset(0, 3),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: isSelected ? const Color(0xFF00E5FF) : Colors.white70,
-              fontSize: 10,
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-              letterSpacing: 0.5,
+              child: Icon(
+                icon,
+                color: LuminousHomeTheme.textPrimary,
+                size: 22,
+              ),
             ),
           ),
         ),

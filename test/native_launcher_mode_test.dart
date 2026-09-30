@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mylauncher/core/foldable_controller.dart';
 import 'package:mylauncher/core/launcher_bridge.dart';
@@ -96,10 +95,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 16));
 
       await spy.capture(() async {
-        // Tap the Camera bubble via semantics
-        final node = tester.getSemantics(find.bySemanticsLabel('Camera'));
-        tester.binding.pipelineOwner.semanticsOwner!
-            .performAction(node.id, SemanticsAction.tap);
+        // Tap the Camera quick shortcut: the only app target on the panel.
+        await tester.tap(find.byIcon(Icons.camera_alt_rounded));
 
         // Advance frames
         for (int i = 0; i < 5; i++) {

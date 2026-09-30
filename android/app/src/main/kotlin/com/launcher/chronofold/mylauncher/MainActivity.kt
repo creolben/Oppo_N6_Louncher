@@ -1,6 +1,7 @@
 package com.launcher.chronofold.mylauncher
 
 import android.content.Context
+import android.content.ComponentName
 import android.content.Intent
 import android.app.SearchManager
 import android.content.pm.ApplicationInfo
@@ -14,6 +15,10 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.MediaMetadata
+import android.media.session.MediaController
+import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
@@ -38,23 +43,11 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 class MainActivity : FlutterActivity() {
-    private val APPS_CHANNEL = "com.launcher.chronofold/apps"
-    private val HINGE_CHANNEL = "com.launcher.chronofold/hinge"
-    private val SHAKE_CHANNEL = "com.launcher.chronofold/shake"
-    private val FINGERPRINT_CHANNEL = "com.launcher.chronofold/fingerprint"
-
-    /** Edge length of the launcher icons sent to Dart. */
-    private val ICON_PIXELS = 96
-
-    private val backgroundExecutor = Executors.newSingleThreadExecutor()
-    private var sensorManager: SensorManager? = null
-    private var hingeSensor: Sensor? = null
-    private var accelSensor: Sensor? = null
-    private var fingerprintCancellation: CancellationSignal? = null
-    private var fingerprintEvents: EventChannel.EventSink? = null
-    private var powerManager: PowerManager? = null
-
     /**
      * Whether the keyguard required authentication when the panel last went
      * off. Only an unlock that follows a genuinely locked keyguard is handed to
@@ -64,7 +57,13 @@ class MainActivity : FlutterActivity() {
     private var keyguardWasLocked = false
     private var screenReceiver: BroadcastReceiver? = null
     private var packageReceiver: BroadcastReceiver? = null
-    private var appsMethodChannel: MethodChannel? = null
+
+    /**
+     * The shared channel surface. Created once per engine in
+     * [configureFlutterEngine] and disposed in [onDestroy]; null before the
+     * engine attaches.
+     */
+    private var lockSurface: LockSurfaceChannels? = null
 
     /**
      * An opaque native cover surface held above Flutter while a foreign task is
@@ -121,6 +120,33 @@ class MainActivity : FlutterActivity() {
         pausedForForeignTask = false
     }
 
+    /** What differs from the lock activity; everything else is shared. */
+    private val lockSurfaceHost = object : LockSurfaceChannels.Host {
+        override fun isForeground(): Boolean = launcherResumed && !foreignTaskOwnsScreen
+
+        override fun onForeignHandoff() = markForeignTaskHandoff()
+
+        override fun onForeignHandoffFailed() {
+            foreignTaskForeground = false
+            pausedForForeignTask = false
+        }
+
+        override fun onFinishLock() {
+            // The launcher's panel is cleared by Dart, not by finishing the
+            // home activity; only the lock activity finishes here.
+        }
+
+        override fun setOverlayWhenLocked(enabled: Boolean) {
+            this@MainActivity.setOverlayWhenLocked(enabled)
+        }
+
+        override fun startTarget(intent: Intent, onStarted: (Boolean) -> Unit) {
+            startTargetWithReturnBridge(intent, onStarted)
+        }
+
+        override fun onUnhandledMethod(call: MethodCall, result: MethodChannel.Result): Boolean =
+            handleMainOnlyMethod(call, result)
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#050A16")))
@@ -173,19 +199,28 @@ class MainActivity : FlutterActivity() {
                         // app returned to a keyguard-occluding launcher and the
                         // platform asked for a fingerprint.
                         //
-                        // Nothing is lost by staying quiet: the platform keyguard
-                        // is what locked the device, and it is what authenticates
-                        // the user back in.
+                        // MainActivity stays out of it: the platform keyguard
+                        // is what locked the device, and the separate lock
+                        // activity raised here is the surface that
+                        // authenticates the user back in.
                         if (foreignTaskOwnsScreen) {
+                            // The launcher must NOT re-assert showWhenLocked
+                            // or mount its own panel here — raising the HOME
+                            // task over the keyguard sent the user back to the
+                            // launcher instead of their app. A separate
+                            // LockActivity in its own task is raised instead,
+                            // so finishing it reveals exactly what was
+                            // underneath; MainActivity's Dart is not told about
+                            // this screen-off at all.
                             android.util.Log.d(
                                 "ChronoFold",
-                                "Screen off while a launched app owns the screen; " +
-                                    "leaving the lock to the platform keyguard",
+                                "CF_LOCK: screen off over foreign task; raising lock activity",
                             )
+                            raiseLockActivityOverForeignTask()
                             return
                         }
                         runOnUiThread {
-                            appsMethodChannel?.invokeMethod("lockScreen", null)
+                            lockSurface?.invokeAppsMethod("lockScreen", null)
                         }
                     }
                     Intent.ACTION_SCREEN_ON -> {
@@ -196,7 +231,7 @@ class MainActivity : FlutterActivity() {
                         // prompt appearing out of nowhere.
                         if (foreignTaskOwnsScreen) return
                         runOnUiThread {
-                            appsMethodChannel?.invokeMethod("screenOn", null)
+                            lockSurface?.invokeAppsMethod("screenOn", null)
                         }
                     }
                     Intent.ACTION_USER_PRESENT -> {
@@ -204,7 +239,7 @@ class MainActivity : FlutterActivity() {
                             keyguardWasLocked = false
                             if (foreignTaskOwnsScreen) return
                             runOnUiThread {
-                                appsMethodChannel?.invokeMethod("userPresent", null)
+                                lockSurface?.invokeAppsMethod("userPresent", null)
                             }
                         }
                     }
@@ -222,7 +257,7 @@ class MainActivity : FlutterActivity() {
         packageReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 runOnUiThread {
-                    appsMethodChannel?.invokeMethod("onPackagesChanged", null)
+                    lockSurface?.invokeAppsMethod("onPackagesChanged", null)
                 }
             }
         }
@@ -234,7 +269,6 @@ class MainActivity : FlutterActivity() {
         }
         registerReceiver(packageReceiver, pkgFilter)
     }
-
     override fun onPause() {
         launcherResumed = false
         // This is set only after the target activity has been accepted for
@@ -285,15 +319,15 @@ class MainActivity : FlutterActivity() {
         setIntent(intent)
         if (intent.hasCategory(Intent.CATEGORY_HOME) || intent.action == Intent.ACTION_MAIN) {
             runOnUiThread {
-                appsMethodChannel?.invokeMethod("onHomePressed", null)
+                lockSurface?.invokeAppsMethod("onHomePressed", null)
             }
         }
     }
-
     override fun onDestroy() {
-        stopFingerprintScan()
-        // Drop the sink so a live channel cannot outlive the activity.
-        fingerprintEvents = null
+        // Everything the shared surface acquired (sensors, the media session
+        // callback, the apps channel handler) is released here.
+        lockSurface?.dispose()
+        lockSurface = null
         screenReceiver?.let { unregisterReceiver(it) }
         packageReceiver?.let { unregisterReceiver(it) }
         super.onDestroy()
@@ -301,277 +335,225 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
-        powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
-        // TYPE_HINGE_ANGLE is 36
-        hingeSensor = sensorManager?.getDefaultSensor(36)
-
-        // MethodChannel for App querying & launching
-        appsMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APPS_CHANNEL)
-        appsMethodChannel?.setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "getInstalledApps" -> {
-                        val includeIcons = call.argument<Boolean>("includeIcons") ?: true
-                        backgroundExecutor.execute {
-                            try {
-                                val apps = fetchInstalledApps(includeIcons)
-                                runOnUiThread {
-                                    result.success(apps)
-                                }
-                            } catch (e: Exception) {
-                                runOnUiThread {
-                                    result.error("SCAN_ERROR", e.message, null)
-                                }
-                            }
-                        }
-                    }
-                    "launchApp" -> {
-                        val packageName = call.argument<String>("packageName")
-                        val activityName = call.argument<String>("activityName")
-                        if (packageName != null) {
-                            // Resolved only once the keyguard is dismissed and the activity
-                            // is started, reporting success directly back to Flutter.
-                            launchApplication(packageName, activityName) { success ->
-                                result.success(success)
-                            }
-                        } else {
-                            result.error("INVALID_ARGS", "packageName is required", null)
-                        }
-                    }
-                    "openQuickShortcut" -> {
-                        result.success(openQuickShortcut(call.argument<String>("shortcut")))
-                    }
-                    "openAppInfo" -> {
-                        val packageName = call.argument<String>("packageName")
-                        if (packageName != null) {
-                            openAppInfo(packageName)
-                            result.success(true)
-                        } else {
-                            result.error("INVALID_ARGS", "packageName is required", null)
-                        }
-                    }
-                    "startWebSearch" -> {
-                        val query = call.argument<String>("query")
-                        if (query.isNullOrBlank()) {
-                            result.error("INVALID_ARGS", "query is required", null)
-                        } else {
-                            result.success(startWebSearch(query))
-                        }
-                    }
-                    "openWebUrl" -> {
-                        val url = call.argument<String>("url")
-                        if (url.isNullOrBlank()) {
-                            result.error("INVALID_ARGS", "url is required", null)
-                        } else {
-                            result.success(openWebUrl(url))
-                        }
-                    }
-                    "getWebSearchHandlers" -> {
-                        result.success(describeWebSearchHandoff())
-                    }
-                    "uninstallApp" -> {
-                        val packageName = call.argument<String>("packageName")
-                        if (packageName != null) {
-                            uninstallApplication(packageName)
-                            result.success(true)
-                        } else {
-                            result.error("INVALID_ARGS", "packageName is required", null)
-                        }
-                    }
-                    "isDefaultLauncher" -> {
-                        result.success(isDefaultLauncher())
-                    }
-                    "requestDefaultLauncher" -> {
-                        requestDefaultLauncher()
-                        result.success(true)
-                    }
-                    "openHomeSettings" -> {
-                        val intent = Intent(Settings.ACTION_HOME_SETTINGS)
-                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        startActivityQuietly(intent)
-                        result.success(true)
-                    }
-                    "openCosmicLiveWallpaperPreview" -> {
-                        result.success(openCosmicLiveWallpaperPreview())
-                    }
-                    "getFilesDirPath" -> {
-                        result.success(applicationContext.filesDir.absolutePath)
-                    }
-                    "authenticate" -> {
-                        val appName = call.argument<String>("appName")
-                        authenticateUser(appName) { success, error ->
-                            runOnUiThread {
-                                if (success) {
-                                    result.success(true)
-                                } else {
-                                    result.error("AUTH_FAILED", error ?: "Authentication failed", null)
-                                }
-                            }
-                        }
-                    }
-                    "fingerprintCapability" -> {
-                        result.success(fingerprintCapability())
-                    }
-                    "startFingerprintScan" -> {
-                        // The honest answer travels in the return value:
-                        // Dart's armed state is "a scan was started and no
-                        // terminal event has arrived", so a refusal must not
-                        // read as a started session.
-                        result.success(startFingerprintScan())
-                    }
-                    "stopFingerprintScan" -> {
-                        stopFingerprintScan()
-                        result.success(true)
-                    }
-                    "isKeyguardLocked" -> {
-                        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-                        result.success(keyguard?.isKeyguardLocked == true || keyguard?.isDeviceLocked == true)
-                    }
-                    "isDeviceSecure" -> {
-                        // Whether any credential (PIN, pattern, fingerprint)
-                        // can protect this device. The launcher mounts its
-                        // lock surface either way — full lock ownership is
-                        // the settled product decision — so this is not a
-                        // gate for mounting the panel; it is how the panel
-                        // stays honest on a device where no fingerprint can
-                        // exist to read.
-                        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-                        result.success(keyguard?.isDeviceSecure == true)
-                    }
-                    "getBatteryState" -> {
-                        result.success(getBatteryState())
-                    }
-                    "dismissKeyguard" -> {
-                        requestKeyguardDismissal { success ->
-                            runOnUiThread { result.success(success) }
-                        }
-                    }
-                    "launcherFrameReady" -> {
-                        runOnUiThread {
-                            // An initial Flutter frame (or one sent before
-                            // MainActivity actually paused) must not dismiss
-                            // the bridge while a target is still opening.
-                            if (returnBridgeAwaitingReturn && returnBridgeLeftForTarget) {
-                                hideReturnBridge()
-                            }
-                            result.success(true)
-                        }
-                    }
-                    "setLockScreenOverlayEnabled" -> {
-                        val enabled = call.argument<Boolean>("enabled") ?: false
-                        runOnUiThread {
-                            setOverlayWhenLocked(enabled)
-                            result.success(true)
-                        }
-                    }
-                    else -> result.notImplemented()
-                }
-            }
-
-        // EventChannel for Hinge Angle Sensor
-        EventChannel(flutterEngine.dartExecutor.binaryMessenger, HINGE_CHANNEL)
-            .setStreamHandler(object : EventChannel.StreamHandler {
-                private var listener: SensorEventListener? = null
-
-                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-                    if (hingeSensor == null || sensorManager == null) {
-                        return
-                    }
-                    listener = object : SensorEventListener {
-                        override fun onSensorChanged(event: SensorEvent?) {
-                            if (event != null && event.values.isNotEmpty()) {
-                                val angle = event.values[0]
-                                events?.success(angle.toDouble())
-                            }
-                        }
-
-                        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-                    }
-                    sensorManager?.registerListener(
-                        listener,
-                        hingeSensor,
-                        SensorManager.SENSOR_DELAY_UI
-                    )
-                }
-
-                override fun onCancel(arguments: Any?) {
-                    listener?.let { sensorManager?.unregisterListener(it) }
-                    listener = null
-                }
-            })
-
-        // EventChannel for silent fingerprint scanning. Unlike BiometricPrompt,
-        // the legacy FingerprintManager renders no system UI: the app owns the
-        // affordance, so touching the sensor authenticates directly.
-        EventChannel(flutterEngine.dartExecutor.binaryMessenger, FINGERPRINT_CHANNEL)
-            .setStreamHandler(object : EventChannel.StreamHandler {
-                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-                    fingerprintEvents = events
-                }
-
-                override fun onCancel(arguments: Any?) {
-                    fingerprintEvents = null
-                    stopFingerprintScan()
-                }
-            })
-
-        accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-
-        // EventChannel for Accelerometer Shake Detection
-        EventChannel(flutterEngine.dartExecutor.binaryMessenger, SHAKE_CHANNEL)
-            .setStreamHandler(object : EventChannel.StreamHandler {
-                private var listener: SensorEventListener? = null
-                private var lastAcceleration = SensorManager.GRAVITY_EARTH
-                private var currentAcceleration = SensorManager.GRAVITY_EARTH
-                private var shakeMagnitude = 0f
-                private var lastShakeTime = 0L
-
-                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-                    if (accelSensor == null || sensorManager == null) {
-                        return
-                    }
-                    listener = object : SensorEventListener {
-                        override fun onSensorChanged(event: SensorEvent?) {
-                            if (event != null && event.values.size >= 3) {
-                                val x = event.values[0]
-                                val y = event.values[1]
-                                val z = event.values[2]
-                                lastAcceleration = currentAcceleration
-                                currentAcceleration = kotlin.math.sqrt((x * x + y * y + z * z).toDouble()).toFloat()
-                                val delta = kotlin.math.abs(currentAcceleration - lastAcceleration)
-                                shakeMagnitude = shakeMagnitude * 0.85f + delta
-                                val now = System.currentTimeMillis()
-                                val isShake = shakeMagnitude > 9.5f && now - lastShakeTime > 500
-                                if (isShake) {
-                                    lastShakeTime = now
-                                }
-                                events?.success(mapOf(
-                                    "type" to if (isShake) "shake" else "tilt",
-                                    "magnitude" to shakeMagnitude.toDouble(),
-                                    "x" to x.toDouble(),
-                                    "y" to y.toDouble(),
-                                    "z" to z.toDouble()
-                                ))
-                            }
-                        }
-
-                        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-                    }
-                    sensorManager?.registerListener(
-                        listener,
-                        accelSensor,
-                        SensorManager.SENSOR_DELAY_UI
-                    )
-                }
-
-                override fun onCancel(arguments: Any?) {
-                    listener?.let { sensorManager?.unregisterListener(it) }
-                    listener = null
-                }
-            })
+        val surface = LockSurfaceChannels(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+            lockSurfaceHost,
+        )
+        // Publish before configuring: a method can arrive as soon as the
+        // handler is installed, and the extras reach back through lockSurface.
+        lockSurface = surface
+        surface.configure()
     }
 
+    /**
+     * The launcher-only channel methods. Everything the lock activity also
+     * needs lives in [LockSurfaceChannels]; this is the remainder, kept on the
+     * apps channel so Dart sees one method namespace.
+     */
+    private fun handleMainOnlyMethod(call: MethodCall, result: MethodChannel.Result): Boolean {
+        when (call.method) {
+            "openAppInfo" -> {
+                val packageName = call.argument<String>("packageName")
+                if (packageName != null) {
+                    openAppInfo(packageName)
+                    result.success(true)
+                } else {
+                    result.error("INVALID_ARGS", "packageName is required", null)
+                }
+            }
+            "startWebSearch" -> {
+                val query = call.argument<String>("query")
+                if (query.isNullOrBlank()) {
+                    result.error("INVALID_ARGS", "query is required", null)
+                } else {
+                    result.success(startWebSearch(query))
+                }
+            }
+            "openWebUrl" -> {
+                val url = call.argument<String>("url")
+                if (url.isNullOrBlank()) {
+                    result.error("INVALID_ARGS", "url is required", null)
+                } else {
+                    result.success(openWebUrl(url))
+                }
+            }
+            "getWebSearchHandlers" -> {
+                result.success(describeWebSearchHandoff())
+            }
+            "uninstallApp" -> {
+                val packageName = call.argument<String>("packageName")
+                if (packageName != null) {
+                    uninstallApplication(packageName)
+                    result.success(true)
+                } else {
+                    result.error("INVALID_ARGS", "packageName is required", null)
+                }
+            }
+            "isDefaultLauncher" -> {
+                result.success(isDefaultLauncher())
+            }
+            "requestDefaultLauncher" -> {
+                requestDefaultLauncher()
+                result.success(true)
+            }
+            "openHomeSettings" -> {
+                val intent = Intent(Settings.ACTION_HOME_SETTINGS)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                lockSurface?.startActivityQuietly(intent)
+                result.success(true)
+            }
+            "openCosmicLiveWallpaperPreview" -> {
+                result.success(openCosmicLiveWallpaperPreview())
+            }
+            "getFilesDirPath" -> {
+                result.success(applicationContext.filesDir.absolutePath)
+            }
+            "requestMediaAccess" -> {
+                // The standard system setting page: only the user can grant
+                // notification access, and this is the one place the platform
+                // lets them. Every external start goes through the handoff
+                // marker so the launcher knows the screen is not its own while
+                // the user is away.
+                val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                result.success(lockSurface?.startActivityQuietly(intent) ?: false)
+            }
+            "launcherFrameReady" -> {
+                runOnUiThread {
+                    // An initial Flutter frame (or one sent before MainActivity
+                    // actually paused) must not dismiss the bridge while a
+                    // target is still opening.
+                    if (returnBridgeAwaitingReturn && returnBridgeLeftForTarget) {
+                        hideReturnBridge()
+                    }
+                    result.success(true)
+                }
+            }
+            "hasOverlayAccess" -> {
+                result.success(hasOverlayAccess())
+            }
+            "requestOverlayAccess" -> {
+                requestOverlayAccess()
+                result.success(true)
+            }
+            else -> return false
+        }
+        return true
+    }
+
+    // --- Lock activity over a foreign task ---------------------------------------------
+
+    /**
+     * Whether this app may draw over other apps.
+     *
+     * That grant is the one exemption from Android's background-activity-launch
+     * limits, so it decides whether the lock activity can be raised directly on
+     * screen-off or needs a full-screen-intent notification instead.
+     */
+    private fun hasOverlayAccess(): Boolean = Settings.canDrawOverlays(this)
+
+    private fun requestOverlayAccess() {
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:$packageName"),
+        )
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        lockSurface?.startActivityQuietly(intent)
+    }
+
+    /**
+     * Raises [LockActivity] over the foreign task that owns the screen.
+     *
+     * A screen-off broadcast is a background start, which Android may block. If
+     * the overlay grant is held, the direct start is exempt and is used. Without
+     * it the direct start is still attempted first (harmless), and a
+     * full-screen-intent notification on the high-importance `lock_surface`
+     * channel is posted alongside — the mechanism shipping third-party lock
+     * screens use.
+     */
+    private fun raiseLockActivityOverForeignTask() {
+        val intent = Intent(this, LockActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+
+        if (Settings.canDrawOverlays(this)) {
+            val started = try {
+                startActivity(intent)
+                true
+            } catch (error: Exception) {
+                android.util.Log.w("ChronoFold", "CF_LOCK: direct lock start failed", error)
+                false
+            }
+            val directSuffix = if (started) "" else " (failed)"
+            android.util.Log.d(
+                "ChronoFold",
+                "CF_LOCK: lock activity start path=direct$directSuffix",
+            )
+            return
+        }
+
+        val directStarted = try {
+            startActivity(intent)
+            true
+        } catch (error: Exception) {
+            false
+        }
+        postLockSurfaceNotification(intent)
+        val suffix = if (directStarted) " (direct also accepted)" else ""
+        android.util.Log.d(
+            "ChronoFold",
+            "CF_LOCK: lock activity start path=fsi$suffix",
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun postLockSurfaceNotification(intent: Intent) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                LockSurfaceChannels.LOCK_SURFACE_CHANNEL_ID,
+                "Lock screen",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Shows ChronoFold's lock surface over the running app."
+                setSound(null, null)
+                enableVibration(false)
+            }
+            manager.createNotificationChannel(channel)
+        }
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            LockSurfaceChannels.LOCK_SURFACE_NOTIFICATION_ID,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, LockSurfaceChannels.LOCK_SURFACE_CHANNEL_ID)
+        } else {
+            Notification.Builder(this)
+        }
+
+        val notification = builder
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setCategory(Notification.CATEGORY_SYSTEM)
+            .setContentTitle("Lock screen")
+            .setContentText("ChronoFold lock screen")
+            .setFullScreenIntent(pendingIntent, true)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setTimeoutAfter(10_000L)
+            .build()
+        // Silent and vibration-free: this is a surface switch, not an alert.
+        notification.sound = null
+        notification.defaults = 0
+        notification.vibrate = null
+
+        manager.notify(LockSurfaceChannels.LOCK_SURFACE_NOTIFICATION_ID, notification)
+    }
     /**
      * Opens Android's live-wallpaper chooser for the ambient layer.
      *
@@ -600,104 +582,6 @@ class MainActivity : FlutterActivity() {
             false
         }
     }
-
-    private fun fetchInstalledApps(includeIcons: Boolean): List<Map<String, Any?>> {
-        val pm = packageManager
-        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-        }
-        val resolveInfoList: List<ResolveInfo> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            pm.queryIntentActivities(mainIntent, PackageManager.ResolveInfoFlags.of(0))
-        } else {
-            @Suppress("DEPRECATION")
-            pm.queryIntentActivities(mainIntent, 0)
-        }
-
-        val appList = ArrayList<Map<String, Any?>>()
-
-        for (resolveInfo in resolveInfoList) {
-            val packageName = resolveInfo.activityInfo.packageName
-            if (packageName == applicationContext.packageName) {
-                continue
-            }
-            val activityName = resolveInfo.activityInfo.name
-            val label = resolveInfo.loadLabel(pm).toString()
-            val appInfo = resolveInfo.activityInfo.applicationInfo
-            val isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-
-            val appData = HashMap<String, Any?>()
-            appData["packageName"] = packageName
-            appData["activityName"] = activityName
-            appData["label"] = label
-            appData["isSystemApp"] = isSystemApp
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                appData["category"] = appInfo.category
-            } else {
-                appData["category"] = -1
-            }
-
-            if (includeIcons) {
-                try {
-                    val iconDrawable = resolveInfo.loadIcon(pm)
-                    val iconBytes = drawableToByteArray(iconDrawable)
-                    appData["iconBytes"] = iconBytes
-                } catch (e: Exception) {
-                    appData["iconBytes"] = null
-                }
-            }
-
-            appList.add(appData)
-        }
-
-        return appList
-    }
-
-    /**
-     * Renders [drawable] into a launcher-sized PNG.
-     *
-     * Icons used to be sent at intrinsic size — for adaptive icons that is
-     * 432px on this device — which put tens of megabytes into a single
-     * platform-channel message and made the Dart side decode every icon at
-     * full size. The Dart layer already downscales to this size before drawing,
-     * so scaling here is lossless from the launcher's point of view and removes
-     * both the channel weight and the decode cost.
-     */
-    private fun drawableToByteArray(drawable: Drawable): ByteArray {
-        val bitmap = Bitmap.createBitmap(ICON_PIXELS, ICON_PIXELS, Bitmap.Config.ARGB_8888)
-        try {
-            val canvas = Canvas(bitmap)
-            drawable.setBounds(0, 0, canvas.width, canvas.height)
-            drawable.draw(canvas)
-
-            val stream = ByteArrayOutputStream()
-            // PNG is lossless, so the quality argument does nothing; the win is
-            // that the bitmap is already the size the launcher renders.
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
-            return stream.toByteArray()
-        } finally {
-            bitmap.recycle()
-        }
-    }
-
-    /**
-     * Starts [intent] once the keyguard is out of the way, then reports whether
-     * it started.
-     *
-     * If the keyguard is not locked — the normal case, since the launcher no
-     * longer occludes it by default — the intent starts immediately.
-     *
-     * If the keyguard is locked, [KeyguardManager.requestDismissKeyguard] is
-     * requested, and the platform performs the authentication: biometric, PIN or
-     * pattern, in its own UI. This is the launcher's only real authentication
-     * gate. Nothing in Dart can stand in for it, because while the device is
-     * locked only the keyguard may use the fingerprint sensor.
-     *
-     * [onStarted] reports true only when the activity is genuinely on its way to
-     * being visible. A refused or cancelled dismissal reports false rather than
-     * starting the activity behind the lock screen, where it would run unseen
-     * while the caller believed the launch had succeeded.
-     */
     /**
      * Makes the last launcher buffer a native cover-like surface before a
      * foreign task begins. It stays above Flutter during the round trip and is
@@ -756,193 +640,26 @@ class MainActivity : FlutterActivity() {
         showReturnBridge()
         val bridge = returnBridge
         if (bridge == null) {
-            onStarted(startActivityQuietly(intent))
+            onStarted(lockSurface?.startActivityQuietly(intent) ?: false)
             return
         }
 
         // Allow one compositor beat for the native bridge to become the
         // launcher task's visible buffer before the target task takes over.
         bridge.postDelayed({
-            val started = startActivityQuietly(intent)
+            val started = lockSurface?.startActivityQuietly(intent) ?: false
             if (!started) {
                 hideReturnBridge()
             }
             onStarted(started)
         }, 16L)
     }
-
-    private fun startWhenUnlocked(
-        intent: Intent,
-        onStarted: (Boolean) -> Unit,
-    ) {
-        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        if (keyguard == null || !keyguard.isKeyguardLocked) {
-            // This activity must resume as ordinary home content after the
-            // target closes, not as an overlay that re-occludes a keyguard.
-            setOverlayWhenLocked(false)
-            startTargetWithReturnBridge(intent, onStarted)
-            return
-        }
-
-        // Release this app's hold on the reader first so the keyguard can
-        // take over sensor ownership cleanly.
-        stopFingerprintScan()
-
-        keyguard.requestDismissKeyguard(
-            this,
-            object : KeyguardManager.KeyguardDismissCallback() {
-                override fun onDismissSucceeded() {
-                    // ColorOS can re-present its bouncer when MainActivity
-                    // returns while it remains `showWhenLocked`. Remove that
-                    // temporary window flag before starting the target; the
-                    // Dart screen-off listener restores it for a real lock.
-                    setOverlayWhenLocked(false)
-                    startTargetWithReturnBridge(intent, onStarted)
-                }
-
-                override fun onDismissError() {
-                    // Starting the activity anyway reported success for a launch
-                    // the user cannot see: with the keyguard still up the
-                    // activity lands *behind* it, running and invisible, which
-                    // reads as the app never having opened. Reporting the
-                    // failure lets the caller say so instead.
-                    android.util.Log.w(
-                        "ChronoFold",
-                        "Keyguard refused to dismiss; not starting behind it",
-                    )
-                    onStarted(false)
-                }
-
-                override fun onDismissCancelled() {
-                    onStarted(false)
-                }
-            },
-        )
-    }
-
-    /**
-     * Asks the platform to authenticate the user and clear the keyguard, without
-     * launching anything.
-     *
-     * This exists because the launcher's own lock panel cannot authenticate
-     * anyone. While the device is locked only the keyguard may use the
-     * fingerprint sensor, so a panel drawn over the keyguard has no way to
-     * verify identity itself. Its swipe-to-enter gesture therefore has exactly
-     * two honest options: refuse, or ask the platform to do the authenticating.
-     * This is the second.
-     *
-     * On a secure keyguard `requestDismissKeyguard` raises the platform's own
-     * bouncer (biometric, PIN, pattern), and the callback reports what the user
-     * did. On a device with no secure lock the keyguard is not locked and there
-     * is nothing to authenticate, so this reports success immediately.
-     */
-    private fun requestKeyguardDismissal(onResult: (Boolean) -> Unit) {
-        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        if (keyguard == null || !keyguard.isKeyguardLocked) {
-            onResult(true)
-            return
-        }
-
-        // Release this app's hold on the reader first so the keyguard can take
-        // sensor ownership cleanly.
-        stopFingerprintScan()
-
-        keyguard.requestDismissKeyguard(
-            this,
-            object : KeyguardManager.KeyguardDismissCallback() {
-                override fun onDismissSucceeded() {
-                    onResult(true)
-                }
-
-                override fun onDismissError() {
-                    onResult(false)
-                }
-
-                override fun onDismissCancelled() {
-                    onResult(false)
-                }
-            },
-        )
-    }
-
-    private fun startActivityQuietly(intent: Intent): Boolean {
-        return try {
-            markForeignTaskHandoff()
-            startActivity(intent)
-            true
-        } catch (e: Exception) {
-            // Nothing was handed anywhere, so the launcher still owns the screen.
-            foreignTaskForeground = false
-            pausedForForeignTask = false
-            false
-        }
-    }
-
-    private fun launchApplication(
-        packageName: String,
-        activityName: String?,
-        onComplete: (Boolean) -> Unit,
-    ) {
-        val intent = try {
-            if (activityName != null && activityName.isNotEmpty()) {
-                Intent().apply {
-                    setClassName(packageName, activityName)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-                }
-            } else {
-                packageManager.getLaunchIntentForPackage(packageName)?.apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-                }
-            }
-        } catch (e: Exception) {
-            null
-        }
-
-        if (intent == null) {
-            onComplete(false)
-            return
-        }
-        startWhenUnlocked(intent, onComplete)
-    }
-
-    /**
-     * Opens the platform's own handler for a lock-screen shortcut.
-     *
-     * The dialer is reached with ACTION_DIAL: every device answers it, it needs
-     * no package name, and it is permitted over the keyguard. It also resolves
-     * to a single activity on the tested ColorOS 16 build
-     * (com.android.contacts/.DialtactsActivityAlias) — the very component the
-     * launcher cannot find by package name, because that package publishes a
-     * second launcher alias for Contacts.
-     *
-     * The camera has no equally unambiguous action: on the same device both
-     * INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE and INTENT_ACTION_STILL_IMAGE_CAMERA
-     * are also claimed by a social app, so the platform raises a chooser. A
-     * chooser is not an answer to "open the camera", so this reports failure and
-     * lets the caller say so instead of surprising the user.
-     */
-    private fun openQuickShortcut(shortcut: String?): Boolean {
-        val intent = when (shortcut) {
-            "phone" -> Intent(Intent.ACTION_DIAL)
-            "camera" -> Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE)
-            else -> return false
-        }
-        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-
-        val resolved = intent.resolveActivity(packageManager) ?: return false
-        // "android" is the platform's own ResolverActivity, i.e. a chooser.
-        if (resolved.packageName == "android") return false
-
-        startWhenUnlocked(intent) { }
-        return true
-    }
-
     private fun openAppInfo(packageName: String) {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.fromParts("package", packageName, null)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        startActivityQuietly(intent)
+        lockSurface?.startActivityQuietly(intent)
     }
 
     private fun uninstallApplication(packageName: String) {
@@ -950,7 +667,7 @@ class MainActivity : FlutterActivity() {
             data = Uri.fromParts("package", packageName, null)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        startActivityQuietly(intent)
+        lockSurface?.startActivityQuietly(intent)
     }
 
     private fun isDefaultLauncher(): Boolean {
@@ -967,16 +684,15 @@ class MainActivity : FlutterActivity() {
             if (roleManager != null && roleManager.isRoleAvailable(RoleManager.ROLE_HOME) && !roleManager.isRoleHeld(RoleManager.ROLE_HOME)) {
                 val intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME)
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                startActivityQuietly(intent)
+                lockSurface?.startActivityQuietly(intent)
                 return
             }
         }
         val intent = Intent(Settings.ACTION_HOME_SETTINGS).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
-        startActivityQuietly(intent)
+        lockSurface?.startActivityQuietly(intent)
     }
-
     /**
      * Allows or forbids MainActivity being drawn over the keyguard.
      *
@@ -1008,284 +724,6 @@ class MainActivity : FlutterActivity() {
             }
         }
     }
-
-    /**
-     * The real battery state for the lock surface, which used to show a
-     * hardcoded "92%" over a charging glyph.
-     *
-     * Returns level (0-100) and the charging flag, or null when the level is
-     * genuinely unavailable — the panel then hides the percentage instead of
-     * inventing one. minSdk is 26, so BATTERY_PROPERTY_CAPACITY and isCharging
-     * are both fully available on every device this runs on.
-     */
-    private fun getBatteryState(): Map<String, Any>? {
-        val manager = getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return null
-        return try {
-            val level = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-            // An unavailable property answers Integer.MIN_VALUE (and the
-            // occasional OEM build throws instead) — that is "unknown", not
-            // zero, so it must not reach the panel as a number.
-            if (level == Int.MIN_VALUE) null
-            else mapOf(
-                "level" to level,
-                "charging" to manager.isCharging,
-            )
-        } catch (error: Exception) {
-            android.util.Log.e("ChronoFold", "Battery state unavailable", error)
-            null
-        }
-    }
-
-    // --- Silent fingerprint scanning -------------------------------------------------
-    //
-    // BiometricPrompt always draws its own system dialog. The legacy
-    // FingerprintManager does not: the app owns the affordance, which is what
-    // the lock screen provides, so touching the sensor authenticates directly
-    // and no prompt is ever shown.
-
-    private fun fingerprintManager(): FingerprintManager? =
-        getSystemService(Context.FINGERPRINT_SERVICE) as? FingerprintManager
-
-    private fun fingerprintCapability(): Map<String, Any> {
-        val manager = fingerprintManager()
-        val hardware = manager?.isHardwareDetected == true
-        val enrolled = hardware && manager?.hasEnrolledFingerprints() == true
-        return mapOf("hardware" to hardware, "enrolled" to enrolled)
-    }
-
-    /**
-     * Arms the silent reader.
-     *
-     * Returns whether a session was genuinely started: every refusal reports
-     * false alongside its event, so an arm that never happened cannot
-     * masquerade as a live session on the Dart side. Dart's armed state is
-     * built from this answer plus the terminal events, not from `listening`.
-     */
-    @Suppress("DEPRECATION")
-    private fun startFingerprintScan(): Boolean {
-        val manager = fingerprintManager()
-        if (manager == null || !manager.isHardwareDetected || !manager.hasEnrolledFingerprints()) {
-            fingerprintEvents?.success(mapOf("type" to "unavailable"))
-            return false
-        }
-
-        if (powerManager?.isInteractive != true) {
-            // The platform cancels an app's reader session the moment the panel
-            // goes off, so arming now would only burn the caller's retry budget
-            // and leave the sensor dead before the user has touched anything.
-            fingerprintEvents?.success(mapOf("type" to "screenOff"))
-            return false
-        }
-
-        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        if (keyguard?.isKeyguardLocked == true) {
-            // While the keyguard is locked it owns the power-button sensor, and
-            // this build cancels an app's reader session within ~2 ms of the
-            // arm — cold start, no competing session, key-bound or bare
-            // (repro-fingerprint-unlock Red 1). Every arm in this state was
-            // measured to fail identically, so arming spends the sensor for
-            // nothing and leaves it dead for the requests that matter. Refuse
-            // without touching it and say so with a distinct event, so Dart
-            // resolves the request through the platform's own bouncer — the
-            // only reader a locked keyguard accepts.
-            fingerprintEvents?.success(mapOf("type" to "keyguardLocked"))
-            return false
-        }
-
-        if (!launcherResumed || foreignTaskOwnsScreen) {
-            // A biometric session opened from a background activity is one the
-            // user never asked for, and on a device whose system UI draws the
-            // sensor affordance for an active session it appears as a prompt out
-            // of nowhere — over whatever app they are actually using.
-            //
-            // This is the last line of defence rather than the first: the Dart
-            // panel is not supposed to ask while it is not the visible surface.
-            // Saying no here means a stale caller cannot make it happen anyway.
-            android.util.Log.d(
-                "ChronoFold",
-                "Refusing to arm the reader: launcher is not the foreground surface",
-            )
-            fingerprintEvents?.success(mapOf("type" to "background"))
-            return false
-        }
-
-        stopFingerprintScan()
-        val signal = CancellationSignal()
-        fingerprintCancellation = signal
-
-        return try {
-            // A bare request. Binding the session to a keystore key was tried and
-            // measured on the CPH2765: a key-bound `CryptoObject` is armed and
-            // then cancelled in ~1 ms exactly like this one, so the refusal is
-            // the device's lock policy rather than anything about the session's
-            // shape. There is no form of app-owned reader session this build
-            // accepts while the keyguard is up, which is why the lock screen
-            // falls back to the platform's own prompt in that state.
-            manager.authenticate(
-                null,
-                signal,
-                0,
-                object : FingerprintManager.AuthenticationCallback() {
-                    /** Whether this session already reported `listening`. */
-                    private var listeningAnnounced = false
-
-                    override fun onAuthenticationSucceeded(
-                        result: FingerprintManager.AuthenticationResult?
-                    ) {
-                        // A superseded session keeps reporting after it was
-                        // replaced; only the live signal may reach Dart.
-                        if (fingerprintCancellation !== signal) return
-                        fingerprintCancellation = null
-                        fingerprintEvents?.success(mapOf("type" to "succeeded"))
-                    }
-
-                    override fun onAuthenticationFailed() {
-                        if (fingerprintCancellation !== signal) return
-                        // A non-matching finger: the sensor stays armed.
-                        fingerprintEvents?.success(mapOf("type" to "failed"))
-                    }
-
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
-                        if (fingerprintCancellation !== signal) return
-                        fingerprintCancellation = null
-                        fingerprintEvents?.success(
-                            mapOf(
-                                "type" to "error",
-                                "code" to errorCode,
-                                "message" to (errString?.toString() ?: ""),
-                            )
-                        )
-                    }
-
-                    override fun onAuthenticationHelp(helpCode: Int, helpString: CharSequence?) {
-                        // A session is "listening" only once the platform has
-                        // actually shown sensor activity, and a partial read
-                        // (finger moved, sensor dirty) is the first honest
-                        // signal of that — the sensor is genuinely live. The
-                        // old emit right after authenticate() claimed a session
-                        // this build then cancels within 1–6 ms, so Dart's
-                        // armed state flickered for a session that never
-                        // existed. Once per session, and a superseded session
-                        // stays silent via the identity check above.
-                        if (fingerprintCancellation !== signal) return
-                        if (!listeningAnnounced) {
-                            listeningAnnounced = true
-                            fingerprintEvents?.success(mapOf("type" to "listening"))
-                        }
-                    }
-                },
-                null,
-            )
-            // The platform accepted the call — that is all this claims. The
-            // session is live but nothing has touched the sensor yet, and on
-            // this build the platform may still cancel it a millisecond later
-            // (which arrives as an `error` event and clears Dart's armed
-            // state again). Reporting more here would be the optimistic lie
-            // this function used to tell.
-            true
-        } catch (error: Exception) {
-            fingerprintCancellation = null
-            android.util.Log.e("ChronoFold", "Fingerprint reader unavailable", error)
-            fingerprintEvents?.success(
-                mapOf(
-                    "type" to "unavailable",
-                    "message" to (error.message ?: "Fingerprint sensor unavailable"),
-                )
-            )
-            false
-        }
-    }
-
-    private fun stopFingerprintScan() {
-        // Cleared before cancelling so the callback the cancel triggers is
-        // recognised as belonging to a superseded session and is dropped.
-        val signal = fingerprintCancellation
-        fingerprintCancellation = null
-        signal?.cancel()
-    }
-
-    private fun authenticateUser(appName: String?, callback: (Boolean, String?) -> Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-            if (keyguardManager == null || !keyguardManager.isDeviceSecure) {
-                callback(true, null)
-                return
-            }
-
-            // The panel's silent reader and the system prompt cannot share the
-            // sensor, and whichever grabs it second cancels the first. This is
-            // the fallback path, so the system prompt wins.
-            stopFingerprintScan()
-
-            val title = if (!appName.isNullOrEmpty()) "Launch $appName" else "Verify Identity"
-            val subtitle = if (!appName.isNullOrEmpty()) "Verify identity to open $appName" else "Scan fingerprint, face, or enter credential"
-
-            val promptBuilder = BiometricPrompt.Builder(this)
-                .setTitle(title)
-                .setSubtitle(subtitle)
-                .setDescription("Scan fingerprint, face, or enter credential")
-
-            // Do NOT brand this prompt. Measured on the CPH2765 (ColorOS 16):
-            //
-            //   java.lang.SecurityException: Must have SET_BIOMETRIC_DIALOG_ADVANCED
-            //   permission ... at AuthService.checkBiometricAdvancedPermission(
-            //   AuthService.java:993)
-            //
-            // AOSP's AuthService.checkBiometricAdvancedPermission requires that
-            // signature permission whenever the request bundle carries the
-            // "use logo" extra, and it enforces that check *server side*, inside
-            // authenticate(). So a logo cannot be caught locally: the Builder
-            // accepts setLogoRes, build() succeeds, and then authenticate()
-            // throws. No third-party app can hold that permission, which means
-            // ColorOS forbids third-party biometric-dialog customisation
-            // outright — including setLogoBitmap and setConfirmationRequired,
-            // which travel in the same bundle.
-            //
-            // Swallowing that throw would be worse than not branding: the Dart
-            // credential fallback has no result, so the lock screen reports
-            // "auth required" while the user was never prompted for anything.
-            // The only correct behaviour is not to ask for the logo at all and
-            // let the platform draw its own uncustomised prompt.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                promptBuilder.setAllowedAuthenticators(
-                    android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                    android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                promptBuilder.setNegativeButton(
-                    "Cancel",
-                    mainExecutor
-                ) { _, _ ->
-                    callback(false, "Canceled")
-                }
-            }
-
-            val cancellationSignal = CancellationSignal()
-            promptBuilder.build().authenticate(
-                cancellationSignal,
-                mainExecutor,
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) {
-                        super.onAuthenticationSucceeded(result)
-                        callback(true, null)
-                    }
-
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
-                        super.onAuthenticationError(errorCode, errString)
-                        callback(false, errString?.toString())
-                    }
-
-                    override fun onAuthenticationFailed() {
-                        super.onAuthenticationFailed()
-                    }
-                }
-            )
-        } else {
-            callback(true, null)
-        }
-    }
-
     /**
      * Opens a URL in the user's chosen browser.
      *

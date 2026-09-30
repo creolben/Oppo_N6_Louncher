@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mylauncher/core/foldable_controller.dart';
 import 'package:mylauncher/core/launcher_bridge.dart';
@@ -13,7 +12,7 @@ import 'package:mylauncher/models/app_entry.dart';
 /// on such a device too, and that is intended. What must change there is
 /// honesty: with no credential no fingerprint can ever be enrolled, so the
 /// panel must not pretend there is a finger to read — no reader armed, no
-/// LOCKED badge, no authentication ask. On a secure device nothing changes.
+/// locked badge, no authentication ask. On a secure device nothing changes.
 
 List<AppEntry> _apps() => [
   AppEntry(
@@ -105,18 +104,14 @@ void main() {
       // Full lock ownership: the panel is up...
       expect(find.byType(CosmicLockScreen), findsOneWidget);
       // ...but it does not claim a lock that does not exist...
-      expect(find.text('LOCKED'), findsNothing);
+      expect(find.text('Locked'), findsNothing);
       // ...and its unlock affordance is the plain dismiss it always was.
-      expect(
-        find.text('TAP APP TO LAUNCH • SWIPE UP TO ENTER'),
-        findsOneWidget,
-      );
+      expect(find.text('Swipe up to open'), findsOneWidget);
     });
 
-    testWidgets('an app tap resolves through the platform with no ask', (
+    testWidgets('a shortcut tap resolves through the platform with no ask', (
       tester,
     ) async {
-      final semantics = tester.ensureSemantics();
       var scanStarts = 0;
       final spy = _LaunchSpy();
       await tester.pumpWidget(
@@ -145,13 +140,10 @@ void main() {
       await _settle(tester);
 
       await spy.capture(() async {
-        // Tap the Camera bubble the way a finger on the canvas would,
-        // through the semantics node the panel publishes for it.
-        final node = tester.getSemantics(find.bySemanticsLabel('Camera'));
-        tester.binding.pipelineOwner.semanticsOwner!.performAction(
-          node.id,
-          SemanticsAction.tap,
-        );
+        // The camera quick shortcut is the remaining app target; a bubble is
+        // decoration and launches nothing. Tapping the shortcut asks to open
+        // the camera.
+        await tester.tap(find.byIcon(Icons.camera_alt_rounded));
         for (int i = 0; i < 10; i++) {
           await tester.pump(const Duration(milliseconds: 40));
         }
@@ -166,8 +158,6 @@ void main() {
       // bridge, which on such a device dismisses silently — no credential
       // exists to ask for.
       expect(spy.launchedPackages, equals(['com.test.camera']));
-
-      semantics.dispose();
     });
   });
 
@@ -178,7 +168,7 @@ void main() {
       // No `isDeviceSecure` seam: the production default. On the test host
       // the bridge answers secure (it simulates a locked keyguard, which
       // implies a credential), so this is also the regression pin that the
-      // secure path is untouched: the mount arm still happens and the LOCKED
+      // secure path is untouched: the mount arm still happens and the locked
       // badge still draws.
       var scanStarts = 0;
       await tester.pumpWidget(
@@ -207,7 +197,7 @@ void main() {
 
       // Exactly the one mount-time arm, and the badge with it.
       expect(scanStarts, equals(1));
-      expect(find.text('LOCKED'), findsOneWidget);
+      expect(find.text('Locked'), findsOneWidget);
     });
   });
 }

@@ -27,9 +27,13 @@ import 'ui/screens/folded_cover_screen.dart';
 import 'ui/screens/tabletop_cockpit_view.dart';
 import 'ui/theme/luminous_home_theme.dart';
 
+// The lock activity runs its own engine on the `lockMain` entry point, which
+// lives in its own library. Re-exporting it keeps that entry point in this
+// kernel, so AOT tree-shaking cannot drop the second surface's entry point.
+export 'lock_main.dart' show lockMain;
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,

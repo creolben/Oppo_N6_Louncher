@@ -5,8 +5,6 @@ import 'package:mylauncher/canvas/galaxy_custom_painter.dart';
 import 'package:mylauncher/canvas/galaxy_interactive_canvas.dart';
 import 'package:mylauncher/core/foldable_controller.dart';
 import 'package:mylauncher/core/galaxy_layout_engine.dart';
-import 'package:mylauncher/features/lockscreen/bouncing_apps_painter.dart';
-import 'package:mylauncher/features/lockscreen/cosmic_lock_screen.dart';
 import 'package:mylauncher/models/app_entry.dart';
 import 'package:mylauncher/models/constellation.dart';
 
@@ -84,34 +82,6 @@ void main() {
   });
 
   group('The canvases take the ambient scale from the tree', () {
-    testWidgets('lock screen passes it to the bubble painter', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (context) => MediaQuery(
-              data: MediaQuery.of(context).copyWith(textScaler: _large),
-              child: Scaffold(
-                body: CosmicLockScreen(
-                  foldable: FoldableController(),
-                  apps: [_app()],
-                  onUnlock: () {},
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 16));
-
-      final painter = tester
-          .widgetList<CustomPaint>(find.byType(CustomPaint))
-          .map((w) => w.painter)
-          .whereType<BouncingAppsPainter>()
-          .single;
-
-      expect(painter.textScaler, _large);
-    });
-
     testWidgets('galaxy canvas passes it to the galaxy painter',
         (tester) async {
       final apps = [_app()];
