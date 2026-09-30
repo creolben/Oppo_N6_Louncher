@@ -71,8 +71,10 @@
              task, so finishing it reveals exactly the app that was underneath
              instead of the HOME task. It is not exported and has no
              intent-filter: only this process raises it, and it is never a
-             general entry point. showWhenLocked/turnScreenOn are asserted in
-             the manifest and again in LockActivity.onCreate. -->
+             general entry point. Only showWhenLocked is asserted, here and
+             again in LockActivity.onCreate: the activity is raised at
+             screen-off to be ready for the NEXT wake, so it must never turn
+             the display on itself — the power key or fingerprint does that. -->
         <activity
             android:name=".LockActivity"
             android:exported="false"
@@ -81,7 +83,6 @@
             android:excludeFromRecents="true"
             android:noHistory="false"
             android:showWhenLocked="true"
-            android:turnScreenOn="true"
             android:theme="@style/LaunchTheme"
             android:resizeableActivity="true"
             android:screenOrientation="portrait"
