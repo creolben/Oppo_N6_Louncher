@@ -303,8 +303,9 @@ void main() {
 
       expect(find.byType(FingerprintAuthPrompt), findsOneWidget);
       expect(find.text('NOT RECOGNISED • TOUCH AGAIN'), findsOneWidget);
-      // The finger itself is the problem now, so the PIN route is offered.
-      expect(find.text('USE PIN'), findsOneWidget);
+      // The finger itself is the problem now, so the credential route is
+      // offered. (Relabelled UNLOCK — it defers to the platform bouncer.)
+      expect(find.text('UNLOCK'), findsOneWidget);
 
       // A later good read still opens the app: the prompt never went dead.
       await spy.capture(() async {
@@ -316,7 +317,7 @@ void main() {
       semantics.dispose();
     });
 
-    testWidgets('a refused reader keeps the card up while the platform asks', (
+    testWidgets('a refused reader asks the injected credential hook first', (
       tester,
     ) async {
       final semantics = tester.ensureSemantics();
@@ -324,11 +325,17 @@ void main() {
       // the device is locked, so this is the real device's behaviour. The
       // platform prompt is then the only reader that can authenticate.
       //
-      // The card is deliberately NOT withdrawn for that: it is the visible
-      // result of the user's tap, and withdrawing it left a dead beat where the
-      // tap appeared to do nothing before the generic dialog arrived. The
-      // platform prompt draws over the card, and _resolveAuth clears it as soon
-      // as the prompt answers, so the two read as one interaction.
+      // Production/test split: production has NO credential hook — that flow
+      // is pinned by the "no injected hook" test below. Here the hook is
+      // injected because the platform's own bouncer cannot be raised on the
+      // test host, and it must be asked FIRST: the injected flow keeps
+      // driving the outcome, so a test can still hold the "platform is
+      // asking" window open and observe the panel from inside it.
+      //
+      // The card is deliberately NOT raised anywhere in this flow: no
+      // `listening` event ever arrives, and only `listening` may put the card
+      // on screen — a card for a reader this device has already refused would
+      // be an ask a finger can never answer.
       final platformPrompt = Completer<bool>();
       await _pumpLockScreen(
         tester,
@@ -339,8 +346,9 @@ void main() {
 
       await spy.capture(() async {
         await _tapBubble(tester, 'Camera');
-        // The card answers the tap immediately, before the reader is consulted.
-        expect(find.byType(FingerprintAuthPrompt), findsOneWidget);
+        // No card answers the tap before the reader is consulted: the reader
+        // has not been handed over, so nothing honest can be drawn yet.
+        expect(find.byType(FingerprintAuthPrompt), findsNothing);
 
         // Two cancellations: the panel's single retry, then the reader is done.
         reader.emit({'type': 'error', 'code': 5, 'message': 'canceled'});
@@ -348,16 +356,15 @@ void main() {
         reader.emit({'type': 'error', 'code': 5, 'message': 'canceled'});
         await _settle(tester);
 
-        // The platform is asking, with the card still behind it.
-        expect(find.byType(FingerprintAuthPrompt), findsOneWidget);
+        // The injected hook now holds the request — the platform is asking —
+        // and still no card has been drawn by the launcher.
+        expect(find.byType(FingerprintAuthPrompt), findsNothing);
 
         platformPrompt.complete(true);
         await _settleLaunch(tester);
-
-        // Answered: the card is gone and the app is opening.
-        expect(find.byType(FingerprintAuthPrompt), findsNothing);
       });
 
+      // Answered: the app is opening, with no launcher-drawn ask in between.
       expect(spy.launchedPackages, equals(['com.test.camera']));
 
       semantics.dispose();
@@ -396,11 +403,11 @@ void main() {
         expect(find.text('AUTH REQUIRED TO LAUNCH CAMERA'), findsOneWidget);
 
         // Second tap in the same lock session: the reader is known to be
-        // refused, so the request goes straight to the platform prompt — no
-        // further arm. The card still answers the tap; it is what the user sees
-        // while the platform prompt is up over it.
+        // refused, so the request goes straight to the credential hook — no
+        // further arm. No card appears for it either: it would be an ask for
+        // a finger the platform has already refused twice.
         await _tapBubble(tester, 'Camera');
-        expect(find.byType(FingerprintAuthPrompt), findsOneWidget);
+        expect(find.byType(FingerprintAuthPrompt), findsNothing);
         expect(asks, equals(2));
 
         second.complete(true);
@@ -412,7 +419,68 @@ void main() {
       semantics.dispose();
     });
 
-    testWidgets('the PIN route is offered when the finger will not read', (
+    testWidgets(
+      'a refused reader with no injected hook resolves through the platform bridge',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        // Production truth: no authenticateWithCredential hook exists outside
+        // tests. The refusal must still resolve the request — the old code
+        // gated the fallback on that hook, so on a real locked device the
+        // completer hung behind a modal card forever and the only exits were
+        // CANCEL or the mislabelled PIN button (report §3.1). Now the
+        // fallback completes as AuthOutcome.deferToPlatform and the launch
+        // runs through the platform's single requestDismissKeyguard bouncer:
+        // one ask, raised by the platform, no card from us at any point.
+        await _pumpLockScreen(tester, reader: reader);
+
+        await spy.capture(() async {
+          await _tapBubble(tester, 'Camera');
+          expect(find.byType(FingerprintAuthPrompt), findsNothing);
+
+          reader.emit({'type': 'error', 'code': 5, 'message': 'canceled'});
+          await _settle(tester);
+          reader.emit({'type': 'error', 'code': 5, 'message': 'canceled'});
+          await _settle(tester);
+
+          // Refused twice: the request resolved without any launcher-drawn
+          // ask, and the deferred launch went through the platform bridge.
+          expect(find.byType(FingerprintAuthPrompt), findsNothing);
+          await _settleLaunch(tester);
+        });
+
+        expect(spy.launchedPackages, equals(['com.test.camera']));
+
+        semantics.dispose();
+      },
+    );
+
+    testWidgets('a keyguard-locked refusal resolves the request immediately', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      // While the keyguard is locked the native side now refuses the arm
+      // before touching the sensor, with a distinct event (D2-3): on the
+      // tested build every locked-state arm was cancelled in ~2 ms anyway, so
+      // the refusal is reported without spending the sensor. Dart treats it
+      // like any other refusal — the reader is unusable for the rest of the
+      // lock session and a pending request resolves through the credential
+      // fallback, which in production means the platform's own bouncer.
+      await _pumpLockScreen(tester, reader: reader);
+
+      await spy.capture(() async {
+        await _tapBubble(tester, 'Camera');
+        reader.emit({'type': 'keyguardLocked'});
+        await _settleLaunch(tester);
+      });
+
+      // No card, no retry: the refusal resolved the request straight away.
+      expect(find.byType(FingerprintAuthPrompt), findsNothing);
+      expect(spy.launchedPackages, equals(['com.test.camera']));
+
+      semantics.dispose();
+    });
+
+    testWidgets('the credential route is offered when the finger will not read', (
       tester,
     ) async {
       final semantics = tester.ensureSemantics();
@@ -420,13 +488,13 @@ void main() {
 
       await _tapBubble(tester, 'Camera');
       await _handOverReader(tester, reader);
-      expect(find.text('USE PIN'), findsNothing);
+      expect(find.text('UNLOCK'), findsNothing);
 
       reader.emit({'type': 'failed'});
       await _settle(tester);
 
       await spy.capture(() async {
-        await tester.tap(find.text('USE PIN'));
+        await tester.tap(find.text('UNLOCK'));
         await _settleLaunch(tester);
       });
 

@@ -10,6 +10,7 @@ import '../../core/foldable_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
 import '../../canvas/camera_controller.dart';
 import '../../canvas/galaxy_interactive_canvas.dart';
+import '../format/clock_format.dart';
 import '../theme/luminous_home_theme.dart';
 
 class TabletopCockpitView extends StatefulWidget {
@@ -169,8 +170,10 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
   }
 
   Widget _buildTopHudPanel() {
-    final timeStr =
-        '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}';
+    // Follows the platform's 12/24-hour setting via the shared helper, so
+    // this clock cannot disagree with the ColorOS status bar on the same
+    // half-screen.
+    final timeStr = formatClockTime(context, _now);
     final dateStr =
         '${_weekdayName(_now.weekday)} • ${_monthName(_now.month)} ${_now.day}';
 

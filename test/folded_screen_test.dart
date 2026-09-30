@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mylauncher/core/foldable_controller.dart';
 import 'package:mylauncher/core/galaxy_layout_engine.dart';
 import 'package:mylauncher/canvas/galaxy_interactive_canvas.dart';
+import 'package:mylauncher/features/lockscreen/cosmic_lock_screen.dart';
 import 'package:mylauncher/models/app_entry.dart';
 import 'package:mylauncher/ui/screens/folded_cover_screen.dart';
 import 'package:mylauncher/main.dart';
@@ -168,7 +169,13 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(const ChronoFoldApp());
+      // Injected keyguard state: the test host reports a locked keyguard by
+      // default, which would mount the lock panel and mute the tickers the
+      // posture switcher needs to retire its outgoing child. This device is
+      // unlocked, so the switcher is free to complete.
+      await tester.pumpWidget(
+        ChronoFoldApp(isKeyguardLocked: () async => false),
+      );
       await tester.pump(const Duration(milliseconds: 100));
 
       // Initially wide flat mode -> GalaxyInteractiveCanvas is displayed
@@ -177,12 +184,32 @@ void main() {
 
       // Now simulate folding the device by resizing viewport to tall narrow cover screen
       tester.view.physicalSize = const Size(360, 800);
-      await tester.pumpWidget(const ChronoFoldApp());
+      await tester.pumpWidget(
+        ChronoFoldApp(isKeyguardLocked: () async => false),
+      );
       await tester.pump(const Duration(milliseconds: 500));
 
       // Posture detection switches to folded -> FoldedCoverScreen is displayed
       expect(find.byType(FoldedCoverScreen), findsOneWidget);
       expect(find.byType(GalaxyInteractiveCanvas), findsNothing);
+    });
+
+    testWidgets('A locked device mounts the lock surface at cold start', (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      // Cold start on a locked device (D1-3): home is never the first thing
+      // drawn over a locked keyguard — the cosmic lock surface mounts over
+      // it instead, and the platform keyguard stays in front until the
+      // launcher is told the device authenticated.
+      await tester.pumpWidget(
+        ChronoFoldApp(isKeyguardLocked: () async => true),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(CosmicLockScreen), findsOneWidget);
     });
   });
 }

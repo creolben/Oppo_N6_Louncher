@@ -10,6 +10,7 @@ import '../../core/foldable_controller.dart';
 import '../../models/app_entry.dart';
 import '../../core/launcher_bridge.dart';
 import '../../models/quick_shortcut.dart';
+import '../../ui/format/clock_format.dart';
 import '../../ui/widgets/fading_horizontal_scroll.dart';
 import 'bouncing_physics_engine.dart';
 import 'bouncing_apps_painter.dart';
@@ -80,6 +81,20 @@ class CosmicLockScreen extends StatefulWidget {
   /// Real keyguard locked state, defaulting to [LauncherBridge.isKeyguardLocked].
   final Future<bool> Function()? isKeyguardLocked;
 
+  /// Whether this panel clears itself at its first frame if the keyguard is
+  /// already unlocked (default false).
+  ///
+  /// Set only for mounts that stand for a lock — screen-off and cold-start
+  /// mounts. The launcher cannot draw behind another task's window, so such
+  /// a panel often inflates long after the platform has authenticated the
+  /// user; the ghost it would then be is prevented by asking the keyguard
+  /// from a post-frame callback, which by construction runs once frames are
+  /// definitely pumping — the race-free reconciliation report §2.5 D1-1
+  /// prescribed. A panel the user raised deliberately (the dock/HUD privacy
+  /// lock) passes false: it stands for the user's wish, not for a keyguard
+  /// state, and must stay up on an unlocked device.
+  final bool reconcileOnMount;
+
   /// Asks the platform to authenticate the user and clear the keyguard,
   /// defaulting to [LauncherBridge.dismissKeyguard].
   ///
@@ -99,6 +114,7 @@ class CosmicLockScreen extends StatefulWidget {
     this.fingerprintEvents,
     this.authenticateWithCredential,
     this.isKeyguardLocked,
+    this.reconcileOnMount = false,
     this.dismissKeyguard,
   });
 
@@ -276,36 +292,38 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     // while the panel sat idle.
     _retriedArm = false;
 
-    // Raise the card immediately, whatever the reader turns out to be able to
-    // do. The card is the answer to "launch this app" — it names the app the
-    // finger is unlocking — and waiting to find out whether the sensor is
-    // available before showing it produced a dead beat between the tap and any
-    // visible response, which read as the tap having been ignored.
-    //
-    // On a locked device the reader is refused and the request is handed to the
-    // platform prompt, which draws over this card. The card is still correct
-    // there: it is what the user sees as the result of their tap, and it is
-    // torn down by _resolveAuth whichever way the authentication lands.
-    if (mounted) {
-      setState(() {
-        _authTarget = target;
-        _authPhase = FingerprintPromptPhase.scanning;
-      });
-    }
-
     if (_sensorArmed) {
-      // Already listening: the card is up and the live session will answer it.
-      // Re-arming would cancel the session the user is about to touch.
-    } else if (_sensorUnusable) {
-      // The platform refuses in-app reader sessions while locked because the
-      // system keyguard owns the power button sensor. We do NOT immediately
-      // invoke the system credential prompt (which pops up an unwanted PIN
-      // screen). Instead, the prompt card remains visible so the user can
-      // touch the power button sensor, or tap "USE PIN" explicitly.
-      if (widget.authenticateWithCredential != null) {
-        _useCredentialFallback();
+      // The reader is already live (it armed with the panel on an unlocked
+      // device — the dock privacy lock), so a finger can genuinely answer a
+      // card for this request. Raise it now: the `listening` event that
+      // promotes `_authWanted` fired before the tap and will not fire again,
+      // and waiting for it would read as the tap being ignored.
+      if (mounted) {
+        setState(() {
+          _authTarget = target;
+          _authPhase = FingerprintPromptPhase.scanning;
+        });
       }
+    } else if (_sensorUnusable) {
+      // The platform has already refused this panel the reader — on a locked
+      // device the keyguard owns the sensor, and every arm is refused. The
+      // card is deliberately NOT raised: it would ask for a finger that can
+      // never answer it, and with no credential hook in production nothing
+      // would ever resolve it — the modal dead-end of report §3.1. The
+      // request resolves through the credential fallback instead: with a hook
+      // injected the hook answers first; without one the fallback completes
+      // as [AuthOutcome.deferToPlatform] and the launch runs through the
+      // platform's single `requestDismissKeyguard` bouncer, so the
+      // platform's own prompt is the one visible ask.
+      debugPrint(
+        'CF_FP: reader refused while keyguard locked; deferring to platform prompt',
+      );
+      _useCredentialFallback();
     } else {
+      // The reader's state is unknown yet: arm it, and let the `listening`
+      // event promote `_authWanted` to the card. A device that refuses the
+      // session never reaches `listening`, so its users never see a card at
+      // all — the refusal events resolve the request instead.
       _armFingerprintSensor();
     }
     return completer.future;
@@ -534,6 +552,36 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     LauncherBridge.setScreenOnListener(_onScreenOn);
     LauncherBridge.setUserPresentListener(_onUserPresent);
     _armFingerprintSensor();
+
+    if (widget.reconcileOnMount) {
+      // Post-frame on purpose: the launcher cannot draw behind a foreign
+      // task or over the keyguard, so this callback firing at all means a
+      // frame was pumped — the only moment a keyguard answer can be trusted
+      // to describe what the user is actually looking at.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _reconcileAgainstKeyguard();
+      });
+    }
+  }
+
+  /// Clears this panel if the keyguard it was mounted for no longer exists.
+  ///
+  /// Runs once, from initState's post-frame callback, and only for mounts
+  /// that stand for a lock ([CosmicLockScreen.reconcileOnMount]). A
+  /// screen-off behind a foreign app mounts this panel invisibly — the
+  /// launcher cannot draw there — and by the time it can, the platform has
+  /// usually already authenticated the user; without this check the panel
+  /// would appear as a lock for a device already unlocked. A panel that has
+  /// handed off a launch has already called `onUnlock`, so there is nothing
+  /// left to reconcile.
+  Future<void> _reconcileAgainstKeyguard() async {
+    if (!mounted || _disposed || _handedOff) return;
+    final bool isLocked =
+        await (widget.isKeyguardLocked ?? LauncherBridge.isKeyguardLocked)();
+    if (!mounted || _disposed || _handedOff) return;
+    if (isLocked) return;
+    debugPrint('CF_LOCK: panel reconciled away; keyguard already unlocked');
+    widget.onUnlock();
   }
 
   /// The platform authenticated someone and the keyguard is gone, so this
@@ -721,16 +769,21 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
           LauncherBridge.startFingerprintScan();
           return;
         }
-        // The platform will not let this app hold the reader. While locked,
-        // the platform keyguard monitors the power button sensor.
-        // We do NOT pop up a PIN prompt automatically; the card remains on screen
-        // and the user can touch the power button to unlock natively via
-        // ACTION_USER_PRESENT.
+        // The platform will not let this app hold the reader — while the
+        // device is locked the keyguard owns the sensor and this refusal is
+        // its refusal. Resolving through the credential fallback does not
+        // raise a prompt of ours: with no hook injected it completes as
+        // [AuthOutcome.deferToPlatform], and the launch that follows runs
+        // through the platform's single `requestDismissKeyguard` bouncer.
+        // Leaving the completer pending here — the old behaviour, which only
+        // a test-injected hook could satisfy — is what stranded real requests
+        // behind a modal card that nothing could ever answer.
         _sensorUnusable = true;
         if (mounted && _authCompleter != null) {
-          if (widget.authenticateWithCredential != null) {
-            _useCredentialFallback();
-          }
+          debugPrint(
+            'CF_FP: reader refused while keyguard locked; deferring to platform prompt',
+          );
+          _useCredentialFallback();
         }
 
       case 'screenOff':
@@ -740,6 +793,25 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         // The platform cancels an app's session when the panel goes off, so
         // there is nothing left armed to reuse.
         _sensorArmed = false;
+
+      case 'keyguardLocked':
+        // Refused before the sensor was touched: while the keyguard is
+        // locked it owns the reader, and the native side now says so up
+        // front instead of letting ColorOS cancel the session after the
+        // arm. Nothing was armed, so the panel loses nothing it had — and a
+        // pending request resolves through the credential fallback, which on
+        // this device means the platform's own `requestDismissKeyguard`
+        // bouncer, the only reader this state accepts. This also marks the
+        // session unusable so later taps short-circuit straight to the
+        // fallback without another arm round trip.
+        _sensorArmed = false;
+        _sensorUnusable = true;
+        debugPrint(
+          'CF_FP: reader refused while keyguard locked; deferring to platform prompt',
+        );
+        if (mounted && _authCompleter != null) {
+          _useCredentialFallback();
+        }
 
       case 'background':
         // The native side refused because the launcher is not the activity in
@@ -754,10 +826,13 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         // reader and a reader the platform refused to hand over.
         debugPrint('Fingerprint reader unavailable: ${event['message']}');
         _sensorArmed = false;
+        // No hook required here either: production has no
+        // `authenticateWithCredential`, and a request that reached this point
+        // must still resolve — through the fallback's deferToPlatform path
+        // rather than hanging behind a card a missing reader can never
+        // answer.
         if (mounted && _authCompleter != null) {
-          if (widget.authenticateWithCredential != null) {
-            _useCredentialFallback();
-          }
+          _useCredentialFallback();
         }
     }
   }
@@ -1225,8 +1300,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     final screenSize = MediaQuery.of(context).size;
     _ensurePhysicsInitialized(screenSize);
 
-    final timeHour = _currentTime.hour.toString().padLeft(2, '0');
-    final timeMinute = _currentTime.minute.toString().padLeft(2, '0');
+    // The shared helper follows the platform's 12/24-hour setting, so the
+    // large clock cannot disagree with the ColorOS keyguard it replaces. In
+    // 12-hour mode the day period travels in the same string (`7:05 PM`),
+    // which the large typeface accepts unchanged.
+    final timeString = formatClockTime(context, _currentTime);
     final dateFormatted =
         '${_weekdayName(_currentTime.weekday)}, ${_monthName(_currentTime.month)} ${_currentTime.day}';
 
@@ -1464,7 +1542,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                         child: Column(
                           children: [
                             Text(
-                              '$timeHour:$timeMinute',
+                              timeString,
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: isTabletop

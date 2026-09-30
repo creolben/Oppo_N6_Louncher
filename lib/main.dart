@@ -22,6 +22,7 @@ import 'ui/widgets/constellation_editor_modal.dart';
 import 'ui/widgets/create_constellation_modal.dart';
 import 'core/galaxy_storage_service.dart';
 import 'features/lockscreen/cosmic_lock_screen.dart';
+import 'ui/format/clock_format.dart';
 import 'ui/screens/folded_cover_screen.dart';
 import 'ui/screens/tabletop_cockpit_view.dart';
 import 'ui/theme/luminous_home_theme.dart';
@@ -43,7 +44,11 @@ void main() {
 }
 
 class ChronoFoldApp extends StatelessWidget {
-  const ChronoFoldApp({super.key});
+  /// Passes [ChronoFoldHomeScreen.isKeyguardLocked] through. Null in
+  /// production, where the home screen asks the bridge itself.
+  final Future<bool> Function()? isKeyguardLocked;
+
+  const ChronoFoldApp({super.key, this.isKeyguardLocked});
 
   @override
   Widget build(BuildContext context) {
@@ -51,13 +56,23 @@ class ChronoFoldApp extends StatelessWidget {
       title: 'ChronoFold Launcher',
       debugShowCheckedModeBanner: false,
       theme: LuminousHomeTheme.buildTheme(),
-      home: const ChronoFoldHomeScreen(),
+      home: ChronoFoldHomeScreen(isKeyguardLocked: isKeyguardLocked),
     );
   }
 }
 
 class ChronoFoldHomeScreen extends StatefulWidget {
-  const ChronoFoldHomeScreen({super.key});
+  /// Stands in for the platform's keyguard state at cold start — the same
+  /// seam [CosmicLockScreen] injects for its own keyguard question. Null in
+  /// production, where the cold-start check in `_loadApplications` goes to
+  /// the bridge. Injectable because the test host has no keyguard and its
+  /// bridge answers "locked" by default, so this is the only way a widget
+  /// test can express an unlocked device — which the posture tests need,
+  /// since a mounted lock panel mutes the tickers that retire the outgoing
+  /// posture child.
+  final Future<bool> Function()? isKeyguardLocked;
+
+  const ChronoFoldHomeScreen({super.key, this.isKeyguardLocked});
 
   @override
   State<ChronoFoldHomeScreen> createState() => _ChronoFoldHomeScreenState();
@@ -74,6 +89,17 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   bool _isLoading = true;
   bool _isSearchOpen = false;
   bool _isLocked = false;
+
+  /// Whether the lock panel about to mount was raised by an explicit user
+  /// action — the LOCK buttons — rather than by a screen-off or a cold
+  /// start over a locked keyguard.
+  ///
+  /// Read once per mount, when the panel below is constructed. It decides
+  /// `reconcileOnMount`: a panel mounted for a lock the platform may have
+  /// already satisfied clears itself at its first frame rather than
+  /// ghosting, while the privacy lock the user asked for stays up on an
+  /// unlocked device.
+  bool _lockMountedByUserAction = false;
   bool _isCockpitMode = false;
 
   /// Whether ColorOS owns the lock screen instead of ChronoFold's Cosmic
@@ -227,22 +253,57 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   ///
   /// In Native Mode, ColorOS manages the lock screen directly.
   ///
-  /// Only a screen-off that happens on the launcher gets here. The native side
-  /// drops the event while an app the launcher opened still owns the screen,
-  /// because answering it there raised this lock surface and re-asserted
-  /// `showWhenLocked` behind that app — so closing it returned to a
-  /// keyguard-occluding launcher with a lock panel already mounted, and the next
-  /// touch went to the platform's fingerprint bouncer. That decision is made in
-  /// MainActivity rather than here because Flutter's lifecycle state and the
-  /// SCREEN_OFF broadcast race, and guessing wrong in this direction would mean
-  /// no lock screen at all.
+  /// The native side drops only a screen-off that happens inside an app the
+  /// launcher itself launched (the handoff latch). Everything else —
+  /// including a screen-off behind an app opened from a notification or
+  /// recents, which never sets that latch — reaches here, because the
+  /// alternative was to guess from lifecycle state whether the launcher or
+  /// something else was showing, and on the CPH2765 `onPause` precedes the
+  /// SCREEN_OFF broadcast even on the launcher's own surface, so that guess
+  /// dropped lock-from-home entirely. The ghost panel those drops were
+  /// meant to prevent is closed at the other end instead: a panel mounted
+  /// here reconciles against the keyguard once it can actually draw (see
+  /// `reconcileOnMount` on the panel), so it appears only for a lock that
+  /// still exists.
   void _lockForScreenOff() {
     if (!mounted || _nativeMode) return;
-    if (_isLocked) return;
-    // Re-enable the native window flag only for a real screen-off event.
-    // Successful lock-screen app launches disable it so their return exposes
-    // the cover screen rather than reviving a fingerprint/keyguard overlay.
+    // Re-assert the window flag BEFORE the early-out rather than after it.
+    // The flag is cleared by every lock-screen app launch, so a screen-off
+    // that landed on a panel mounted by the lock buttons used to skip this
+    // push entirely and the wake showed the ColorOS keyguard instead of the
+    // cosmic panel: the same physical action produced a different lock
+    // surface depending on launch history. Pushing first keeps the
+    // invariant — panel mounted ⟺ overlay enabled — in Cosmic mode.
     unawaited(LauncherBridge.setLockScreenOverlayEnabled(true));
+    if (_isLocked) {
+      debugPrint('CF_LOCK: screen-off with panel already up');
+      return;
+    }
+    debugPrint('CF_LOCK: overlay re-asserted for screen-off lock');
+    _lockMountedByUserAction = false;
+    setState(() => _isLocked = true);
+  }
+
+  /// Mounts the lock panel for an explicit user action (the LOCK buttons).
+  ///
+  /// The four lock buttons used to mount the panel inline without pushing the
+  /// overlay flag, so whether the wake after them showed the cosmic panel or
+  /// the ColorOS keyguard depended on whether any earlier app launch had
+  /// cleared the flag. Single-sourcing the two here makes the invariant above
+  /// hold for manual locks too. Native mode keeps delegating the whole lock
+  /// surface to ColorOS, so the push is skipped there — the button still
+  /// mounts the panel exactly as it did before.
+  ///
+  /// This is also the one mount that is deliberately exempt from keyguard
+  /// reconciliation: the user asked for this surface on a device that may
+  /// well be unlocked, and it stays up until they dismiss it.
+  void _mountLockPanel() {
+    if (!mounted) return;
+    if (!_nativeMode) {
+      unawaited(LauncherBridge.setLockScreenOverlayEnabled(true));
+      debugPrint('CF_LOCK: panel mounted by user action');
+    }
+    _lockMountedByUserAction = true;
     setState(() => _isLocked = true);
   }
 
@@ -296,11 +357,36 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       _nativeMode = config['nativeLauncherMode'] as bool? ?? false;
     }
 
-    // Pushed unconditionally, including on a first run with no stored config.
-    // Previously this lived inside the `config.isNotEmpty` branch, so a fresh
-    // install never told the platform anything and the overlay state was
-    // whatever the activity happened to start with.
-    await LauncherBridge.setLockScreenOverlayEnabled(!_nativeMode);
+    // Never start cold over a locked keyguard. Pushing the overlay flag here
+    // unconditionally is what used to expose the *home* surface — the whole
+    // app inventory, search and the layout editors — over a locked device,
+    // because `_isLocked` starts false and nothing checked the keyguard
+    // (report Path D). Mounting the lock panel instead, without the overlay
+    // push, leaves the keyguard in front (the activity starts with the flag
+    // cleared), and the panel's own `userPresent` listener clears it the
+    // moment the platform authenticates. Native mode keeps today's behaviour
+    // — no overlay, ColorOS owns the whole surface. The injected seam stands
+    // in for the platform here; null means the bridge, i.e. production.
+    if (!_nativeMode &&
+        await (widget.isKeyguardLocked ?? LauncherBridge.isKeyguardLocked)()) {
+      debugPrint(
+        'CF_LOCK: cold start with keyguard locked; mounting lock surface',
+      );
+      // Not a user action: this panel stands for the keyguard, so it
+      // reconciles like a screen-off mount in case the platform satisfies
+      // the lock before the launcher ever draws.
+      _lockMountedByUserAction = false;
+      if (mounted) {
+        setState(() => _isLocked = true);
+      }
+    } else {
+      // Pushed unconditionally on the normal (unlocked) path, including on a
+      // first run with no stored config. Previously this lived inside the
+      // `config.isNotEmpty` branch, so a fresh install never told the
+      // platform anything and the overlay state was whatever the activity
+      // happened to start with.
+      await LauncherBridge.setLockScreenOverlayEnabled(!_nativeMode);
+    }
 
     _layoutEngine.assignApps(apps);
     if (mounted) {
@@ -471,8 +557,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       setState(() => _isSearchOpen = true),
                                   onOpenSettings: () =>
                                       LauncherBridge.openHomeSettings(),
-                                  onLock: () =>
-                                      setState(() => _isLocked = true),
+                                  onLock: _mountLockPanel,
                                   onAppLongPressed: _openAppLongPressDialog,
                                   onConstellationLongPressed:
                                       _openConstellationEditorModal,
@@ -492,8 +577,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       setState(() => _isSearchOpen = true),
                                   onOpenSettings: () =>
                                       LauncherBridge.openHomeSettings(),
-                                  onLock: () =>
-                                      setState(() => _isLocked = true),
+                                  onLock: _mountLockPanel,
                                   onAppLongPressed: _openAppLongPressDialog,
                                   onConstellationLongPressed:
                                       _openConstellationEditorModal,
@@ -541,8 +625,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                         },
                                         nativeMode: _nativeMode,
                                         onToggleNativeMode: _toggleNativeMode,
-                                        onLockScreen: () =>
-                                            setState(() => _isLocked = true),
+                                        onLockScreen: _mountLockPanel,
                                         onToggleCockpit: _foldable.isTabletop
                                             ? () => setState(
                                                 () => _isCockpitMode = true,
@@ -567,8 +650,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                             _openCometSearch(),
                                         onOpenSettings: () =>
                                             LauncherBridge.openHomeSettings(),
-                                        onLock: () =>
-                                            setState(() => _isLocked = true),
+                                        onLock: _mountLockPanel,
                                         onCreateConstellation:
                                             _openCreateConstellationModal,
                                         onEditCore:
@@ -614,6 +696,15 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                             foldable: _foldable,
                             apps: _apps,
                             onUnlock: () => setState(() => _isLocked = false),
+                            // Not raised by the LOCK buttons → the mount is
+                            // for a lock the platform may have satisfied
+                            // before this panel could draw (screen-off
+                            // behind a foreign app, or a cold start raced by
+                            // an unlock). The panel checks the keyguard at
+                            // its first frame and clears itself if the lock
+                            // is gone; the user-raised privacy lock is
+                            // exempt and stays up.
+                            reconcileOnMount: !_lockMountedByUserAction,
                           ),
                         ),
                     ],
@@ -659,11 +750,16 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        setState(() {
-          _now = DateTime.now();
-        });
+      // The HUD renders hours and minutes only, so it repaints when the
+      // visible minute rolls over rather than once a second — the other
+      // three clock surfaces already gate this way. An ungated timer kept
+      // rebuilding the whole HUD subtree every second, including the whole
+      // time the launcher sat paused behind another app.
+      final now = DateTime.now();
+      if (!mounted || (now.minute == _now.minute && now.hour == _now.hour)) {
+        return;
       }
+      setState(() => _now = now);
     });
   }
 
@@ -675,8 +771,9 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
 
   @override
   Widget build(BuildContext context) {
-    final timeString =
-        '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}';
+    // The shared helper follows the platform's own 12/24-hour setting so this
+    // clock cannot disagree with the ColorOS status bar on the same screen.
+    final timeString = formatClockTime(context, _now);
     final dateString =
         '${_weekdayName(_now.weekday)}, ${_monthName(_now.month)} ${_now.day}';
 
@@ -689,22 +786,37 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  timeString,
-                  style: Theme.of(context).textTheme.displayLarge,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  dateString,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: LuminousHomeTheme.textSecondary,
-                    fontWeight: FontWeight.w500,
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // The clock became width-variable when it started
+                  // following the platform's 12/24-hour setting, and a
+                  // 12-hour reading ("7:05 PM") is wider than the old
+                  // "19:05" at the same font size — on cover/N6 widths the
+                  // inflexible clock pushed this row past the utility
+                  // shelf's share. The column yields — the shelf already
+                  // flexes and scrolls — and the reading scales down to the
+                  // share it is given rather than overflowing the header.
+                  // The date line is short; it stays as it is.
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      timeString,
+                      style: Theme.of(context).textTheme.displayLarge,
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(
+                    dateString,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: LuminousHomeTheme.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(width: 14),
 

@@ -10,6 +10,7 @@ import '../../models/constellation.dart';
 import '../../core/launcher_bridge.dart';
 import '../../core/foldable_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
+import '../format/clock_format.dart';
 import '../theme/luminous_home_theme.dart';
 import '../widgets/fading_horizontal_scroll.dart';
 import '../widgets/foldable_simulation_chip.dart';
@@ -327,8 +328,9 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
   // --- WIDGET BUILDERS ---
 
   Widget _buildChronoHeader() {
-    final timeString =
-        '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}';
+    // Follows the platform's 12/24-hour setting via the shared helper, so
+    // this clock cannot disagree with the ColorOS status bar above it.
+    final timeString = formatClockTime(context, _now);
     final dateString =
         '${_weekdayName(_now.weekday)}, ${_monthName(_now.month)} ${_now.day}';
 
@@ -344,33 +346,47 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // Clock & Date
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                timeString,
-                style: const TextStyle(
-                  color: LuminousHomeTheme.textPrimary,
-                  fontSize: 38,
-                  fontWeight: FontWeight.w300,
-                  letterSpacing: -1.2,
-                  height: 1.05,
-                  // Tabular figures keep the clock from shifting width as the
-                  // minute rolls over.
-                  fontFeatures: [FontFeature.tabularFigures()],
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // The clock became width-variable when it started following
+                // the platform's 12/24-hour setting, and a 12-hour reading
+                // ("7:05 PM") is wider than the old "19:05" at the same font
+                // size — on cover widths that pushed this header past the
+                // posture chip beside it. The column yields so the chip keeps
+                // its size, and the reading scales down to whatever width is
+                // left rather than overflowing the header. The date line is
+                // short; it stays as it is.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    timeString,
+                    style: const TextStyle(
+                      color: LuminousHomeTheme.textPrimary,
+                      fontSize: 38,
+                      fontWeight: FontWeight.w300,
+                      letterSpacing: -1.2,
+                      height: 1.05,
+                      // Tabular figures keep the clock from shifting
+                      // width as the minute rolls over.
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                dateString,
-                style: const TextStyle(
-                  color: CoverStyle.labelMuted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0.3,
+                const SizedBox(height: 3),
+                Text(
+                  dateString,
+                  style: const TextStyle(
+                    color: CoverStyle.labelMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.3,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
 
           // Cover Mode Posture Telemetry Badge (tappable to toggle simulator)
