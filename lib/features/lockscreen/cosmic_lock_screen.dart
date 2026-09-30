@@ -47,7 +47,6 @@ class CosmicLockScreen extends StatefulWidget {
   final FoldableController foldable;
   final VoidCallback onUnlock;
   final List<AppEntry> apps;
-  final bool initialAuthenticated;
 
   /// Stands in for the whole authentication step. Null in production, where the
   /// panel reads the silent sensor and then leaves the keyguard to the platform.
@@ -66,6 +65,15 @@ class CosmicLockScreen extends StatefulWidget {
   final Future<FingerprintCapability> Function()? fingerprintCapability;
   final Stream<Map<String, dynamic>> Function()? fingerprintEvents;
 
+  /// Starts a silent scan session, defaulting to
+  /// [LauncherBridge.startFingerprintScan].
+  ///
+  /// Injectable because the start answer is now what armed state is built
+  /// from ("a scan was started and no terminal event has arrived"), and a
+  /// test host has no platform to genuinely start one — the same reason the
+  /// event seam exists: the tests need to say what the platform did.
+  final Future<bool> Function()? startFingerprintScan;
+
   /// A credential prompt the panel may raise itself. Null in production.
   ///
   /// There is deliberately no production default. Raising a prompt of our own
@@ -80,6 +88,16 @@ class CosmicLockScreen extends StatefulWidget {
 
   /// Real keyguard locked state, defaulting to [LauncherBridge.isKeyguardLocked].
   final Future<bool> Function()? isKeyguardLocked;
+
+  /// Whether any credential protects this device at all, defaulting to
+  /// [LauncherBridge.isDeviceSecure].
+  ///
+  /// Full lock ownership is the settled product decision — the panel mounts
+  /// on a device with no secure lock too — so this decides nothing about
+  /// visibility. It decides honesty: with no credential there is no
+  /// fingerprint that could ever be enrolled, so the panel neither arms a
+  /// reader nor badges itself "locked" on such a device.
+  final Future<bool> Function()? isDeviceSecure;
 
   /// Whether this panel clears itself at its first frame if the keyguard is
   /// already unlocked (default false).
@@ -103,19 +121,31 @@ class CosmicLockScreen extends StatefulWidget {
   /// out of the platform's bouncer.
   final Future<bool> Function()? dismissKeyguard;
 
+  /// The real battery state for the telemetry row, defaulting to
+  /// [LauncherBridge.batteryState].
+  ///
+  /// Injectable so the two rules that matter can be pinned without a
+  /// platform: the percentage shows only a level the platform actually
+  /// reported, and an unknown level hides it rather than inventing a number
+  /// (the old row hardcoded `92%` under a charging glyph that never went
+  /// out).
+  final Future<BatteryState?> Function()? battery;
+
   const CosmicLockScreen({
     super.key,
     required this.foldable,
     required this.onUnlock,
     required this.apps,
-    this.initialAuthenticated = false,
     this.authenticate,
     this.fingerprintCapability,
     this.fingerprintEvents,
+    this.startFingerprintScan,
     this.authenticateWithCredential,
     this.isKeyguardLocked,
+    this.isDeviceSecure,
     this.reconcileOnMount = false,
     this.dismissKeyguard,
+    this.battery,
   });
 
   @override
@@ -186,6 +216,22 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   /// without becoming a storm.
   bool _retriedArm = false;
 
+  /// Whether any credential protects this device, or null until the platform
+  /// has answered.
+  ///
+  /// Null is treated as secure (the arm proceeds; the capability gate still
+  /// refuses a device with nothing enrolled), so a slow or failed probe cannot
+  /// take a working reader away from a device that has one. False — known,
+  /// credential-less — is the state that stops the panel pretending a
+  /// fingerprint could ever answer it.
+  bool? _deviceSecure;
+
+  /// The battery the platform last reported for the telemetry row, or null
+  /// while no answer has arrived (and for an answer that cannot report a
+  /// level). The row renders null as a glyph with no percentage rather than
+  /// an invented number — the old `92%` was a lie about exactly this value.
+  BatteryState? _batteryState;
+
   /// The app the cosmic fingerprint prompt is currently authenticating for.
   ///
   /// Non-null is what puts the prompt on screen *and* what makes the panel
@@ -195,12 +241,14 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
   /// The app waiting on the reader, before the prompt is drawn.
   ///
-  /// The prompt becomes visible only once the platform actually hands the
-  /// reader over (`listening`). On a device that will not let this panel hold
-  /// the sensor at all — the tested ColorOS build cancels an app's reader
-  /// session outright while the keyguard is occluded — the card therefore never
-  /// appears, and the request goes straight to the platform prompt, which is
-  /// the only authentication that keyguard accepts.
+  /// The prompt becomes visible only once a scan session genuinely started —
+  /// the platform accepted the arm — whether because the start answer said so
+  /// or because sensor activity (`listening`, a partial read) confirmed the
+  /// session is live. On a device that will not let this panel hold the
+  /// sensor at all — the tested ColorOS build cancels an app's reader
+  /// session outright while the keyguard is occluded — the card therefore
+  /// never appears, and the request goes straight to the platform prompt,
+  /// which is the only authentication that keyguard accepts.
   AppEntry? _authWanted;
 
   /// What the prompt is telling the user right now.
@@ -276,11 +324,12 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     return _authenticateWithSensor();
   }
 
-  /// Raises the reader and waits for it to report that it is listening.
+  /// Raises the reader and holds the request open for a finger.
   ///
   /// A session that is already armed is used as it stands: the reader that
-  /// unlocked this panel with a bare touch is the same reader that is about to
-  /// open the app, and re-arming it would cancel it.
+  /// armed with the panel on an unlocked device — the dock privacy lock — is
+  /// the same reader that is about to open the app, and re-arming it would
+  /// cancel it.
   Future<AuthOutcome> _authenticateWithSensor() {
     final AppEntry? target = _pendingLaunch;
     if (target == null) return Future<AuthOutcome>.value(AuthOutcome.denied);
@@ -293,17 +342,31 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     _retriedArm = false;
 
     if (_sensorArmed) {
-      // The reader is already live (it armed with the panel on an unlocked
-      // device — the dock privacy lock), so a finger can genuinely answer a
-      // card for this request. Raise it now: the `listening` event that
-      // promotes `_authWanted` fired before the tap and will not fire again,
-      // and waiting for it would read as the tap being ignored.
+      // The session is already live — the scan-start answer said so (the
+      // reader that armed with the panel on an unlocked device, the dock
+      // privacy lock) — so a finger can genuinely answer a card for this
+      // request. Raise it now: waiting for a `listening` event would read
+      // as the tap being ignored, and on device that event now means
+      // "sensor activity seen", which a clean first touch never triggers.
       if (mounted) {
         setState(() {
           _authTarget = target;
           _authPhase = FingerprintPromptPhase.scanning;
         });
       }
+    } else if (_deviceSecure == false) {
+      // No credential protects this device, so no fingerprint can ever be
+      // enrolled to answer the panel's reader — asking for one would be the
+      // pretend this panel refuses to do. Production cannot reach here (a
+      // credential-less device fails the capability gate long before this
+      // point); a request that raced past it anyway must not hang behind a
+      // card nothing can answer, so the fallback resolves it — and on such
+      // a device the platform's launch-time dismiss is silent, because
+      // there is no credential to ask for.
+      debugPrint(
+        'CF_FP: device has no secure lock; deferring the request to the platform',
+      );
+      _useCredentialFallback();
     } else if (_sensorUnusable) {
       // The platform has already refused this panel the reader — on a locked
       // device the keyguard owns the sensor, and every arm is refused. The
@@ -320,10 +383,13 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       );
       _useCredentialFallback();
     } else {
-      // The reader's state is unknown yet: arm it, and let the `listening`
-      // event promote `_authWanted` to the card. A device that refuses the
-      // session never reaches `listening`, so its users never see a card at
-      // all — the refusal events resolve the request instead.
+      // The reader's state is unknown yet: arm it. A session the platform
+      // accepts promotes `_authWanted` to the card right there — the start
+      // answer is the promotion, so the card appears the moment a finger
+      // could genuinely answer it (the `listening` event promotes too, as
+      // the safety net for a request that raced the arm). A device that
+      // refuses the session never starts one, so its users never see a card
+      // at all — the refusal events resolve the request instead.
       _armFingerprintSensor();
     }
     return completer.future;
@@ -518,6 +584,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         return;
       }
       setState(() => _currentTime = now);
+      // The battery rides the minute rollover: a percentage that changed
+      // while nobody looked is fine to catch up a minute late, and a probe
+      // per minute costs nothing where a battery timer of its own would
+      // cost exactly what the idle throttling below exists to save.
+      _refreshBattery();
     });
 
     // 60/120 FPS Physics simulation loop
@@ -551,7 +622,16 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     // and it arrives before the activity resumes.
     LauncherBridge.setScreenOnListener(_onScreenOn);
     LauncherBridge.setUserPresentListener(_onUserPresent);
-    _armFingerprintSensor();
+    // Full lock ownership is the settled product decision: the panel mounts
+    // whether the device has a credential or not. The secure answer decides
+    // only whether a reader is armed — and arming waits for it, so a device
+    // with no secure lock never spends even the probe on a fingerprint that
+    // cannot exist there.
+    _refreshDeviceSecure();
+    // The lock surface shows the real battery: sampled now, refreshed on the
+    // platform's `screenOn` signal and on the clock's minute rollover — no
+    // timer of its own.
+    _refreshBattery();
 
     if (widget.reconcileOnMount) {
       // Post-frame on purpose: the launcher cannot draw behind a foreign
@@ -566,14 +646,18 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
   /// Clears this panel if the keyguard it was mounted for no longer exists.
   ///
-  /// Runs once, from initState's post-frame callback, and only for mounts
+  /// Runs from initState's post-frame callback, and again every time the
+  /// panel's lifecycle returns to `resumed` — the moment the launcher
+  /// regains the screen after the platform unlock — and only for mounts
   /// that stand for a lock ([CosmicLockScreen.reconcileOnMount]). A
   /// screen-off behind a foreign app mounts this panel invisibly — the
   /// launcher cannot draw there — and by the time it can, the platform has
   /// usually already authenticated the user; without this check the panel
-  /// would appear as a lock for a device already unlocked. A panel that has
-  /// handed off a launch has already called `onUnlock`, so there is nothing
-  /// left to reconcile.
+  /// would appear as a lock for a device already unlocked. The resumed pass
+  /// is the belt-and-braces for the native `USER_PRESENT` gate: a single
+  /// dropped broadcast must not be able to strand the panel over an
+  /// unlocked device again. A panel that has handed off a launch has
+  /// already called `onUnlock`, so there is nothing left to reconcile.
   Future<void> _reconcileAgainstKeyguard() async {
     if (!mounted || _disposed || _handedOff) return;
     final bool isLocked =
@@ -582,6 +666,41 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     if (isLocked) return;
     debugPrint('CF_LOCK: panel reconciled away; keyguard already unlocked');
     widget.onUnlock();
+  }
+
+  /// Asks the platform whether any credential protects this device, then
+  /// arms the reader for the panel's first appearance through that answer.
+  ///
+  /// Arming waits for the answer on purpose: a device with no secure lock
+  /// has no credential a fingerprint could be enrolled against, so arming
+  /// there could only ask a question nothing on the device can answer —
+  /// and the panel refuses to pretend otherwise. On a secure device the
+  /// cost is one platform round trip before an arm that was already racing
+  /// the first frame; on a credential-less device the sensor is never
+  /// touched at all.
+  Future<void> _refreshDeviceSecure() async {
+    final bool secure =
+        await (widget.isDeviceSecure ?? LauncherBridge.isDeviceSecure)();
+    if (!mounted || _disposed) return;
+    setState(() => _deviceSecure = secure);
+    if (secure) {
+      _armFingerprintSensor();
+    } else {
+      debugPrint('CF_FP: device has no secure lock; reader not armed');
+    }
+  }
+
+  /// Samples the battery through the seam.
+  ///
+  /// Called on mount, on the platform's `screenOn`, and on the clock's
+  /// minute rollover — the three moments the percentage can change
+  /// meaningfully without a new high-frequency timer draining the OLED the
+  /// idle throttling exists to save.
+  Future<void> _refreshBattery() async {
+    final BatteryState? state =
+        await (widget.battery ?? LauncherBridge.batteryState)();
+    if (!mounted || _disposed) return;
+    setState(() => _batteryState = state);
   }
 
   /// The platform authenticated someone and the keyguard is gone, so this
@@ -634,6 +753,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     // to the lock session that has just ended.
     _sensorUnusable = false;
     _armFingerprintSensor();
+    // The battery rode through the whole off period with the panel unable
+    // to show it; panel-on is the natural refresh moment, and reusing this
+    // signal adds no timer of its own.
+    _refreshBattery();
   }
 
   /// Arms the reader as soon as the lock screen appears.
@@ -650,6 +773,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     // The platform has already refused this lock session's reader. Asking again
     // costs a sensor round trip and can only fail the same way.
     if (_sensorUnusable) return;
+    // A device with no secure lock has no credential a fingerprint could be
+    // enrolled against, so arming could only ask a question nothing on the
+    // device can answer. This covers the arms that do not come from mount
+    // (screen-on, resume, a tap); the mount arm waits for the same answer.
+    if (_deviceSecure == false) return;
     _armingFingerprint = true;
     _retriedArm = false;
     try {
@@ -688,10 +816,46 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
       // go stale across a pause/resume and used to leave the reader permanently
       // unarmed, so the native answer decides.
       if (!_sensorSessionAllowed) return;
-      await LauncherBridge.startFingerprintScan();
+      final bool started = await _startScan();
+      if (!started) return;
+      // A session the platform genuinely accepted. The request that
+      // prompted this arm may raise its card now: waiting for `listening`
+      // would tie the card to an event that on device means "sensor
+      // activity seen" — a partial read — and a clean first touch can
+      // succeed without it ever arriving. A bare touch needs no prompt, so
+      // a missing `listening` costs nothing.
+      final AppEntry? wanted = _authWanted;
+      if (mounted &&
+          _authCompleter != null &&
+          _authTarget == null &&
+          wanted != null) {
+        setState(() {
+          _authTarget = wanted;
+          _authPhase = FingerprintPromptPhase.scanning;
+        });
+      }
     } finally {
       _armingFingerprint = false;
     }
+  }
+
+  /// Starts a silent scan through the seam and records the honest answer as
+  /// this panel's armed state.
+  ///
+  /// Armed means exactly "a scan was started and no terminal event has
+  /// arrived": set by this answer, cleared by the terminal and refusal
+  /// events — never set by the arrival of `listening`, which on device now
+  /// means "sensor activity seen" and may never arrive at all. A refusal
+  /// (false) leaves armed state alone; the refusal event it carries does
+  /// the rest (fallback, retry budget, interactivity bookkeeping).
+  Future<bool> _startScan() async {
+    final bool started = await (widget.startFingerprintScan ??
+        LauncherBridge.startFingerprintScan)();
+    if (started) {
+      _sensorArmed = true;
+      debugPrint('Fingerprint reader armed');
+    }
+    return started;
   }
 
   void _onFingerprintEvent(Map<String, dynamic> event) {
@@ -700,12 +864,13 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
     switch (event['type'] as String?) {
       case 'listening':
-        // The platform handed the reader over: the session is live, and the
-        // panel's own prompt is now allowed to appear. A device that refuses
-        // the session never reaches this, so its users never see a card that
-        // cannot read them.
-        debugPrint('Fingerprint reader armed');
-        _sensorArmed = true;
+        // Sensor activity seen — a partial read, finger moved or sensor
+        // dirty — the first honest evidence the session is live. Armed
+        // state no longer comes from here (see [_startScan]): the start
+        // answer owns it, and a clean first touch can succeed without this
+        // event arriving at all. What stays is the card promotion, as the
+        // safety net for a request that raced the arm.
+        debugPrint('Fingerprint sensor activity: session live');
         final AppEntry? wanted = _authWanted;
         if (mounted &&
             _authCompleter != null &&
@@ -766,7 +931,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         }
         if (!_retriedArm) {
           _retriedArm = true;
-          LauncherBridge.startFingerprintScan();
+          // The retry's answer decides armed state exactly like the first
+          // arm's: a retry that genuinely started is a live session. The
+          // event handler is synchronous, so the bookkeeping rides the
+          // future rather than an await here.
+          unawaited(_startScan());
           return;
         }
         // The platform will not let this app hold the reader — while the
@@ -861,6 +1030,18 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
         // be the one in front; arming is refused cheaply in either case, and
         // the screen-on broadcast will arm it for real.
         _armFingerprintSensor();
+        // Belt-and-braces for the cold-boot gate: if the platform
+        // authenticated the user while this activity was paused — or a
+        // broadcast was dropped on the way — `userPresent` may never
+        // arrive, and the panel would sit over an unlocked device until a
+        // swipe cleared it. The launcher regains the screen exactly on this
+        // transition, so this is the moment to ask the keyguard directly
+        // and clear a panel whose lock is gone. Only panels that stand for
+        // a keyguard reconcile; one mounted by the LOCK buttons stands for
+        // the user's wish and must stay up on an unlocked device.
+        if (widget.reconcileOnMount) {
+          _reconcileAgainstKeyguard();
+        }
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
         // Backgrounded: the platform owns the reader now. Drop it quietly
@@ -1437,26 +1618,35 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.lock_outline_rounded,
-                                color: Color(0xFF00E5FF),
-                                size: 16,
-                              ),
-                              SizedBox(width: 6),
-                              Text(
-                                'LOCKED',
-                                style: TextStyle(
+                          // The badge claims a lock, so it is drawn only
+                          // where one exists: on a device with no secure
+                          // credential the panel is a cover, not a lock,
+                          // and labelling it LOCKED would be the same
+                          // pretend as asking for a fingerprint there. The
+                          // swipe hint below stays "SWIPE UP TO ENTER"
+                          // either way — on such a device that is exactly
+                          // what it is, a plain dismiss.
+                          if (_deviceSecure != false)
+                            const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.lock_outline_rounded,
                                   color: Color(0xFF00E5FF),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 1.5,
+                                  size: 16,
                                 ),
-                              ),
-                            ],
-                          ),
+                                SizedBox(width: 6),
+                                Text(
+                                  'LOCKED',
+                                  style: TextStyle(
+                                    color: Color(0xFF00E5FF),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1.5,
+                                  ),
+                                ),
+                              ],
+                            ),
 
                           // Interactive Shake / Scatter Button. It carried no
                           // button trait, so a reader heard the word "SHAKE"
@@ -1514,20 +1704,40 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                             ),
                           ),
 
+                          // The real battery, not a hardcoded "92%": this
+                          // row used to claim a charge the platform never
+                          // reported, under a glyph that said "charging"
+                          // forever. The level comes from the seam; when
+                          // the platform cannot report one the percentage
+                          // is hidden rather than invented, and the
+                          // fixed-width box keeps the row from collapsing
+                          // while it is hidden — scaling the reading down
+                          // rather than overflowing under accessibility
+                          // text scale.
                           Row(
                             children: [
-                              const Icon(
-                                Icons.battery_charging_full_rounded,
+                              Icon(
+                                _batteryState?.icon ??
+                                    Icons.battery_std_rounded,
                                 color: Colors.white70,
                                 size: 16,
                               ),
                               const SizedBox(width: 4),
-                              Text(
-                                '92%',
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.8),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
+                              SizedBox(
+                                width: 34,
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    _batteryState?.percentage ?? '',
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.8,
+                                      ),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ],

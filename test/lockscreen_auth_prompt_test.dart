@@ -94,6 +94,7 @@ class _FakeReader {
 Future<void> _pumpLockScreen(
   WidgetTester tester, {
   required _FakeReader reader,
+  Future<bool> Function()? startFingerprintScan,
   Future<bool> Function({String? appName})? authenticate,
   Future<bool> Function({String? appName})? authenticateWithCredential,
   VoidCallback? onUnlock,
@@ -108,6 +109,7 @@ Future<void> _pumpLockScreen(
           authenticate: authenticate,
           fingerprintCapability: reader.capability,
           fingerprintEvents: reader.events,
+          startFingerprintScan: startFingerprintScan,
           authenticateWithCredential: authenticateWithCredential,
         ),
       ),
@@ -134,8 +136,9 @@ Future<void> _tapBubble(WidgetTester tester, String label) async {
   await _settle(tester);
 }
 
-/// The platform handing the reader over — the event that puts the panel's own
-/// prompt on screen.
+/// Sensor activity on a live session — the honest `listening`, a partial read.
+/// The card promotion it carries is the safety net for requests that raced the
+/// arm; armed state itself comes from the scan-start answer now.
 Future<void> _handOverReader(WidgetTester tester, _FakeReader reader) async {
   reader.emit({'type': 'listening'});
   await _settle(tester);
@@ -240,18 +243,39 @@ void main() {
       tester,
     ) async {
       final semantics = tester.ensureSemantics();
-      await _pumpLockScreen(tester, reader: reader);
+      // Armed state is now "a scan was started and no terminal event has
+      // arrived": the scan-start answer sets it, not the arrival of
+      // `listening` — which on device means "sensor activity seen" and may
+      // never arrive at all, since a clean first touch answers `succeeded`
+      // with no help event. The scan seam is how a test says "the platform
+      // accepted the session", and its call count is what proves a tap
+      // reuses the live session instead of re-arming it.
+      var starts = 0;
+      await _pumpLockScreen(
+        tester,
+        reader: reader,
+        startFingerprintScan: () async {
+          starts++;
+          return true;
+        },
+      );
 
-      // The reader arms as the panel appears, exactly as it does on device.
+      // The reader arms as the panel appears, exactly as it does on device
+      // (through the device-secure answer, which a secure host answers
+      // immediately).
+      await _settle(tester);
+      expect(starts, equals(1));
+      // Sensor activity on the live session — the honest `listening`. Armed
+      // state does not depend on it; the emit exercises the event path.
       reader.emit({'type': 'listening'});
       await _settle(tester);
 
-      // No second `listening`: the tap has to use the session that is already
+      // No second start: the tap has to use the session that is already
       // live. Re-arming it is what lost the reader on the tested device — the
       // framework tears the running session down, and ColorOS refuses the
       // replacement instead of taking it over.
       await _tapBubble(tester, 'Camera');
-
+      expect(starts, equals(1));
       expect(find.byType(FingerprintAuthPrompt), findsOneWidget);
 
       await spy.capture(() async {

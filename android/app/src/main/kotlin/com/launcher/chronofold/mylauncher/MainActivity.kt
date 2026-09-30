@@ -15,6 +15,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.provider.Settings
 import android.content.BroadcastReceiver
@@ -134,6 +135,29 @@ class MainActivity : FlutterActivity() {
         // before any preference had been read, so a surface that authenticates
         // nobody was the first thing on a locked screen.
         setOverlayWhenLocked(false)
+
+        // A cold boot starts a process while the keyguard is already locked,
+        // and no ACTION_SCREEN_OFF will ever arrive for that lock — the
+        // screen never went off inside this process — so keyguardWasLocked
+        // stayed false and the first USER_PRESENT was dropped: the lock
+        // panel mounted by the Dart cold-start check then remained over an
+        // unlocked device until a swipe cleared it. Record the state here,
+        // in onCreate, the one point that runs for the genuine process
+        // start a cold boot is. The write is deliberately one-way (true
+        // only): the activity is recreated on rotation/unfold, and that
+        // recreation must not clobber the pending lock an intervening
+        // SCREEN_OFF has already recorded, while a start that begins
+        // unlocked leaves the flag exactly as it was — false. onResume was
+        // considered and rejected: it fires on every foreground return,
+        // which is exactly the window USER_PRESENT arrives in, so a read
+        // there could replace the flag with a keyguard answer that no
+        // longer describes the lock session the flag exists to carry.
+        val keyguardAtStart = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (keyguardAtStart?.isKeyguardLocked == true ||
+            keyguardAtStart?.isDeviceLocked == true
+        ) {
+            keyguardWasLocked = true
+        }
 
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -390,8 +414,11 @@ class MainActivity : FlutterActivity() {
                         result.success(fingerprintCapability())
                     }
                     "startFingerprintScan" -> {
-                        startFingerprintScan()
-                        result.success(true)
+                        // The honest answer travels in the return value:
+                        // Dart's armed state is "a scan was started and no
+                        // terminal event has arrived", so a refusal must not
+                        // read as a started session.
+                        result.success(startFingerprintScan())
                     }
                     "stopFingerprintScan" -> {
                         stopFingerprintScan()
@@ -400,6 +427,20 @@ class MainActivity : FlutterActivity() {
                     "isKeyguardLocked" -> {
                         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
                         result.success(keyguard?.isKeyguardLocked == true || keyguard?.isDeviceLocked == true)
+                    }
+                    "isDeviceSecure" -> {
+                        // Whether any credential (PIN, pattern, fingerprint)
+                        // can protect this device. The launcher mounts its
+                        // lock surface either way — full lock ownership is
+                        // the settled product decision — so this is not a
+                        // gate for mounting the panel; it is how the panel
+                        // stays honest on a device where no fingerprint can
+                        // exist to read.
+                        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+                        result.success(keyguard?.isDeviceSecure == true)
+                    }
+                    "getBatteryState" -> {
+                        result.success(getBatteryState())
                     }
                     "dismissKeyguard" -> {
                         requestKeyguardDismissal { success ->
@@ -968,6 +1009,33 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * The real battery state for the lock surface, which used to show a
+     * hardcoded "92%" over a charging glyph.
+     *
+     * Returns level (0-100) and the charging flag, or null when the level is
+     * genuinely unavailable — the panel then hides the percentage instead of
+     * inventing one. minSdk is 26, so BATTERY_PROPERTY_CAPACITY and isCharging
+     * are both fully available on every device this runs on.
+     */
+    private fun getBatteryState(): Map<String, Any>? {
+        val manager = getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return null
+        return try {
+            val level = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            // An unavailable property answers Integer.MIN_VALUE (and the
+            // occasional OEM build throws instead) — that is "unknown", not
+            // zero, so it must not reach the panel as a number.
+            if (level == Int.MIN_VALUE) null
+            else mapOf(
+                "level" to level,
+                "charging" to manager.isCharging,
+            )
+        } catch (error: Exception) {
+            android.util.Log.e("ChronoFold", "Battery state unavailable", error)
+            null
+        }
+    }
+
     // --- Silent fingerprint scanning -------------------------------------------------
     //
     // BiometricPrompt always draws its own system dialog. The legacy
@@ -985,12 +1053,20 @@ class MainActivity : FlutterActivity() {
         return mapOf("hardware" to hardware, "enrolled" to enrolled)
     }
 
+    /**
+     * Arms the silent reader.
+     *
+     * Returns whether a session was genuinely started: every refusal reports
+     * false alongside its event, so an arm that never happened cannot
+     * masquerade as a live session on the Dart side. Dart's armed state is
+     * built from this answer plus the terminal events, not from `listening`.
+     */
     @Suppress("DEPRECATION")
-    private fun startFingerprintScan() {
+    private fun startFingerprintScan(): Boolean {
         val manager = fingerprintManager()
         if (manager == null || !manager.isHardwareDetected || !manager.hasEnrolledFingerprints()) {
             fingerprintEvents?.success(mapOf("type" to "unavailable"))
-            return
+            return false
         }
 
         if (powerManager?.isInteractive != true) {
@@ -998,7 +1074,7 @@ class MainActivity : FlutterActivity() {
             // goes off, so arming now would only burn the caller's retry budget
             // and leave the sensor dead before the user has touched anything.
             fingerprintEvents?.success(mapOf("type" to "screenOff"))
-            return
+            return false
         }
 
         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
@@ -1013,7 +1089,7 @@ class MainActivity : FlutterActivity() {
             // resolves the request through the platform's own bouncer — the
             // only reader a locked keyguard accepts.
             fingerprintEvents?.success(mapOf("type" to "keyguardLocked"))
-            return
+            return false
         }
 
         if (!launcherResumed || foreignTaskOwnsScreen) {
@@ -1030,14 +1106,14 @@ class MainActivity : FlutterActivity() {
                 "Refusing to arm the reader: launcher is not the foreground surface",
             )
             fingerprintEvents?.success(mapOf("type" to "background"))
-            return
+            return false
         }
 
         stopFingerprintScan()
         val signal = CancellationSignal()
         fingerprintCancellation = signal
 
-        try {
+        return try {
             // A bare request. Binding the session to a keystore key was tried and
             // measured on the CPH2765: a key-bound `CryptoObject` is armed and
             // then cancelled in ~1 ms exactly like this one, so the refusal is
@@ -1050,6 +1126,9 @@ class MainActivity : FlutterActivity() {
                 signal,
                 0,
                 object : FingerprintManager.AuthenticationCallback() {
+                    /** Whether this session already reported `listening`. */
+                    private var listeningAnnounced = false
+
                     override fun onAuthenticationSucceeded(
                         result: FingerprintManager.AuthenticationResult?
                     ) {
@@ -1079,12 +1158,31 @@ class MainActivity : FlutterActivity() {
                     }
 
                     override fun onAuthenticationHelp(helpCode: Int, helpString: CharSequence?) {
-                        // Partial read (finger moved, sensor dirty): stay armed.
+                        // A session is "listening" only once the platform has
+                        // actually shown sensor activity, and a partial read
+                        // (finger moved, sensor dirty) is the first honest
+                        // signal of that — the sensor is genuinely live. The
+                        // old emit right after authenticate() claimed a session
+                        // this build then cancels within 1–6 ms, so Dart's
+                        // armed state flickered for a session that never
+                        // existed. Once per session, and a superseded session
+                        // stays silent via the identity check above.
+                        if (fingerprintCancellation !== signal) return
+                        if (!listeningAnnounced) {
+                            listeningAnnounced = true
+                            fingerprintEvents?.success(mapOf("type" to "listening"))
+                        }
                     }
                 },
                 null,
             )
-            fingerprintEvents?.success(mapOf("type" to "listening"))
+            // The platform accepted the call — that is all this claims. The
+            // session is live but nothing has touched the sensor yet, and on
+            // this build the platform may still cancel it a millisecond later
+            // (which arrives as an `error` event and clears Dart's armed
+            // state again). Reporting more here would be the optimistic lie
+            // this function used to tell.
+            true
         } catch (error: Exception) {
             fingerprintCancellation = null
             android.util.Log.e("ChronoFold", "Fingerprint reader unavailable", error)
@@ -1094,6 +1192,7 @@ class MainActivity : FlutterActivity() {
                     "message" to (error.message ?: "Fingerprint sensor unavailable"),
                 )
             )
+            false
         }
     }
 

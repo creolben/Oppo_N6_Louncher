@@ -281,12 +281,24 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
 
   /// Arms the sensor without showing any system UI, so a touch on the reader
   /// authenticates straight away. Results arrive on [fingerprintEvents].
-  static Future<void> startFingerprintScan() async {
-    if (kIsWeb || !Platform.isAndroid) return;
+  ///
+  /// Returns whether a session genuinely started. Every refusal reports
+  /// `false` alongside its event, so an arm that never happened cannot
+  /// masquerade as a live session: the caller's armed state is "a scan was
+  /// started and no terminal event has arrived", built from this answer —
+  /// never from the arrival of `listening`, which the platform now emits
+  /// only on real sensor activity (a partial read) and which a clean first
+  /// touch never triggers at all. A bare touch needs no prompt, so a missing
+  /// `listening` costs nothing.
+  static Future<bool> startFingerprintScan() async {
+    if (kIsWeb || !Platform.isAndroid) return false;
     try {
-      await _appsChannel.invokeMethod('startFingerprintScan');
+      final bool? started =
+          await _appsChannel.invokeMethod('startFingerprintScan');
+      return started ?? false;
     } catch (e) {
       debugPrint('Starting fingerprint scan failed: $e');
+      return false;
     }
   }
 
@@ -357,6 +369,62 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     }
     // On non-Android test environments, simulate locked keyguard for lockscreen fixtures.
     return true;
+  }
+
+  /// Whether any credential (PIN, pattern, fingerprint) protects this device.
+  ///
+  /// Full lock ownership is the settled product decision — the launcher
+  /// mounts its own lock surface on a device with no secure lock too — so
+  /// this is not a gate for mounting anything. The panel uses it to stay
+  /// honest on such a device: with no credential there is no fingerprint
+  /// that could ever be enrolled, so it neither arms a reader nor asks for
+  /// one. A missing answer is treated as secure (the capability gate still
+  /// refuses a scan on a device with nothing enrolled), because answering
+  /// "not secure" to a failed probe would silently take the reader away from
+  /// a device that has one.
+  static Future<bool> isDeviceSecure() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final bool? secure = await _appsChannel.invokeMethod('isDeviceSecure');
+        return secure ?? true;
+      } catch (e) {
+        debugPrint('Check device secure failed: $e');
+        return true;
+      }
+    }
+    // Non-Android test hosts simulate a locked keyguard for the lockscreen
+    // fixtures (see [isKeyguardLocked]), and a locked keyguard implies a
+    // credential; the panel's behaviour there stays on the secure path.
+    return true;
+  }
+
+  /// The real battery state for the lock surface — level 0-100 and whether
+  /// the device is charging — or null when the platform cannot report a
+  /// level.
+  ///
+  /// The lock panel used to hardcode `92%` under an always-lit charging
+  /// glyph, and a lock screen that lies about the battery is the opposite of
+  /// feeling native. Unknown travels as null rather than a sentinel number
+  /// so the panel can hide the percentage instead of inventing one: a
+  /// sentinel could not be told apart from a genuine answer downstream.
+  static Future<BatteryState?> batteryState() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final Map<Object?, Object?>? raw = await _appsChannel
+            .invokeMethod<Map<Object?, Object?>>('getBatteryState');
+        if (raw == null) return null;
+        return BatteryState(
+          level: raw['level'] as int?,
+          charging: raw['charging'] == true,
+        );
+      } catch (e) {
+        debugPrint('Reading battery state failed: $e');
+        return null;
+      }
+    }
+    // No platform to ask: unknown, which the panel renders as a glyph with
+    // no percentage.
+    return null;
   }
 
   /// Asks the platform to authenticate the user and clear the keyguard, without
@@ -866,6 +934,31 @@ class FingerprintCapability {
 
   /// True only when a scan can actually be armed.
   bool get isReady => hardware && enrolled;
+}
+
+/// What the platform reports about the battery, for the lock surface.
+class BatteryState {
+  /// Remaining charge, 0-100. Null when the platform could not report a
+  /// level — the lock surface then hides the percentage rather than
+  /// inventing one.
+  final int? level;
+
+  /// Whether the device is currently charging.
+  final bool charging;
+
+  const BatteryState({required this.level, required this.charging});
+
+  /// What the lock surface shows for the level: `'92%'`, or null when the
+  /// level is unknown. Pure on purpose, so the unknown rule — hide, never
+  /// invent — is pinned by a unit test without pumping a widget.
+  String? get percentage => level == null ? null : '$level%';
+
+  /// The glyph the lock surface shows: the charging glyph while plugged in,
+  /// a plain battery otherwise. The old row lit the charging glyph forever.
+  IconData get icon =>
+      charging
+          ? Icons.battery_charging_full_rounded
+          : Icons.battery_std_rounded;
 }
 
 /// How `ACTION_WEB_SEARCH` resolves on this device.

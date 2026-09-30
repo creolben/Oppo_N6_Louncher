@@ -212,7 +212,6 @@ void main() {
               foldable: foldable,
               apps: apps,
               onUnlock: () => unlocked = true,
-              initialAuthenticated: true,
               // This test is about rendering and the shake trigger, and it ends
               // with a swipe. The swipe only clears the panel for someone the
               // platform has authenticated, so the device is reported unlocked
