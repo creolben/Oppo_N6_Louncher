@@ -340,7 +340,7 @@ class GalaxyCustomPainter extends CustomPainter {
       _meteorPaint.shader = null;
 
       // Bright incandescent meteor core point
-      _starPaint.color = Colors.white.withValues(alpha: fade);
+      _starPaint.color = LuminousHomeTheme.white.withValues(alpha: fade);
       canvas.drawCircle(head, meteor.thickness * 1.3, _starPaint);
     }
   }
@@ -1169,7 +1169,7 @@ class GalaxyCustomPainter extends CustomPainter {
                 lp.width,
                 lp.height,
               ),
-              Paint()..color = Colors.white.withValues(alpha: labelAlpha),
+              Paint()..color = LuminousHomeTheme.white.withValues(alpha: labelAlpha),
             );
             lp.paint(
               canvas,
@@ -1199,7 +1199,7 @@ class GalaxyCustomPainter extends CustomPainter {
       pos,
       easeP * 200.0,
       [
-        Colors.white.withValues(alpha: 1.0 - p),
+        LuminousHomeTheme.white.withValues(alpha: 1.0 - p),
         supernova.color.withValues(alpha: (1.0 - p) * 0.6),
         Colors.transparent,
       ],
@@ -1208,7 +1208,7 @@ class GalaxyCustomPainter extends CustomPainter {
     canvas.drawCircle(pos, easeP * 200.0, _burstPaint);
 
     _streakPaint
-      ..color = Colors.white.withValues(alpha: (1.0 - p) * 0.75)
+      ..color = LuminousHomeTheme.white.withValues(alpha: (1.0 - p) * 0.75)
       ..strokeWidth = 1.6;
     for (int i = 0; i < 12; i++) {
       final a = (i * math.pi / 6) + (p * 0.5);

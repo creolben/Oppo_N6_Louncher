@@ -5,6 +5,7 @@ import '../models/app_entry.dart';
 import '../models/constellation.dart';
 import 'foldable_controller.dart';
 import 'galaxy_storage_service.dart';
+import '../ui/theme/luminous_home_theme.dart';
 
 class GalaxyLayoutEngine {
   static const int maxCoreApps = 6;
@@ -19,14 +20,23 @@ class GalaxyLayoutEngine {
 
   void _initConstellations() {
     constellations.clear();
+    final core = LuminousHomeTheme.constellationPalette(AppCategory.core);
+    final social = LuminousHomeTheme.constellationPalette(AppCategory.social);
+    final productivity = LuminousHomeTheme.constellationPalette(
+      AppCategory.productivity,
+    );
+    final media = LuminousHomeTheme.constellationPalette(
+      AppCategory.entertainment,
+    );
+    final tools = LuminousHomeTheme.constellationPalette(AppCategory.tools);
     constellations.addAll([
       Constellation(
         id: 'core',
         name: 'Essentials',
         category: AppCategory.core,
-        primaryColor: const Color(0xFFFFD54F), // Radiant Gold
-        secondaryColor: const Color(0xFFFF9800),
-        glowColor: const Color(0x66FFD54F),
+        primaryColor: core.primary,
+        secondaryColor: core.secondary,
+        glowColor: core.glow,
         emblemIcon: Icons.star_rounded,
         center: Offset.zero,
         radius: 110,
@@ -36,9 +46,9 @@ class GalaxyLayoutEngine {
         id: 'social',
         name: 'Connect',
         category: AppCategory.social,
-        primaryColor: const Color(0xFFFF4081), // Vivid Rose
-        secondaryColor: const Color(0xFFE040FB),
-        glowColor: const Color(0x55FF4081),
+        primaryColor: social.primary,
+        secondaryColor: social.secondary,
+        glowColor: social.glow,
         emblemIcon: Icons.forum_rounded,
         center: const Offset(-270, -180),
         radius: 140,
@@ -48,9 +58,9 @@ class GalaxyLayoutEngine {
         id: 'productivity',
         name: 'Workspace',
         category: AppCategory.productivity,
-        primaryColor: const Color(0xFF00E5FF), // Cyber Cyan
-        secondaryColor: const Color(0xFF2979FF),
-        glowColor: const Color(0x5500E5FF),
+        primaryColor: productivity.primary,
+        secondaryColor: productivity.secondary,
+        glowColor: productivity.glow,
         emblemIcon: Icons.workspaces_rounded,
         center: const Offset(270, -180),
         radius: 140,
@@ -60,9 +70,9 @@ class GalaxyLayoutEngine {
         id: 'media',
         name: 'Studio',
         category: AppCategory.entertainment,
-        primaryColor: const Color(0xFF00E676), // Emerald Mint
-        secondaryColor: const Color(0xFF1DE9B6),
-        glowColor: const Color(0x5500E676),
+        primaryColor: media.primary,
+        secondaryColor: media.secondary,
+        glowColor: media.glow,
         emblemIcon: Icons.play_circle_filled_rounded,
         center: const Offset(-270, 190),
         radius: 140,
@@ -72,9 +82,9 @@ class GalaxyLayoutEngine {
         id: 'tools',
         name: 'Utilities',
         category: AppCategory.tools,
-        primaryColor: const Color(0xFFFFAB00), // Amber Gold
-        secondaryColor: const Color(0xFFFF6D00),
-        glowColor: const Color(0x55FFAB00),
+        primaryColor: tools.primary,
+        secondaryColor: tools.secondary,
+        glowColor: tools.glow,
         emblemIcon: Icons.tune_rounded,
         center: const Offset(270, 190),
         radius: 140,

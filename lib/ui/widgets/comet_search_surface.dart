@@ -8,6 +8,7 @@ import '../../core/search_coordinator.dart';
 import '../../models/web_search.dart';
 import 'answer_body.dart';
 import 'comet_orb.dart';
+import '../theme/luminous_home_theme.dart';
 
 /// The comet web-search surface.
 ///
@@ -129,7 +130,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
                 ),
                 boxShadow: const [
                   BoxShadow(
-                    color: Color(0x33FFB300),
+                    color: LuminousHomeTheme.emberGlow,
                     blurRadius: 18,
                     spreadRadius: 1,
                   ),
@@ -149,7 +150,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
                       onSubmitted: _submit,
                       onChanged: (_) => setState(() {}),
                       style: const TextStyle(
-                        color: Colors.white,
+                        color: LuminousHomeTheme.white,
                         fontSize: 15,
                         letterSpacing: 0.4,
                       ),
@@ -157,7 +158,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
                       decoration: InputDecoration(
                         hintText: 'Search the cosmos...',
                         hintStyle: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.42),
+                          color: LuminousHomeTheme.white.withValues(alpha: 0.42),
                           fontSize: 14,
                         ),
                         border: InputBorder.none,
@@ -167,7 +168,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
                   ),
                   if (_controller.text.isNotEmpty)
                     IconButton(
-                      icon: const Icon(Icons.clear_rounded, color: Colors.white70, size: 20),
+                      icon: const Icon(Icons.clear_rounded, color: LuminousHomeTheme.white70, size: 20),
                       tooltip: 'Clear',
                       onPressed: () {
                         _controller.clear();
@@ -207,7 +208,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
           ),
           const SizedBox(width: 6),
           IconButton(
-            icon: const Icon(Icons.close_rounded, color: Colors.white, size: 26),
+            icon: const Icon(Icons.close_rounded, color: LuminousHomeTheme.white, size: 26),
             tooltip: 'Close',
             onPressed: widget.onClose,
           ),
@@ -247,7 +248,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
             const Text(
               'Ask the cosmos',
               style: TextStyle(
-                color: Colors.white,
+                color: LuminousHomeTheme.white,
                 fontSize: 17,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.6,
@@ -260,7 +261,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
                   : 'Type a question to get an answer with sources.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.48),
+                color: LuminousHomeTheme.white.withValues(alpha: 0.48),
                 fontSize: 13,
                 height: 1.5,
               ),
@@ -326,7 +327,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
                     Text(
                       'streaming',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.32),
+                        color: LuminousHomeTheme.white.withValues(alpha: 0.32),
                         fontSize: 10.5,
                         letterSpacing: 0.8,
                       ),
@@ -347,7 +348,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
           Text(
             result.sources.length == 1 ? 'SOURCE' : 'SOURCES',
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.34),
+              color: LuminousHomeTheme.white.withValues(alpha: 0.34),
               fontSize: 10.5,
               fontWeight: FontWeight.bold,
               letterSpacing: 1.3,
@@ -372,7 +373,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
       children: [
         _AnswerPanel(
-          accent: Colors.white24,
+          accent: LuminousHomeTheme.white24,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -382,7 +383,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
                     result.phase == SearchPhase.failed
                         ? Icons.error_outline_rounded
                         : Icons.key_off_rounded,
-                    color: Colors.white.withValues(alpha: 0.55),
+                    color: LuminousHomeTheme.white.withValues(alpha: 0.55),
                     size: 18,
                   ),
                   const SizedBox(width: 10),
@@ -394,7 +395,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
                               ? 'Inline answers are not connected'
                               : 'No inline search provider',
                       style: const TextStyle(
-                        color: Colors.white,
+                        color: LuminousHomeTheme.white,
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                       ),
@@ -407,7 +408,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
                 result.errorMessage ??
                     'Nothing is configured to answer inline yet.',
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.52),
+                  color: LuminousHomeTheme.white.withValues(alpha: 0.52),
                   fontSize: 13,
                   height: 1.5,
                 ),
@@ -461,7 +462,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
             '${_handoff.handlerCount} apps can handle this and none is set as '
             'the default, so Android will ask which to use.',
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.34),
+              color: LuminousHomeTheme.white.withValues(alpha: 0.34),
               fontSize: 11.5,
               height: 1.45,
             ),
@@ -488,7 +489,7 @@ class _AnswerPanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: accent.withValues(alpha: 0.28), width: 1.1),
         boxShadow: const [
-          BoxShadow(color: Color(0x1AFFB300), blurRadius: 22, spreadRadius: 1),
+          BoxShadow(color: LuminousHomeTheme.emberFaint, blurRadius: 22, spreadRadius: 1),
         ],
       ),
       child: child,
@@ -549,7 +550,7 @@ class _SourceCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: LuminousHomeTheme.white,
                           fontSize: 13.5,
                           fontWeight: FontWeight.w600,
                         ),
@@ -560,7 +561,7 @@ class _SourceCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.40),
+                          color: LuminousHomeTheme.white.withValues(alpha: 0.40),
                           fontSize: 11.5,
                         ),
                       ),
@@ -570,7 +571,7 @@ class _SourceCard extends StatelessWidget {
                 Icon(
                   Icons.north_east_rounded,
                   size: 15,
-                  color: Colors.white.withValues(alpha: 0.35),
+                  color: LuminousHomeTheme.white.withValues(alpha: 0.35),
                 ),
               ],
             ),
@@ -630,9 +631,9 @@ class _ShimmerLineState extends State<_ShimmerLine>
                 begin: Alignment(-1.0 + t * 2, 0),
                 end: Alignment(1.0 + t * 2, 0),
                 colors: [
-                  Colors.white.withValues(alpha: 0.05),
+                  LuminousHomeTheme.white.withValues(alpha: 0.05),
                   CometPalette.amber.withValues(alpha: 0.16),
-                  Colors.white.withValues(alpha: 0.05),
+                  LuminousHomeTheme.white.withValues(alpha: 0.05),
                 ],
               ),
             ),

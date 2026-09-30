@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../../models/app_entry.dart';
+import '../../ui/theme/luminous_home_theme.dart';
 
 /// What the lock screen's fingerprint prompt is currently telling the user.
 enum FingerprintPromptPhase {
@@ -53,9 +54,9 @@ class _FingerprintAuthPromptState extends State<FingerprintAuthPrompt>
     with TickerProviderStateMixin {
   // The launcher's cosmic tokens, kept in one place so the prompt cannot drift
   // away from the panel behind it.
-  static const Color _cyan = Color(0xFF00E5FF);
-  static const Color _violet = Color(0xFF7C4DFF);
-  static const Color _glass = Color(0xFF0D1426);
+  static const Color _cyan = LuminousHomeTheme.aqua;
+  static const Color _violet = LuminousHomeTheme.orchid;
+  static const Color _glass = LuminousHomeTheme.lockFieldGlow;
 
   /// The breathing reader rings. Repeats for as long as the prompt is up.
   late final AnimationController _pulse;
@@ -120,9 +121,9 @@ class _FingerprintAuthPromptState extends State<FingerprintAuthPrompt>
       case FingerprintPromptPhase.scanning:
         return _cyan;
       case FingerprintPromptPhase.failed:
-        return const Color(0xFFFFB74D);
+        return LuminousHomeTheme.accentTools;
       case FingerprintPromptPhase.verified:
-        return const Color(0xFF81C784);
+        return LuminousHomeTheme.accentEntertainment;
     }
   }
 
@@ -182,7 +183,7 @@ class _FingerprintAuthPromptState extends State<FingerprintAuthPrompt>
               gradient: const LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xF20D1426), Color(0xF2070A14)],
+                colors: [LuminousHomeTheme.lockGlassTop, LuminousHomeTheme.lockGlassDeep],
               ),
               borderRadius: BorderRadius.circular(28),
               border: Border.all(
@@ -203,7 +204,7 @@ class _FingerprintAuthPromptState extends State<FingerprintAuthPrompt>
                   spreadRadius: -6,
                 ),
                 const BoxShadow(
-                  color: Color(0x99000000),
+                  color: LuminousHomeTheme.blackScrim,
                   blurRadius: 26,
                   offset: Offset(0, 12),
                 ),
@@ -239,7 +240,7 @@ class _FingerprintAuthPromptState extends State<FingerprintAuthPrompt>
                     _status,
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.72),
+                      color: LuminousHomeTheme.white.withValues(alpha: 0.72),
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
                       letterSpacing: 1.4,
@@ -365,11 +366,11 @@ class _FingerprintAuthPromptState extends State<FingerprintAuthPrompt>
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                color: Colors.white,
+                color: LuminousHomeTheme.white,
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.2,
-                shadows: [Shadow(color: Colors.black, blurRadius: 8)],
+                shadows: [Shadow(color: LuminousHomeTheme.black, blurRadius: 8)],
               ),
             ),
           ),
@@ -460,19 +461,19 @@ class _FingerprintAuthPromptState extends State<FingerprintAuthPrompt>
             decoration: BoxDecoration(
               color: filled
                   ? accent.withValues(alpha: 0.18)
-                  : Colors.white.withValues(alpha: 0.06),
+                  : LuminousHomeTheme.white.withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
                 color: filled
                     ? accent.withValues(alpha: 0.75)
-                    : Colors.white.withValues(alpha: 0.22),
+                    : LuminousHomeTheme.white.withValues(alpha: 0.22),
                 width: filled ? 1.2 : 0.9,
               ),
             ),
             child: Text(
               label,
               style: TextStyle(
-                color: filled ? accent : Colors.white.withValues(alpha: 0.82),
+                color: filled ? accent : LuminousHomeTheme.white.withValues(alpha: 0.82),
                 fontSize: 10,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 1.6,

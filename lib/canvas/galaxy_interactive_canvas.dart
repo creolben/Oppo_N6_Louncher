@@ -10,6 +10,7 @@ import '../core/foldable_controller.dart';
 import '../core/galaxy_layout_engine.dart';
 import 'camera_controller.dart';
 import 'galaxy_custom_painter.dart';
+import '../ui/theme/luminous_home_theme.dart';
 
 class GalaxyInteractiveCanvas extends StatefulWidget {
   final List<AppEntry> apps;
@@ -108,12 +109,12 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   void _generateWorldStarfield(int count) {
     _starfield.clear();
     const colors = [
-      Color(0xFFFFFFFF), // Diamond white
-      Color(0xFFB3E5FC), // Icy cyan
-      Color(0xFFFFE082), // Warm solar gold
-      Color(0xFFFF80AB), // Soft nebula rose
-      Color(0xFFE1BEE7), // Ethereal violet
-      Color(0xFF80D8FF), // Stellar blue
+      LuminousHomeTheme.white, // Diamond white
+      LuminousHomeTheme.starIcy, // Icy cyan
+      LuminousHomeTheme.starGold, // Warm solar gold
+      LuminousHomeTheme.starRose, // Soft nebula rose
+      LuminousHomeTheme.starViolet, // Ethereal violet
+      LuminousHomeTheme.starBlue, // Stellar blue
     ];
 
     // 1. Layer of distant micro-stardust particles (faint, sharp depth)
@@ -193,10 +194,10 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     final endY = startY + math.sin(angle) * dist;
 
     const meteorColors = [
-      Color(0xFFFFFFFF),
-      Color(0xFF80D8FF),
-      Color(0xFFFFD54F),
-      Color(0xFFA7FFEB),
+      LuminousHomeTheme.white,
+      LuminousHomeTheme.starBlue,
+      LuminousHomeTheme.accentCore,
+      LuminousHomeTheme.mint,
     ];
 
     _shootingStars.add(

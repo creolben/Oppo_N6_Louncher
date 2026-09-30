@@ -123,7 +123,7 @@ class AppEntry {
     this.orbitalAngle = 0.0,
     this.orbitalRadius = 100.0,
     this.orbitalSpeed = 0.002,
-    this.accentColor = const Color(0xFF64B5F6),
+    this.accentColor = LuminousHomeTheme.borderCool,
     this.notificationCount = 0,
   });
 

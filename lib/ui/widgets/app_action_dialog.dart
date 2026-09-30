@@ -4,6 +4,7 @@ import '../../models/app_entry.dart';
 import '../../core/launcher_bridge.dart';
 import '../../core/galaxy_storage_service.dart';
 import '../../core/galaxy_layout_engine.dart';
+import '../theme/luminous_home_theme.dart';
 
 class AppActionDialog extends StatelessWidget {
   final AppEntry app;
@@ -27,7 +28,7 @@ class AppActionDialog extends StatelessWidget {
           margin: const EdgeInsets.symmetric(horizontal: 24),
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: const Color(0xEE121626),
+            color: LuminousHomeTheme.panelScrim,
             borderRadius: BorderRadius.circular(24),
             border: Border.all(
               color: app.accentColor.withOpacity(0.4),
@@ -61,7 +62,7 @@ class AppActionDialog extends StatelessWidget {
                 Text(
                   app.label,
                   style: const TextStyle(
-                    color: Colors.white,
+                    color: LuminousHomeTheme.white,
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                   ),
@@ -72,12 +73,12 @@ class AppActionDialog extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.45),
+                    color: LuminousHomeTheme.white.withOpacity(0.45),
                     fontSize: 11.5,
                   ),
                 ),
                 const SizedBox(height: 20),
-                const Divider(color: Colors.white12, height: 1),
+                const Divider(color: LuminousHomeTheme.white12, height: 1),
                 const SizedBox(height: 10),
 
                 // Actions
@@ -85,7 +86,7 @@ class AppActionDialog extends StatelessWidget {
                   context,
                   icon: Icons.launch_rounded,
                   label: 'Launch Application',
-                  color: const Color(0xFF00E5FF),
+                  color: LuminousHomeTheme.aqua,
                   onTap: () {
                     Navigator.of(context).pop();
                     LauncherBridge.launchApp(app);
@@ -102,7 +103,7 @@ class AppActionDialog extends StatelessWidget {
                       context,
                       icon: isInCore ? Icons.star_border_rounded : Icons.star_rounded,
                       label: isInCore ? 'Remove from Center Constellation' : 'Pin to Center Constellation',
-                      color: const Color(0xFFFFD54F),
+                      color: LuminousHomeTheme.accentCore,
                       onTap: () {
                         Navigator.of(context).pop();
                         if (isInCore) {
@@ -120,7 +121,7 @@ class AppActionDialog extends StatelessWidget {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
                                 content: Text('Center Constellation is full (Max 6 apps). Remove an app first.'),
-                                backgroundColor: Color(0xFF161B30),
+                                backgroundColor: LuminousHomeTheme.panelRaised,
                               ),
                             );
                           } else {
@@ -145,7 +146,7 @@ class AppActionDialog extends StatelessWidget {
                       context,
                       icon: isHidden ? Icons.visibility_rounded : Icons.visibility_off_rounded,
                       label: isHidden ? 'Unhide in Galaxy' : 'Hide from Galaxy',
-                      color: isHidden ? const Color(0xFF69F0AE) : const Color(0xFFFF8A80),
+                      color: isHidden ? LuminousHomeTheme.mint : LuminousHomeTheme.danger,
                       onTap: () {
                         Navigator.of(context).pop();
                         if (isHidden) {
@@ -169,7 +170,7 @@ class AppActionDialog extends StatelessWidget {
                   context,
                   icon: Icons.info_outline_rounded,
                   label: 'App Details & Permissions',
-                  color: Colors.white70,
+                  color: LuminousHomeTheme.white70,
                   onTap: () {
                     Navigator.of(context).pop();
                     LauncherBridge.openAppInfo(app);
@@ -180,7 +181,7 @@ class AppActionDialog extends StatelessWidget {
                     context,
                     icon: Icons.delete_outline_rounded,
                     label: 'Uninstall',
-                    color: const Color(0xFFFF5252),
+                    color: LuminousHomeTheme.danger,
                     onTap: () {
                       Navigator.of(context).pop();
                       LauncherBridge.uninstallApp(app);

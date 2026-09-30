@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../ui/theme/luminous_home_theme.dart';
 import 'launcher_bridge.dart';
 
 class CustomConstellationConfig {
@@ -30,7 +31,9 @@ class CustomConstellationConfig {
       CustomConstellationConfig(
         id: json['id'] as String,
         name: json['name'] as String,
-        primaryColorValue: json['primaryColorValue'] as int? ?? 0xFF00E5FF,
+        primaryColorValue:
+            json['primaryColorValue'] as int? ??
+            LuminousHomeTheme.aqua.toARGB32(),
         emblemIconCodePoint: json['emblemIconCodePoint'] as int? ?? Icons.star_rounded.codePoint,
         packageNames: List<String>.from(json['packageNames'] as List? ?? []),
       );

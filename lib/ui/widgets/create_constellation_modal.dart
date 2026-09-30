@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../models/app_entry.dart';
 import '../../core/galaxy_layout_engine.dart';
 import '../../core/galaxy_storage_service.dart';
+import '../theme/luminous_home_theme.dart';
 
 class CreateConstellationModal extends StatefulWidget {
   final GalaxyLayoutEngine layoutEngine;
@@ -23,19 +24,19 @@ class CreateConstellationModal extends StatefulWidget {
 class _CreateConstellationModalState extends State<CreateConstellationModal> {
   final TextEditingController _nameController = TextEditingController();
   final Set<String> _selectedPackages = {};
-  Color _selectedColor = const Color(0xFF00E5FF);
+  Color _selectedColor = LuminousHomeTheme.aqua;
   IconData _selectedIcon = Icons.auto_awesome_rounded;
   String _searchQuery = '';
 
   static const List<Color> _paletteHues = [
-    Color(0xFF00E5FF), // Cyber Cyan
-    Color(0xFFFF4081), // Vivid Rose
-    Color(0xFF00E676), // Emerald Mint
-    Color(0xFFBA68C8), // Violet Quasar
-    Color(0xFFFFAB00), // Amber Gold
-    Color(0xFFFF5252), // Solar Flare
-    Color(0xFF40C4FF), // Azure Sky
-    Color(0xFFE040FB), // Neon Purple
+    LuminousHomeTheme.aqua, // Cyber Cyan
+    LuminousHomeTheme.constellationSocial, // Vivid Rose
+    LuminousHomeTheme.constellationEntertainment, // Emerald Mint
+    LuminousHomeTheme.accentGames, // Violet Quasar
+    LuminousHomeTheme.constellationTools, // Amber Gold
+    LuminousHomeTheme.danger, // Solar Flare
+    LuminousHomeTheme.paletteAzure, // Azure Sky
+    LuminousHomeTheme.constellationSocialSecondary, // Neon Purple
   ];
 
   static const List<IconData> _emblemIcons = [
@@ -112,7 +113,7 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
           margin: const EdgeInsets.symmetric(horizontal: 16),
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: const Color(0xEE0B0E1E),
+            color: LuminousHomeTheme.panelScrim,
             borderRadius: BorderRadius.circular(28),
             border: Border.all(color: _selectedColor.withValues(alpha: 0.5), width: 1.2),
             boxShadow: [
@@ -144,14 +145,14 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                     const Text(
                       'Create New Constellation',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: LuminousHomeTheme.white,
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     const Spacer(),
                     IconButton(
-                      icon: const Icon(Icons.close_rounded, color: Colors.white70, size: 22),
+                      icon: const Icon(Icons.close_rounded, color: LuminousHomeTheme.white70, size: 22),
                       onPressed: () => Navigator.of(context).pop(),
                     ),
                   ],
@@ -163,17 +164,17 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                 Container(
                   height: 46,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF14192E),
+                    color: LuminousHomeTheme.glassCool,
                     borderRadius: BorderRadius.circular(23),
                     border: Border.all(color: _selectedColor.withValues(alpha: 0.4)),
                   ),
                   child: TextField(
                     controller: _nameController,
                     onChanged: (_) => setState(() {}),
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    style: const TextStyle(color: LuminousHomeTheme.white, fontSize: 14),
                     decoration: InputDecoration(
                       hintText: 'Constellation Name (e.g. Crypto, Reading...)',
-                      hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
+                      hintStyle: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 13),
                       prefixIcon: Icon(Icons.drive_file_rename_outline_rounded, color: _selectedColor, size: 20),
                       border: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(vertical: 12),
@@ -202,7 +203,7 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                             color: c,
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: isSel ? Colors.white : Colors.transparent,
+                              color: isSel ? LuminousHomeTheme.white : Colors.transparent,
                               width: 2.0,
                             ),
                             boxShadow: isSel
@@ -233,13 +234,13 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: isSel ? _selectedColor.withValues(alpha: 0.25) : const Color(0xFF14192E),
+                            color: isSel ? _selectedColor.withValues(alpha: 0.25) : LuminousHomeTheme.glassCool,
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
-                              color: isSel ? _selectedColor : Colors.white12,
+                              color: isSel ? _selectedColor : LuminousHomeTheme.white12,
                             ),
                           ),
-                          child: Icon(ic, color: isSel ? _selectedColor : Colors.white60, size: 20),
+                          child: Icon(ic, color: isSel ? _selectedColor : LuminousHomeTheme.white60, size: 20),
                         ),
                       );
                     },
@@ -252,17 +253,17 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                 Container(
                   height: 40,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF14192E),
+                    color: LuminousHomeTheme.glassCool,
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white12),
+                    border: Border.all(color: LuminousHomeTheme.white12),
                   ),
                   child: TextField(
                     onChanged: (q) => setState(() => _searchQuery = q),
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    style: const TextStyle(color: LuminousHomeTheme.white, fontSize: 13),
                     decoration: InputDecoration(
                       hintText: 'Select stars to assign (${_selectedPackages.length}/8)...',
-                      hintStyle: const TextStyle(color: Colors.white38, fontSize: 12),
-                      prefixIcon: const Icon(Icons.search_rounded, color: Colors.white54, size: 18),
+                      hintStyle: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 12),
+                      prefixIcon: const Icon(Icons.search_rounded, color: LuminousHomeTheme.white54, size: 18),
                       border: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(vertical: 10),
                     ),
@@ -285,7 +286,7 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                         decoration: BoxDecoration(
                           color: isSelected
                               ? _selectedColor.withValues(alpha: 0.15)
-                              : const Color(0xFF121628).withValues(alpha: 0.5),
+                              : LuminousHomeTheme.panel.withValues(alpha: 0.5),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
                             color: isSelected ? _selectedColor.withValues(alpha: 0.6) : Colors.transparent,
@@ -310,11 +311,11 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                           ),
                           title: Text(
                             app.label,
-                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                            style: const TextStyle(color: LuminousHomeTheme.white, fontSize: 13, fontWeight: FontWeight.w500),
                           ),
                           trailing: Icon(
                             isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
-                            color: isSelected ? _selectedColor : Colors.white24,
+                            color: isSelected ? _selectedColor : LuminousHomeTheme.white24,
                             size: 20,
                           ),
                           onTap: () {
@@ -327,7 +328,7 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                                     const SnackBar(
                                       content: Text('Constellations hold up to 8 stars to maintain clean orbital spacing.'),
                                       duration: Duration(seconds: 2),
-                                      backgroundColor: Color(0xFF161B30),
+                                      backgroundColor: LuminousHomeTheme.panelRaised,
                                     ),
                                   );
                                   return;
@@ -350,7 +351,7 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _selectedColor,
-                      foregroundColor: const Color(0xFF0B0E1E),
+                      foregroundColor: LuminousHomeTheme.panelDeep,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(23)),
                     ),
                     onPressed: _nameController.text.trim().isNotEmpty ? _createConstellation : null,

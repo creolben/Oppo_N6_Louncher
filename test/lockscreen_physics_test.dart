@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mylauncher/core/foldable_controller.dart';
@@ -103,64 +105,6 @@ void main() {
       }
     });
 
-    test('Physics step updates positions and handles wall bouncing', () {
-      const size = Size(400, 800);
-      engine.initializeBubbles(
-        apps: testApps,
-        size: size,
-        padding: const EdgeInsets.all(20),
-      );
-
-      // Place bubble near right boundary moving right
-      final b = engine.bubbles.first;
-      b.position = const Offset(370, 400);
-      b.velocity = const Offset(100, 0);
-
-      // Step physics
-      engine.update(0.1);
-
-      // Should have bounced off right boundary and reversed horizontal velocity
-      expect(b.velocity.dx, lessThan(0));
-      expect(b.position.dx, lessThanOrEqualTo(size.width - 20));
-      // The bounce confines the painted aura, not just the core ring.
-      expect(
-        b.position.dx,
-        lessThanOrEqualTo(
-          size.width - 20 - BouncingPhysicsEngine.paintedRadius(b.radius) + 0.001,
-        ),
-      );
-    });
-
-    test(
-      'Circle-to-circle collision resolves overlap and exchanges momentum',
-      () {
-        const size = Size(500, 500);
-        engine.initializeBubbles(apps: testApps, size: size);
-
-        final b1 = engine.bubbles[0];
-        final b2 = engine.bubbles[1];
-        engine.bubbles[2].position = const Offset(450, 450);
-        engine.bubbles[2].velocity = Offset.zero;
-
-        b1.radius = 30.0;
-        b2.radius = 30.0;
-        b1.position = const Offset(200, 200);
-        b2.position = const Offset(240, 200); // Distance = 40 < 60 (overlap!)
-        b1.velocity = const Offset(100, 0); // Moving right towards b2
-        b2.velocity = const Offset(-100, 0); // Moving left towards b1
-
-        engine.update(0.016);
-
-        // Overlap should be separated
-        final newDist = (b2.position - b1.position).distance;
-        expect(newDist, greaterThanOrEqualTo(59.0));
-
-        // Velocities should reflect away from each other
-        expect(b1.velocity.dx, lessThan(0)); // Now moving left
-        expect(b2.velocity.dx, greaterThan(0)); // Now moving right
-      },
-    );
-
     test('initial placement keeps the rings separated', () {
       const size = Size(800, 600);
       engine.initializeBubbles(apps: _eightApps(), size: size);
@@ -200,7 +144,170 @@ void main() {
       );
     });
 
-    test('painted auras stay inside the band through init, re-band and drift', () {
+    test('grid block is centred with one column pitch per row', () {
+      const size = Size(400, 900);
+      engine.initializeBubbles(apps: _eightApps(), size: size);
+      const band = Rect.fromLTRB(50, 200, 350, 700);
+      engine.setBounds(band, viewport: size);
+
+      // The planned grid lives in [AppBubble.homePosition]; [position] carries
+      // the random vertical jitter, so the geometry is read from the homes.
+      final homes = engine.bubbles
+          .map((bubble) => bubble.homePosition)
+          .toList()
+        ..sort((a, b) => a.dy.compareTo(b.dy));
+
+      final rows = <List<Offset>>[];
+      for (final home in homes) {
+        if (rows.isEmpty || (home.dy - rows.last.first.dy).abs() > 1.0) {
+          rows.add([home]);
+        } else {
+          rows.last.add(home);
+        }
+      }
+
+      // Every row uses the same pitch, including a shorter last row.
+      final pitches = <double>[];
+      for (final row in rows) {
+        final xs = row.map((home) => home.dx).toList()..sort();
+        for (int i = 1; i < xs.length; i++) {
+          pitches.add(xs[i] - xs[i - 1]);
+        }
+      }
+      expect(pitches, isNotEmpty);
+      for (final pitch in pitches) {
+        expect(
+          pitch,
+          closeTo(pitches.first, 0.5),
+          reason: 'every row must share one column pitch',
+        );
+      }
+
+      // The painted block sits in the middle of the band: equal clear space
+      // left/right and above/below, within the 8dp the device budget allows.
+      final painted = BouncingPhysicsEngine.paintedRadius(26.0);
+      final xs = homes.map((home) => home.dx).toList();
+      final ys = homes.map((home) => home.dy).toList();
+      final double blockLeft = xs.reduce((a, b) => a < b ? a : b) - painted;
+      final double blockRight = xs.reduce((a, b) => a > b ? a : b) + painted;
+      final double blockTop = ys.reduce((a, b) => a < b ? a : b) - painted;
+      final double blockBottom = ys.reduce((a, b) => a > b ? a : b) + painted;
+
+      expect(
+        ((blockLeft - band.left) - (band.right - blockRight)).abs(),
+        lessThanOrEqualTo(8.0),
+        reason: 'the block must be centred horizontally',
+      );
+      expect(
+        ((blockTop - band.top) - (band.bottom - blockBottom)).abs(),
+        lessThanOrEqualTo(8.0),
+        reason: 'the block must be centred vertically',
+      );
+    });
+
+    // The device showed spheres ~23 dp above their row and unevenly spaced
+    // columns. The field is a breath around fixed grid slots now, so the live
+    // positions keep the row structure the homes define.
+    test('after 600 frames every sphere is within 4.5 dp of its home slot', () {
+      const size = Size(400, 900);
+      engine.initializeBubbles(apps: _eightApps(), size: size);
+      const band = Rect.fromLTRB(50, 200, 350, 700);
+      engine.setBounds(band, viewport: size);
+
+      for (int frame = 0; frame < 600; frame++) {
+        engine.update(1.0 / 60.0);
+      }
+
+      for (final bubble in engine.bubbles) {
+        expect(
+          (bubble.position - bubble.homePosition).distance,
+          lessThanOrEqualTo(4.5),
+          reason: '${bubble.app.label} left its grid slot',
+        );
+      }
+    });
+
+    test('the breath keeps rows aligned, pitched evenly and centred', () {
+      const size = Size(400, 900);
+      engine.initializeBubbles(apps: _eightApps(), size: size);
+      const band = Rect.fromLTRB(50, 200, 350, 700);
+      engine.setBounds(band, viewport: size);
+
+      for (int frame = 0; frame < 600; frame++) {
+        engine.update(1.0 / 60.0);
+      }
+
+      // Group by the *planned* row, then read the live positions: the device
+      // bug was the live positions disagreeing with the plan.
+      final rows = <double, List<AppBubble>>{};
+      for (final bubble in engine.bubbles) {
+        rows.putIfAbsent(bubble.homePosition.dy, () => []).add(bubble);
+      }
+
+      final rowPitches = <double>[];
+      for (final row in rows.values) {
+        final ys = row.map((bubble) => bubble.position.dy).toList();
+        final double spread =
+            ys.reduce(math.max) - ys.reduce(math.min);
+        expect(
+          spread,
+          lessThanOrEqualTo(4.5),
+          reason: 'a row of the grid pulled apart vertically',
+        );
+
+        final xs = row.map((bubble) => bubble.position.dx).toList()..sort();
+        if (xs.length < 2) continue;
+        double sum = 0;
+        for (int i = 1; i < xs.length; i++) {
+          sum += xs[i] - xs[i - 1];
+        }
+        rowPitches.add(sum / (xs.length - 1));
+      }
+
+      expect(rowPitches, isNotEmpty);
+      expect(
+        rowPitches.reduce(math.max) - rowPitches.reduce(math.min),
+        lessThanOrEqualTo(9.0),
+        reason: 'the column pitch differed from row to row',
+      );
+
+      final xs = engine.bubbles.map((bubble) => bubble.position.dx).toList();
+      final ys = engine.bubbles.map((bubble) => bubble.position.dy).toList();
+      final double centreX =
+          (xs.reduce(math.min) + xs.reduce(math.max)) / 2;
+      final double centreY =
+          (ys.reduce(math.min) + ys.reduce(math.max)) / 2;
+      expect(
+        (centreX - band.center.dx).abs(),
+        lessThanOrEqualTo(8.0),
+        reason: 'the block drifted off the band centre horizontally',
+      );
+      expect(
+        (centreY - band.center.dy).abs(),
+        lessThanOrEqualTo(8.0),
+        reason: 'the block drifted off the band centre vertically',
+      );
+    });
+
+    test('every painted sphere is the same size', () {
+      const size = Size(400, 900);
+      engine.initializeBubbles(apps: _eightApps(), size: size);
+      engine.setBounds(
+        const Rect.fromLTRB(50, 200, 350, 700),
+        viewport: size,
+      );
+
+      final painted = engine.bubbles
+          .map((bubble) => BouncingPhysicsEngine.paintedRadius(bubble.radius))
+          .toSet();
+      expect(
+        painted,
+        hasLength(1),
+        reason: 'the device showed spheres of different sizes',
+      );
+    });
+
+    test('painted auras stay inside the band through init, re-band and breath', () {
       const size = Size(400, 900);
       engine.initializeBubbles(
         apps: _eightApps(),
@@ -218,73 +325,6 @@ void main() {
       }
       _expectPaintedInside(engine, band);
     });
-
-    test('collision handling keeps two drifting rings separated', () {
-      const size = Size(500, 500);
-      engine.initializeBubbles(
-        apps: testApps.take(2).toList(),
-        size: size,
-        padding: const EdgeInsets.all(20),
-      );
-
-      final b1 = engine.bubbles[0]..radius = 30.0;
-      final b2 = engine.bubbles[1]..radius = 30.0;
-      // Start overlapped and closing: the first step must part them to the
-      // separation and every later collision must hold it.
-      b1.position = const Offset(200, 250);
-      b2.position = const Offset(250, 250);
-      b1.velocity = const Offset(80, 0);
-      b2.velocity = const Offset(-80, 0);
-
-      for (int i = 0; i < 120; i++) {
-        engine.update(0.016);
-        final double gap =
-            (b2.position - b1.position).distance - b1.radius - b2.radius;
-        expect(
-          gap,
-          greaterThanOrEqualTo(
-            BouncingPhysicsEngine.minBubbleSeparation - 0.5,
-          ),
-          reason: 'the rings must keep the separation at frame $i',
-        );
-      }
-    });
-
-    test(
-      'triggerShakeScatter disperses all bubbles outwards with high speed',
-      () {
-        const size = Size(600, 800);
-        engine.initializeBubbles(apps: testApps, size: size);
-
-        engine.triggerShakeScatter(strength: 1.5);
-
-        expect(engine.bubbles, isNotEmpty);
-        for (final bubble in engine.bubbles) {
-          // High dispersion velocity after shake
-          expect(bubble.velocity.distance, greaterThan(500.0));
-          expect(bubble.glowIntensity, equals(1.0));
-        }
-      },
-    );
-
-    test(
-      'findBubbleAt accurately detects target bubble within touch radius',
-      () {
-        const size = Size(500, 500);
-        engine.initializeBubbles(apps: testApps, size: size);
-
-        final target = engine.bubbles[1];
-        target.position = const Offset(250, 300);
-        target.radius = 30.0;
-
-        final hit = engine.findBubbleAt(const Offset(255, 305));
-        expect(hit, isNotNull);
-        expect(hit!.app.packageName, equals(target.app.packageName));
-
-        final miss = engine.findBubbleAt(const Offset(50, 50));
-        expect(miss, isNull);
-      },
-    );
 
     test(
       'notifies listeners per simulation step so the canvas can repaint',
@@ -306,28 +346,21 @@ void main() {
       },
     );
 
-    test('notifies on a direct-manipulation repaint request', () {
+    test('settling parks every sphere on its home slot', () {
       const size = Size(400, 800);
       engine.initializeBubbles(apps: testApps, size: size);
 
-      var notifications = 0;
-      engine.addListener(() => notifications++);
+      // Move off home first, then stop the breath for reduce-motion.
+      engine.update(1.0);
+      engine.settleToHome();
 
-      // A drag moves a bubble without stepping the simulation, so it needs its
-      // own repaint path — it must work even with the ticker stopped.
-      engine.markDirty();
-      expect(notifications, equals(1));
-    });
-
-    test('notifies when a shake scatters the field', () {
-      const size = Size(400, 800);
-      engine.initializeBubbles(apps: testApps, size: size);
-
-      var notifications = 0;
-      engine.addListener(() => notifications++);
-
-      engine.triggerShakeScatter(strength: 1.5);
-      expect(notifications, greaterThan(0));
+      for (final bubble in engine.bubbles) {
+        expect(
+          bubble.position,
+          bubble.homePosition,
+          reason: '${bubble.app.label} must be static at home',
+        );
+      }
     });
   });
 

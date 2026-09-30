@@ -181,7 +181,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      barrierColor: const Color(0xC8020306),
+      barrierColor: LuminousHomeTheme.lockScrim,
       builder: (sheetContext) {
         return AmbientWallpaperSheet(
           onOpenSystemPreview: () => Navigator.of(sheetContext).pop(true),
@@ -521,7 +521,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
         body: _isLoading
             ? const Center(
                 child: CircularProgressIndicator(
-                  color: Color(0xFF00E5FF),
+                  color: LuminousHomeTheme.aqua,
                   strokeWidth: 2.0,
                 ),
               )

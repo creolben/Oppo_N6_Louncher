@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../models/app_entry.dart';
 import '../models/now_playing.dart';
 import '../models/quick_shortcut.dart';
+import '../ui/theme/luminous_home_theme.dart';
 
 class LauncherBridge {  static const MethodChannel _appsChannel =
       MethodChannel('com.launcher.chronofold/apps');
@@ -861,20 +862,7 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   }
 
   static Color _getCategoryColor(AppCategory category) {
-    switch (category) {
-      case AppCategory.core:
-        return const Color(0xFFFFD54F); // Radiant Gold
-      case AppCategory.social:
-        return const Color(0xFFF06292); // Cosmic Pink
-      case AppCategory.productivity:
-        return const Color(0xFF4DD0E1); // Cyan Nebula
-      case AppCategory.entertainment:
-        return const Color(0xFF81C784); // Aurora Green
-      case AppCategory.tools:
-        return const Color(0xFFFFB74D); // Solar Orange
-      case AppCategory.games:
-        return const Color(0xFFBA68C8); // Violet Quasar
-    }
+    return LuminousHomeTheme.categoryAccent(category);
   }
 
   static List<AppEntry> _generateMockApps() {
@@ -884,7 +872,7 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.android.phone',
         label: 'Phone',
         category: AppCategory.core,
-        accentColor: const Color(0xFFFFD54F),
+        accentColor: LuminousHomeTheme.accentCore,
         fallbackIcon: Icons.phone_in_talk_rounded,
         notificationCount: 2,
       ),
@@ -892,7 +880,7 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.android.mms',
         label: 'Messages',
         category: AppCategory.core,
-        accentColor: const Color(0xFFFFD54F),
+        accentColor: LuminousHomeTheme.accentCore,
         fallbackIcon: Icons.forum_rounded,
         notificationCount: 5,
       ),
@@ -900,14 +888,14 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.android.chrome',
         label: 'Chrome',
         category: AppCategory.core,
-        accentColor: const Color(0xFFFFD54F),
+        accentColor: LuminousHomeTheme.accentCore,
         fallbackIcon: Icons.language_rounded,
       ),
       AppEntry(
         packageName: 'com.android.camera',
         label: 'Camera',
         category: AppCategory.core,
-        accentColor: const Color(0xFFFFD54F),
+        accentColor: LuminousHomeTheme.accentCore,
         fallbackIcon: Icons.camera_alt_rounded,
       ),
 
@@ -916,7 +904,7 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.whatsapp',
         label: 'WhatsApp',
         category: AppCategory.social,
-        accentColor: const Color(0xFF25D366),
+        accentColor: LuminousHomeTheme.brandWhatsapp,
         fallbackIcon: Icons.chat_bubble_rounded,
         notificationCount: 12,
       ),
@@ -924,7 +912,7 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.discord',
         label: 'Discord',
         category: AppCategory.social,
-        accentColor: const Color(0xFF7289DA),
+        accentColor: LuminousHomeTheme.brandDiscord,
         fallbackIcon: Icons.headset_mic_rounded,
         notificationCount: 3,
       ),
@@ -932,21 +920,21 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.instagram.android',
         label: 'Instagram',
         category: AppCategory.social,
-        accentColor: const Color(0xFFE1306C),
+        accentColor: LuminousHomeTheme.brandInstagram,
         fallbackIcon: Icons.camera_rounded,
       ),
       AppEntry(
         packageName: 'com.twitter.android',
         label: 'X',
         category: AppCategory.social,
-        accentColor: const Color(0xFFFFFFFF),
+        accentColor: LuminousHomeTheme.white,
         fallbackIcon: Icons.tag_rounded,
       ),
       AppEntry(
         packageName: 'org.telegram.messenger',
         label: 'Telegram',
         category: AppCategory.social,
-        accentColor: const Color(0xFF29B6F6),
+        accentColor: LuminousHomeTheme.brandTelegram,
         fallbackIcon: Icons.send_rounded,
         notificationCount: 1,
       ),
@@ -956,7 +944,7 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.google.android.gm',
         label: 'Gmail',
         category: AppCategory.productivity,
-        accentColor: const Color(0xFFEA4335),
+        accentColor: LuminousHomeTheme.brandGmail,
         fallbackIcon: Icons.mail_outline_rounded,
         notificationCount: 9,
       ),
@@ -964,21 +952,21 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.google.android.calendar',
         label: 'Calendar',
         category: AppCategory.productivity,
-        accentColor: const Color(0xFF4285F4),
+        accentColor: LuminousHomeTheme.brandGoogleBlue,
         fallbackIcon: Icons.calendar_today_rounded,
       ),
       AppEntry(
         packageName: 'notion.id',
         label: 'Notion',
         category: AppCategory.productivity,
-        accentColor: const Color(0xFFE0E0E0),
+        accentColor: LuminousHomeTheme.brandNotion,
         fallbackIcon: Icons.edit_note_rounded,
       ),
       AppEntry(
         packageName: 'com.slack',
         label: 'Slack',
         category: AppCategory.productivity,
-        accentColor: const Color(0xFF4A154B),
+        accentColor: LuminousHomeTheme.brandSlack,
         fallbackIcon: Icons.workspaces_filled,
         notificationCount: 4,
       ),
@@ -986,7 +974,7 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.github.mobile',
         label: 'GitHub',
         category: AppCategory.productivity,
-        accentColor: const Color(0xFF80CBC4),
+        accentColor: LuminousHomeTheme.brandGithub,
         fallbackIcon: Icons.code_rounded,
       ),
 
@@ -995,28 +983,28 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.spotify.music',
         label: 'Spotify',
         category: AppCategory.entertainment,
-        accentColor: const Color(0xFF1DB954),
+        accentColor: LuminousHomeTheme.brandSpotify,
         fallbackIcon: Icons.graphic_eq_rounded,
       ),
       AppEntry(
         packageName: 'com.google.android.youtube',
         label: 'YouTube',
         category: AppCategory.entertainment,
-        accentColor: const Color(0xFFFF0000),
+        accentColor: LuminousHomeTheme.brandYoutube,
         fallbackIcon: Icons.play_circle_fill_rounded,
       ),
       AppEntry(
         packageName: 'com.netflix.mediaclient',
         label: 'Netflix',
         category: AppCategory.entertainment,
-        accentColor: const Color(0xFFE50914),
+        accentColor: LuminousHomeTheme.brandNetflix,
         fallbackIcon: Icons.movie_filter_rounded,
       ),
       AppEntry(
         packageName: 'com.google.android.apps.photos',
         label: 'Photos',
         category: AppCategory.entertainment,
-        accentColor: const Color(0xFFFBBC05),
+        accentColor: LuminousHomeTheme.brandPhotos,
         fallbackIcon: Icons.photo_library_rounded,
       ),
 
@@ -1025,35 +1013,35 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         packageName: 'com.google.android.deskclock',
         label: 'Clock',
         category: AppCategory.tools,
-        accentColor: const Color(0xFF26A69A),
+        accentColor: LuminousHomeTheme.brandClock,
         fallbackIcon: Icons.access_time_filled_rounded,
       ),
       AppEntry(
         packageName: 'com.google.android.calculator',
         label: 'Calculator',
         category: AppCategory.tools,
-        accentColor: const Color(0xFFFFA726),
+        accentColor: LuminousHomeTheme.brandCalculator,
         fallbackIcon: Icons.calculate_rounded,
       ),
       AppEntry(
         packageName: 'com.android.settings',
         label: 'Settings',
         category: AppCategory.tools,
-        accentColor: const Color(0xFF78909C),
+        accentColor: LuminousHomeTheme.brandSettings,
         fallbackIcon: Icons.tune_rounded,
       ),
       AppEntry(
         packageName: 'com.google.android.apps.maps',
         label: 'Maps',
         category: AppCategory.tools,
-        accentColor: const Color(0xFF34A853),
+        accentColor: LuminousHomeTheme.brandMaps,
         fallbackIcon: Icons.explore_rounded,
       ),
       AppEntry(
         packageName: 'com.google.android.apps.nbu.files',
         label: 'Files',
         category: AppCategory.tools,
-        accentColor: const Color(0xFF42A5F5),
+        accentColor: LuminousHomeTheme.brandFiles,
         fallbackIcon: Icons.folder_rounded,
       ),
     ];
