@@ -1,0 +1,59 @@
+name: Android build
+
+# Builds a debug APK on GitHub's x86_64 runners. The dev machine is ARM64
+# (Asahi Linux on M1), where Google's x86-64-only aapt2 cannot run, so APKs
+# are produced here. Download with:
+#   gh run download <run-id> -n mylauncher-debug-apk
+#   adb install app-debug.apk
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches the local toolchain (Flutter 3.47.7 / Dart 3.13.5); pubspec needs Dart ^3.13.1.
+  FLUTTER_VERSION: "3.47.7"
+
+jobs:
+  build:
+    name: Analyze, test, build debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # AGP 9.1 / Gradle 9.3.1; app targets JVM 17, JDK 21 builds it fine.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mylauncher-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
