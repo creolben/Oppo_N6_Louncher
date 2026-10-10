@@ -833,6 +833,19 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return null;
   }
 
+  static Future<String?> getExternalFilesDirPath() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        return await _appsChannel.invokeMethod<String>(
+          'getExternalFilesDirPath',
+        );
+      } catch (e) {
+        debugPrint('Get external files dir path failed: $e');
+      }
+    }
+    return null;
+  }
+
   static AppCategory _mapCategory(int cat, String pkg, String label) {
     final lower = '$pkg $label'.toLowerCase();
 
