@@ -108,6 +108,16 @@ class GalaxyStorageService {
   static Future<bool> importPendingConfig() async {
     final ext = await LauncherBridge.getExternalFilesDirPath();
     if (ext == null) return false;
+    // Create the drop box as the app's own uid. If `adb push` creates it
+    // instead, it is owned by `shell` (drwxrws--- ext_data_rw), the app cannot
+    // open it, and the import is silently skipped. Created here, it is owned by
+    // the app with group ext_data_rw, so adb shell can still write into it.
+    try {
+      final dir = Directory('$ext/$_importDirName');
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+    } catch (e) {
+      debugPrint('Galaxy settings import dir unavailable: $e');
+    }
     final target = await _getFile();
     if (target == null) return false;
     return applyPendingImport(File('$ext/$_importDirName/$_fileName'), target);
