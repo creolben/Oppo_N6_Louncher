@@ -1,8 +1,24 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// Release signing comes from android/key.properties (local, gitignored) or
+// ANDROID_KEYSTORE_PATH / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS (CI).
+// With neither present, release falls back to the debug key so PR builds and
+// fresh clones still build.
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("key.properties")
+    if (f.exists()) FileInputStream(f).use { load(it) }
+}
+fun signingValue(prop: String, env: String): String? =
+    keystoreProperties.getProperty(prop) ?: System.getenv(env)
+val releaseStoreFile: String? = signingValue("storeFile", "ANDROID_KEYSTORE_PATH")
+val hasReleaseSigning = releaseStoreFile != null && file(releaseStoreFile).exists()
 
 android {
     namespace = "com.launcher.chronofold.mylauncher"
@@ -25,9 +41,20 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = signingValue("storePassword", "ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = signingValue("keyAlias", "ANDROID_KEY_ALIAS")
+                keyPassword = signingValue("keyPassword", "ANDROID_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (hasReleaseSigning) "release" else "debug")
 
             // AGP 9 already turns both of these on for release, so this block
             // changes nothing today — it pins the behaviour so an AGP default

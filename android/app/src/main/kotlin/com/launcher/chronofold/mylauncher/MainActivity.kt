@@ -412,6 +412,11 @@ class MainActivity : FlutterActivity() {
             "getFilesDirPath" -> {
                 result.success(applicationContext.filesDir.absolutePath)
             }
+            "getExternalFilesDirPath" -> {
+                // /sdcard/Android/data/<pkg>/files: writable by adb shell and
+                // this app only, so it is the drop box for settings imports.
+                result.success(applicationContext.getExternalFilesDir(null)?.absolutePath)
+            }
             "requestMediaAccess" -> {
                 // The standard system setting page: only the user can grant
                 // notification access, and this is the one place the platform

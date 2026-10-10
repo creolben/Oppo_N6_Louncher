@@ -95,8 +95,64 @@ class GalaxyStorageService {
     }
   }
 
+  static const String _importDirName = 'import';
+
+  /// One-shot settings import, for reinstalls of release (non-debuggable)
+  /// builds where `run-as` cannot reach internal storage:
+  ///
+  ///   adb push galaxy_settings.json \
+  ///     /sdcard/Android/data/com.launcher.chronofold.mylauncher/files/import/
+  ///
+  /// Only adb/shell and this app can write that directory. The file is applied
+  /// on the next launch and then removed.
+  static Future<bool> importPendingConfig() async {
+    final ext = await LauncherBridge.getExternalFilesDirPath();
+    if (ext == null) return false;
+    // Create the drop box as the app's own uid. If `adb push` creates it
+    // instead, it is owned by `shell` (drwxrws--- ext_data_rw), the app cannot
+    // open it, and the import is silently skipped. Created here, it is owned by
+    // the app with group ext_data_rw, so adb shell can still write into it.
+    try {
+      final dir = Directory('$ext/$_importDirName');
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+    } catch (e) {
+      debugPrint('Galaxy settings import dir unavailable: $e');
+    }
+    final target = await _getFile();
+    if (target == null) return false;
+    return applyPendingImport(File('$ext/$_importDirName/$_fileName'), target);
+  }
+
+  /// Copies [source] over [target] if it holds a JSON object. The previous
+  /// target is kept as `<name>.pre-import`; an invalid source is renamed to
+  /// `<name>.rejected` so it is not retried on every launch.
+  static Future<bool> applyPendingImport(File source, File target) async {
+    if (!source.existsSync()) return false;
+    try {
+      final content = await source.readAsString();
+      final decoded = jsonDecode(content);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('settings import is not a JSON object');
+      }
+      if (target.existsSync()) {
+        await target.copy('${target.path}.pre-import');
+      }
+      await target.writeAsString(content, flush: true);
+      await source.delete();
+      debugPrint('Galaxy settings import applied');
+      return true;
+    } catch (e) {
+      debugPrint('Galaxy settings import rejected: $e');
+      try {
+        await source.rename('${source.path}.rejected');
+      } catch (_) {}
+      return false;
+    }
+  }
+
   static Future<Map<String, dynamic>> loadConfig() async {
     try {
+      await importPendingConfig();
       final file = await _getFile();
       if (file != null && file.existsSync()) {
         final content = await file.readAsString();
