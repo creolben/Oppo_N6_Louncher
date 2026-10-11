@@ -193,6 +193,8 @@ class GalaxyStorageService {
     Map<String, List<String>>? constellationAppOverrides,
     List<String>? hiddenPackageNames,
     bool? nativeLauncherMode,
+    bool? doubleTapToSleep,
+    String? swipeDownAction,
   }) {
     final data = Map<String, dynamic>.from(existing);
     data['coreAppPackageNames'] = coreAppPackageNames;
@@ -213,6 +215,15 @@ class GalaxyStorageService {
     if (nativeLauncherMode != null) {
       data['nativeLauncherMode'] = nativeLauncherMode;
     }
+    // The two gesture preferences. Null means "leave the stored value alone",
+    // exactly like every other optional key here, so a save from an editor that
+    // never touched gestures cannot reset them.
+    if (doubleTapToSleep != null) {
+      data['doubleTapToSleep'] = doubleTapToSleep;
+    }
+    if (swipeDownAction != null) {
+      data['swipeDownAction'] = swipeDownAction;
+    }
 
     return data;
   }
@@ -224,6 +235,8 @@ class GalaxyStorageService {
     Map<String, List<String>>? constellationAppOverrides,
     List<String>? hiddenPackageNames,
     bool? nativeLauncherMode,
+    bool? doubleTapToSleep,
+    String? swipeDownAction,
   }) async {
     try {
       final file = await _getFile();
@@ -237,6 +250,8 @@ class GalaxyStorageService {
           constellationAppOverrides: constellationAppOverrides,
           hiddenPackageNames: hiddenPackageNames,
           nativeLauncherMode: nativeLauncherMode,
+          doubleTapToSleep: doubleTapToSleep,
+          swipeDownAction: swipeDownAction,
         );
         await file.writeAsString(jsonEncode(data), flush: true);
       }

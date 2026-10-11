@@ -29,6 +29,13 @@ class TabletopCockpitView extends StatefulWidget {
   final VoidCallback? onToggleFullscreen;
   final VoidCallback? onOpenShopping;
 
+  /// The swipe-down action, when it should not simply open search. Null keeps
+  /// today's behaviour for every existing call site.
+  final VoidCallback? onSwipeDown;
+
+  /// Whether a double tap on empty canvas space should sleep the screen.
+  final bool doubleTapToSleep;
+
   const TabletopCockpitView({
     super.key,
     required this.apps,
@@ -44,6 +51,8 @@ class TabletopCockpitView extends StatefulWidget {
     this.onEditCore,
     this.onToggleFullscreen,
     this.onOpenShopping,
+    this.onSwipeDown,
+    this.doubleTapToSleep = false,
   });
 
   @override
@@ -132,7 +141,9 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                         onAppLongPressed: widget.onAppLongPressed,
                         onConstellationLongPressed:
                             widget.onConstellationLongPressed,
-                        onSwipeDown: widget.onOpenSearch,
+                        onSwipeDown:
+                            widget.onSwipeDown ?? widget.onOpenSearch,
+                        doubleTapToSleep: widget.doubleTapToSleep,
                       ),
                     ),
 

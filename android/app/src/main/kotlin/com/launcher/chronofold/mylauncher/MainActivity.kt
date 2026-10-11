@@ -538,6 +538,23 @@ class MainActivity : FlutterActivity() {
                 requestOverlayAccess()
                 result.success(true)
             }
+            "isAccessibilityEnabled" -> {
+                // The connected-instance check is the honest answer: the
+                // service may be installed and still disabled, and a disabled
+                // service must never look like it can perform anything.
+                result.success(isAccessibilityEnabled())
+            }
+            "openAccessibilitySettings" -> {
+                // The user owns this grant, so this is a quiet handoff to the
+                // system page — never a request dialog inside the launcher.
+                result.success(openAccessibilitySettings())
+            }
+            "performGlobalAction" -> {
+                // Exactly three actions are reachable; everything else is a
+                // plain false rather than an error, and a disconnected service
+                // is false too.
+                result.success(performAccessibilityGlobalAction(call.argument<String>("action")))
+            }
             "takePendingSharedPdf" -> {
                 // Pull, and clear so Dart owns the path from here: the same PDF
                 // is never imported twice by a push and a pull.
@@ -990,6 +1007,49 @@ class MainActivity : FlutterActivity() {
         )
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         lockSurface?.startActivityQuietly(intent)
+    }
+
+    // --- Accessibility service ----------------------------------------------------------
+
+    /**
+     * Whether ChronoFold's optional accessibility service is connected, which
+     * is the only state in which its three global actions can run.
+     *
+     * Reads the service instance rather than the settings list on purpose: the
+     * component can be enabled in Settings while the platform has not bound it
+     * yet, and an unbound service cannot perform anything.
+     */
+    private fun isAccessibilityEnabled(): Boolean =
+        ChronoFoldAccessibilityService.instance != null
+
+    /**
+     * Opens Android's accessibility settings so the user can enable the service.
+     *
+     * The platform owns this grant and only the user can give it, so this is a
+     * quiet handoff, not a request dialog. Returns whether the screen could be
+     * opened.
+     */
+    private fun openAccessibilitySettings(): Boolean {
+        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        return lockSurface?.startActivityQuietly(intent) ?: false
+    }
+
+    /**
+     * Performs exactly one of `notifications`, `lockScreen` or `recents`.
+     *
+     * Anything else — and every call while the service is not connected — is a
+     * plain false. The whitelist lives in [ChronoFoldAccessibilityService]; this
+     * only resolves the connected instance and never throws.
+     */
+    private fun performAccessibilityGlobalAction(action: String?): Boolean {
+        val service = ChronoFoldAccessibilityService.instance ?: return false
+        return try {
+            service.performGlobal(action)
+        } catch (error: Exception) {
+            android.util.Log.d(TAG, "CF_A11Y: global action refused", error)
+            false
+        }
     }
 
     /**

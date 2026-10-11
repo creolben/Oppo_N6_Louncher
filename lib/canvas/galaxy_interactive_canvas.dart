@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -8,6 +9,7 @@ import '../core/launcher_bridge.dart';
 import '../core/launcher_haptics.dart';
 import '../core/foldable_controller.dart';
 import '../core/galaxy_layout_engine.dart';
+import '../core/system_gestures.dart';
 import 'camera_controller.dart';
 import 'galaxy_custom_painter.dart';
 import '../ui/theme/luminous_home_theme.dart';
@@ -21,6 +23,13 @@ class GalaxyInteractiveCanvas extends StatefulWidget {
   final Function(AppEntry app, Offset screenPosition)? onAppLongPressed;
   final Function(Constellation constellation)? onConstellationLongPressed;
   final VoidCallback? onSwipeDown;
+
+  /// Whether a double tap on empty space should sleep the screen.
+  ///
+  /// The gesture is additionally gated on the accessibility service being
+  /// connected at tap time, and the surface that owns the lock panel keeps this
+  /// false while that panel is mounted.
+  final bool doubleTapToSleep;
 
   /// Bumps when the notification counts changed, so a resting (reduce-motion)
   /// canvas still repaints its badges.
@@ -36,6 +45,7 @@ class GalaxyInteractiveCanvas extends StatefulWidget {
     this.onAppLongPressed,
     this.onConstellationLongPressed,
     this.onSwipeDown,
+    this.doubleTapToSleep = false,
     this.badgeRevision = 0,
   });
 
@@ -293,6 +303,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     // 1. Check if user tapped an active app
     final tappedApp = _hitTestApp(details.localPosition);
     if (tappedApp != null) {
+      _clearEmptyTap();
       _activateApp(tappedApp);
       return;
     }
@@ -300,11 +311,22 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     // 2. Check if user tapped a constellation cluster hub
     final tappedConstellation = _hitTestConstellation(details.localPosition);
     if (tappedConstellation != null) {
+      _clearEmptyTap();
       _activateConstellation(tappedConstellation);
       return;
     }
 
-    // 3. Tapped empty space: smoothly collapse expanded outer constellations back to clean state
+    // 3. Tapped empty space with the sleep gesture armed and a matching first
+    //    tap behind it: sleep instead of collapsing.
+    if (_isDoubleTapOnEmptySpace(details.localPosition)) {
+      _clearEmptyTap();
+      unawaited(_sleepOnDoubleTap());
+      return;
+    }
+    _recordEmptyTap(details.localPosition);
+
+    // 4. Tapped empty space: smoothly collapse expanded outer constellations
+    //    back to clean state.
     _focusedApp = null;
     final anyOuterExpanded = widget.layoutEngine.constellations.any(
       (c) => c.id != 'core' && (c.isExpanded || c.expansionProgress > 0.25),
@@ -313,6 +335,42 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
       widget.layoutEngine.collapseAllExceptCore();
       widget.camera.flyTo(Offset.zero, targetZoom: 1.05);
     }
+  }
+
+  /// The candidate first tap of the sleep gesture.
+  ///
+  /// Double-tap detection is timestamp-based rather than a
+  /// `DoubleTapGestureRecognizer` on purpose: that recognizer keeps the gesture
+  /// arena open after the first tap, so every node tap would wait out the
+  /// double-tap timeout before it could launch. Here a node tap runs the
+  /// existing tests and opens the app on the same frame, exactly as before.
+  final DoubleTapTracker _emptyTap = DoubleTapTracker();
+
+  void _recordEmptyTap(Offset position) {
+    if (!widget.doubleTapToSleep) {
+      _emptyTap.clear();
+      return;
+    }
+    _emptyTap.record(position);
+  }
+
+  void _clearEmptyTap() => _emptyTap.clear();
+
+  bool _isDoubleTapOnEmptySpace(Offset position) =>
+      widget.doubleTapToSleep && _emptyTap.matches(position);
+
+  /// Sleeps the screen for a double tap on empty space.
+  ///
+  /// Only reached with the preference on; the service is re-checked at tap time
+  /// so a disabled service makes the gesture a no-op rather than an error, and
+  /// [SystemGestures.lockScreen] answers false rather than throwing when the
+  /// platform refuses. The lock panel's owner keeps [GalaxyInteractiveCanvas.doubleTapToSleep]
+  /// false while that panel is mounted, so this can never re-lock a locked
+  /// launcher.
+  Future<void> _sleepOnDoubleTap() async {
+    if (!widget.doubleTapToSleep) return;
+    if (!await SystemGestures.isEnabled()) return;
+    await SystemGestures.lockScreen();
   }
 
   /// Opens [app] — the single path shared by a tap on the canvas and a

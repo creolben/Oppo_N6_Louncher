@@ -32,6 +32,8 @@ void main() {
         },
         'hiddenPackageNames': ['com.hidden'],
         'nativeLauncherMode': true,
+        'doubleTapToSleep': true,
+        'swipeDownAction': 'notifications',
       };
     });
 
@@ -102,6 +104,50 @@ void main() {
           (merged['customConstellations'] as List).single as Map<String, dynamic>;
       expect(written['id'], 'custom_2');
       expect(merged['customGalaxies'], merged['customConstellations']);
+    });
+
+    test('omitting the gesture preferences preserves the stored values', () {
+      final merged = GalaxyStorageService.mergeConfig(
+        existing,
+        coreAppPackageNames: ['com.new'],
+      );
+
+      expect(merged['doubleTapToSleep'], isTrue);
+      expect(merged['swipeDownAction'], 'notifications');
+    });
+
+    test('gesture preferences overwrite their stored values', () {
+      final merged = GalaxyStorageService.mergeConfig(
+        existing,
+        coreAppPackageNames: ['com.new'],
+        doubleTapToSleep: false,
+        swipeDownAction: 'search',
+      );
+
+      expect(merged['doubleTapToSleep'], isFalse);
+      expect(merged['swipeDownAction'], 'search');
+    });
+
+    test('writing a gesture preference preserves every other key', () {
+      final merged = GalaxyStorageService.mergeConfig(
+        existing,
+        coreAppPackageNames: ['com.old'],
+        doubleTapToSleep: false,
+      );
+
+      // Every key the gesture save did not name must survive untouched: a
+      // gesture must never reset the layout or the lock mode.
+      expect(merged['coreAppPackageNames'], ['com.old']);
+      expect(merged['customConstellations'], existing['customConstellations']);
+      expect(merged['customGalaxies'], existing['customGalaxies']);
+      expect(
+        merged['constellationAppOverrides'],
+        existing['constellationAppOverrides'],
+      );
+      expect(merged['hiddenPackageNames'], existing['hiddenPackageNames']);
+      expect(merged['nativeLauncherMode'], isTrue);
+      expect(merged['swipeDownAction'], 'notifications');
+      expect(merged['doubleTapToSleep'], isFalse);
     });
 
     test('an empty existing config starts from the new arguments only', () {
