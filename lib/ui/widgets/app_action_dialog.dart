@@ -199,7 +199,7 @@ class _AppActionDialogState extends State<AppActionDialog> {
                           if (!success) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('Center Constellation is full (Max 6 apps). Remove an app first.'),
+                                content: Text('Center Constellation is full (Max 8 apps). Remove an app first.'),
                                 backgroundColor: LuminousHomeTheme.panelRaised,
                               ),
                             );

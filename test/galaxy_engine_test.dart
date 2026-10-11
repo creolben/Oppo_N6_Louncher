@@ -52,35 +52,70 @@ void main() {
       expect(social.center.dx.abs(), lessThan(300));
     });
 
-    test('Center Constellation respects maximum 6 apps and distributes angles symmetrically', () {
+    test('Essentials ring radius per posture keeps <=6 unchanged and widens 7-8 only unfolded', () {
+      for (final p in DevicePosture.values) {
+        final folded = p == DevicePosture.folded;
+        expect(GalaxyLayoutEngine.coreRingRadius(3, p), folded ? 58.0 : 74.0);
+        expect(GalaxyLayoutEngine.coreRingRadius(4, p), folded ? 64.0 : 84.0);
+        expect(GalaxyLayoutEngine.coreRingRadius(6, p), folded ? 72.0 : 96.0);
+      }
+      expect(GalaxyLayoutEngine.coreRingRadius(7, DevicePosture.flat), 112.0);
+      expect(GalaxyLayoutEngine.coreRingRadius(8, DevicePosture.flat), 120.0);
+      expect(GalaxyLayoutEngine.coreRingRadius(8, DevicePosture.tabletop), 96.0);
+      expect(GalaxyLayoutEngine.coreRingRadius(8, DevicePosture.folded), 72.0);
+    });
+
+    test('per-frame morph settles 8 Essentials on the 120 ring when unfolded', () {
       final engine = GalaxyLayoutEngine();
       final apps = List.generate(
         8,
+        (i) => AppEntry(packageName: 'com.test.m$i', label: 'M $i', category: AppCategory.tools),
+      );
+      engine.setCorePackageNames(apps.map((a) => a.packageName).toList());
+      engine.assignApps(apps);
+      engine.expandCore();
+      for (int i = 0; i < 400; i++) {
+        engine.updateGalaxyMorph(posture: DevicePosture.flat, hingeAngle: 180, dt: 0.05);
+      }
+      final core = engine.constellations.firstWhere((c) => c.id == 'core');
+      for (final app in core.apps) {
+        expect((app.orbitalRadius - 120.0).abs(), lessThan(0.01));
+      }
+    });
+
+    test('Center Constellation respects maximum 8 apps and distributes angles symmetrically', () {
+      final engine = GalaxyLayoutEngine();
+      final apps = List.generate(
+        10,
         (i) => AppEntry(packageName: 'com.test.app$i', label: 'App $i', category: AppCategory.tools),
       );
 
-      // Set 6 apps
-      engine.setCorePackageNames(apps.sublist(0, 6).map((a) => a.packageName).toList());
+      // Set 8 apps
+      engine.setCorePackageNames(apps.sublist(0, 8).map((a) => a.packageName).toList());
       engine.assignApps(apps);
 
       final core = engine.constellations.firstWhere((c) => c.id == 'core');
-      expect(core.apps.length, 6);
+      expect(core.apps.length, 8);
 
-      // Verify orbital layout properties
-      // Dynamic core radius for 6 apps should be 96.0
+      // Dynamic core radius for 8 apps should be 120.0
       for (final app in core.apps) {
-        expect((app.worldPosition.distance - 96.0).abs(), lessThan(0.01));
+        expect((app.worldPosition.distance - 120.0).abs(), lessThan(0.01));
       }
 
-      // Try adding a 7th app via addAppToCore -> should fail / return false
-      final added = engine.addAppToCore(apps[6]);
+      // Try adding a 9th app via addAppToCore -> should fail / return false
+      final added = engine.addAppToCore(apps[8]);
       expect(added, false);
-      expect(core.apps.length, 6);
+      expect(core.apps.length, 8);
 
-      // Remove an app from core
+      // Remove an app from core: 7 apps use the 112.0 ring
       engine.removeAppFromCore(apps[0].packageName);
-      expect(core.apps.length, 5);
-      // For 5 apps, radius is also 96.0
+      expect(core.apps.length, 7);
+      expect((core.apps.first.worldPosition.distance - 112.0).abs(), lessThan(0.01));
+
+      // 6 apps keep the original 96.0 ring
+      engine.setCorePackageNames(apps.sublist(0, 6).map((a) => a.packageName).toList());
+      engine.assignApps(apps);
+      expect(core.apps.length, 6);
       expect((core.apps.first.worldPosition.distance - 96.0).abs(), lessThan(0.01));
 
       // Test with 3 apps -> radius should be 74.0
