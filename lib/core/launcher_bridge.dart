@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/app_entry.dart';
+import '../models/app_shortcut.dart';
 import '../models/now_playing.dart';
 import '../models/quick_shortcut.dart';
 import '../ui/theme/luminous_home_theme.dart';
@@ -18,9 +19,23 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
       EventChannel('com.launcher.chronofold/fingerprint');
   static const EventChannel _mediaChannel =
       EventChannel('com.launcher.chronofold/media');
+  static const EventChannel _badgesChannel =
+      EventChannel('com.launcher.chronofold/badges');
+
+  /// Test seam: on a host that is not Android (the unit-test binary on a
+  /// desktop) the bridge normally never touches the platform channel. A test
+  /// that asserts the exact channel payload sets this so the same code path
+  /// runs; production never does.
+  @visibleForTesting
+  static bool debugUsePlatformChannels = false;
+
+  /// Whether the platform channels should be used on this host.
+  static bool get _usePlatformChannels =>
+      !kIsWeb && (Platform.isAndroid || debugUsePlatformChannels);
 
   static Stream<Map<String, dynamic>>? _shakeStream;
   static Stream<NowPlaying?>? _mediaStream;
+  static Stream<Map<String, dynamic>>? _badgesStream;
 
   /// Broadcasts the native `onSystemPaletteChanged` pushes. Broadcast so the
   /// launcher's bootstrap and a future second surface can both listen, and so
@@ -388,6 +403,24 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return _mediaStream!;
   }
 
+  /// Per-package notification counts from the platform's notification listener.
+  ///
+  /// Only non-zero packages are emitted, and an empty map is the honest answer
+  /// while notification access is not granted. The stream is empty on a
+  /// non-Android host, so a widget test that listens simply never rebuilds.
+  static Stream<Map<String, dynamic>> get badgesStream {
+    if (_badgesStream == null) {
+      if (!kIsWeb && Platform.isAndroid) {
+        _badgesStream = _badgesChannel
+            .receiveBroadcastStream()
+            .map((event) => Map<String, dynamic>.from(event as Map));
+      } else {
+        _badgesStream = const Stream<Map<String, dynamic>>.empty();
+      }
+    }
+    return _badgesStream!;
+  }
+
   /// The device's Material You palette, or null when the platform has none.
   ///
   /// ColorOS 16 themes the launcher from the home wallpaper; Android exposes the
@@ -689,12 +722,20 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   /// dismiss is what makes the app visible, and on a keyguard an earlier
   /// authentication has already satisfied it dismisses silently rather than
   /// asking again.
-  static Future<bool> launchApp(AppEntry app) async {
-    if (!kIsWeb && Platform.isAndroid) {
+  ///
+  /// [sourceBounds] is the tapped node's on-screen rectangle in *logical*
+  /// pixels; it is converted to physical pixels here and handed to the platform
+  /// so the launch can reveal from the exact place the finger landed. Null — the
+  /// lock-screen and non-visual paths — sends no bounds at all, which is the
+  /// launch that was already there.
+  static Future<bool> launchApp(AppEntry app, {Rect? sourceBounds}) async {
+    if (_usePlatformChannels) {
       try {
         final bool? success = await _appsChannel.invokeMethod('launchApp', {
           'packageName': app.packageName,
           'activityName': app.activityName,
+          if (sourceBounds != null)
+            'sourceBounds': _physicalRect(sourceBounds),
         });
         return success ?? false;
       } catch (e) {
@@ -705,6 +746,77 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
       debugPrint('Simulating launching app: ${app.label} (${app.packageName})');
       return true;
     }
+  }
+
+  /// The package's dynamic, manifest and pinned shortcuts.
+  ///
+  /// Empty when the platform cannot be asked: a non-Android host, or a device
+  /// where this app is not the default launcher and so does not hold the
+  /// shortcut host permission. That is the honest answer rather than an error,
+  /// because the UI treats "no shortcuts" and "cannot read shortcuts" the same
+  /// way — it shows none.
+  static Future<List<AppShortcut>> getAppShortcuts(String packageName) async {
+    if (_usePlatformChannels) {
+      try {
+        final List<dynamic>? raw = await _appsChannel.invokeMethod(
+          'getAppShortcuts',
+          {'packageName': packageName},
+        );
+        if (raw == null) return const [];
+        return raw
+            .map((e) => AppShortcut.fromMap(Map<String, dynamic>.from(e as Map)))
+            .toList();
+      } catch (e) {
+        debugPrint('CF_SHORTCUTS: reading app shortcuts failed: $e');
+        return const [];
+      }
+    }
+    return const [];
+  }
+
+  /// Launches [shortcut], optionally revealing from [sourceBounds].
+  ///
+  /// Returns false — never throws — when the host permission is missing or the
+  /// shortcut is disabled: the platform refuses both the same way from here.
+  static Future<bool> startAppShortcut(
+    AppShortcut shortcut, {
+    Rect? sourceBounds,
+  }) async {
+    if (_usePlatformChannels) {
+      try {
+        final bool? success = await _appsChannel.invokeMethod('startAppShortcut', {
+          'packageName': shortcut.packageName,
+          'id': shortcut.id,
+          if (sourceBounds != null)
+            'sourceBounds': _physicalRect(sourceBounds),
+        });
+        return success ?? false;
+      } catch (e) {
+        debugPrint('CF_SHORTCUTS: launching a shortcut failed: $e');
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /// The device's physical-pixel rectangle for a logical-pixel [rect].
+  static Map<String, int> _physicalRect(Rect rect) {
+    final double ratio = _devicePixelRatio();
+    return {
+      'left': (rect.left * ratio).round(),
+      'top': (rect.top * ratio).round(),
+      'right': (rect.right * ratio).round(),
+      'bottom': (rect.bottom * ratio).round(),
+    };
+  }
+
+  /// The first view's device pixel ratio, or 1.0 when the platform has no view
+  /// (a bare unit-test binary). Goes through the binding so a widget test's
+  /// `tester.view.devicePixelRatio` override is the value used.
+  static double _devicePixelRatio() {
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.isEmpty) return 1.0;
+    return views.first.devicePixelRatio;
   }
 
   /// Opens the platform's own handler for a lock-screen shortcut.

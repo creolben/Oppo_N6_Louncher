@@ -28,7 +28,8 @@ The launcher runs edge-to-edge in portrait on ColorOS foldable hardware. It quer
 - Preserve Android HOME-role, package-query, keyguard, hinge-sensor, app-return bridge, and wallpaper-preview behavior.
 - The user approved a ColorOS-inspired hybrid visual redesign, not an exact proprietary ColorOS clone.
 - No root access, SystemUI hooks, private ColorOS APIs, or unlicensed OEM fonts, icons, wallpapers, or sounds.
-- A fixed paged grid and third-party Android home widgets are outside the current architecture and are not part of this redesign.
+- A fixed paged grid is outside the current architecture. Third-party home widgets are allowed through AppWidgetHost with the system bind-consent prompt and must not change galaxy motion (ADR-001).
+- An optional accessibility service, off by default, may only open the notification shade, lock the screen and open recents; it never reads window content (ADR-001). Shizuku is not used.
 
 ## Brand Commitments
 

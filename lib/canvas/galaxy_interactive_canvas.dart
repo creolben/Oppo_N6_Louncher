@@ -2,10 +2,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/semantics.dart';
-import 'package:flutter/services.dart';
 import '../models/app_entry.dart';
 import '../models/constellation.dart';
 import '../core/launcher_bridge.dart';
+import '../core/launcher_haptics.dart';
 import '../core/foldable_controller.dart';
 import '../core/galaxy_layout_engine.dart';
 import 'camera_controller.dart';
@@ -22,6 +22,10 @@ class GalaxyInteractiveCanvas extends StatefulWidget {
   final Function(Constellation constellation)? onConstellationLongPressed;
   final VoidCallback? onSwipeDown;
 
+  /// Bumps when the notification counts changed, so a resting (reduce-motion)
+  /// canvas still repaints its badges.
+  final int badgeRevision;
+
   const GalaxyInteractiveCanvas({
     super.key,
     required this.apps,
@@ -32,6 +36,7 @@ class GalaxyInteractiveCanvas extends StatefulWidget {
     this.onAppLongPressed,
     this.onConstellationLongPressed,
     this.onSwipeDown,
+    this.badgeRevision = 0,
   });
 
   @override
@@ -313,7 +318,12 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   /// Opens [app] — the single path shared by a tap on the canvas and a
   /// TalkBack activation, so the two can never drift apart.
   void _activateApp(AppEntry app) {
-    HapticFeedback.mediumImpact();
+    LauncherHaptics.click();
+    // Capture the node's on-screen rectangle at tap time. The launch is
+    // deliberately deferred behind the supernova, and the platform's clip
+    // reveal must describe where the finger landed, not where the camera has
+    // drifted to by the time the app opens.
+    final Rect? sourceBounds = _appScreenRect(app);
     _focusedApp = app;
     _activeSupernova = SupernovaAnimation(
       worldPosition: app.worldPosition,
@@ -324,13 +334,26 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     widget.onAppSelected?.call(app);
 
     Future.delayed(const Duration(milliseconds: 300), () {
-      LauncherBridge.launchApp(app);
+      LauncherBridge.launchApp(app, sourceBounds: sourceBounds);
     });
+  }
+
+  /// The tapped node's rectangle in global logical pixels, or null when its
+  /// geometry cannot be read.
+  Rect? _appScreenRect(AppEntry app) {
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+    final Offset localCenter = widget.camera.worldToScreen(app.worldPosition);
+    final double radius = 32.0 * widget.camera.zoom;
+    return Rect.fromCircle(
+      center: renderObject.localToGlobal(localCenter),
+      radius: radius,
+    );
   }
 
   /// Expands or collapses [constellation], the action a hub tap performs.
   void _activateConstellation(Constellation constellation) {
-    HapticFeedback.lightImpact();
+    LauncherHaptics.click();
     if (constellation.id == 'core') {
       final anyOuterExpanded = widget.layoutEngine.constellations.any(
         (c) => c.id != 'core' && (c.isExpanded || c.expansionProgress > 0.25),
@@ -359,7 +382,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   void _handleLongPress(LongPressStartDetails details) {
     final app = _hitTestApp(details.localPosition);
     if (app != null) {
-      HapticFeedback.heavyImpact();
+      LauncherHaptics.heavyClick();
       widget.onAppLongPressed?.call(app, details.localPosition);
       return;
     }
@@ -368,7 +391,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     final constellation = _hitTestConstellation(details.localPosition);
     if (constellation != null) {
       if (constellation.isExpanded || constellation.id == 'core') {
-        HapticFeedback.heavyImpact();
+        LauncherHaptics.heavyClick();
         widget.onConstellationLongPressed?.call(constellation);
       }
     }
@@ -465,7 +488,10 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
         targets.add(
           _SemanticTarget(
-            label: app.label,
+            label: app.notificationCount > 0
+                ? '${app.label}, ${app.notificationCount} '
+                      'notification${app.notificationCount == 1 ? '' : 's'}'
+                : app.label,
             hint: 'Open app',
             rect: appRect,
             onTap: () => _activateApp(app),
@@ -573,7 +599,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
         final isIntentionalDragDown = _accumulatedPanDy > 140 && _accumulatedPanDy > _accumulatedPanDx.abs() * 2.0;
 
         if ((isFastSwipeDown || isIntentionalDragDown) && widget.onSwipeDown != null) {
-          HapticFeedback.mediumImpact();
+          LauncherHaptics.click();
           widget.onSwipeDown!();
         } else {
           widget.camera.onDragEnd(details.velocity);
@@ -600,6 +626,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
             activeSupernova: _activeSupernova,
             activeTouchScreenPoint: _lastFocalPoint,
             focusedApp: _focusedApp,
+            badgeRevision: widget.badgeRevision,
           ),
         ),
       ),

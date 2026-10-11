@@ -96,7 +96,9 @@ class AppEntry {
       _lastBadgeCount = notificationCount;
       badgePainter = TextPainter(
         text: TextSpan(
-          text: '$notificationCount',
+          // The dot is small; a two-digit count is wider than its face, so the
+          // overflow is stated rather than clipped.
+          text: notificationCount > 9 ? '9+' : '$notificationCount',
           style: const TextStyle(
             color: LuminousHomeTheme.textPrimary,
             fontSize: 9.0,

@@ -3,17 +3,18 @@ import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../models/app_entry.dart';
 import '../../models/constellation.dart';
 import '../../core/launcher_bridge.dart';
+import '../../core/launcher_haptics.dart';
 import '../../core/foldable_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
 import '../format/clock_format.dart';
 import '../theme/luminous_home_theme.dart';
 import '../widgets/fading_horizontal_scroll.dart';
 import '../widgets/foldable_simulation_chip.dart';
+import '../widgets/notification_badge.dart';
 
 /// Luminous Horizon roles tuned for the narrow, one-handed cover surface.
 ///
@@ -147,9 +148,9 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     );
   }
 
-  void _launchAppWithFeedback(AppEntry app) {
-    HapticFeedback.mediumImpact();
-    LauncherBridge.launchApp(app);
+  void _launchAppWithFeedback(AppEntry app, Rect? sourceBounds) {
+    LauncherHaptics.click();
+    LauncherBridge.launchApp(app, sourceBounds: sourceBounds);
   }
 
   @override
@@ -401,7 +402,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 : 'Show posture controls',
             child: GestureDetector(
               onTap: () {
-                HapticFeedback.selectionClick();
+                LauncherHaptics.tick();
                 setState(() => _showFoldControls = !_showFoldControls);
               },
               behavior: HitTestBehavior.opaque,
@@ -895,9 +896,10 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 width: tileWidth,
                 child: _CoverAppTile(
                   app: app,
-                  onTap: () => _launchAppWithFeedback(app),
+                  onTap: (sourceBounds) =>
+                      _launchAppWithFeedback(app, sourceBounds),
                   onLongPress: (position) {
-                    HapticFeedback.heavyImpact();
+                    LauncherHaptics.heavyClick();
                     widget.onAppLongPressed?.call(app, position);
                   },
                 ),
@@ -966,7 +968,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                     tooltip: 'Fold Simulator',
                     isActive: _showFoldControls,
                     onTap: () {
-                      HapticFeedback.selectionClick();
+                      LauncherHaptics.tick();
                       setState(() => _showFoldControls = !_showFoldControls);
                     },
                   ),
@@ -1259,7 +1261,7 @@ class _CoverStar {
 /// small cover-panel target is acknowledged before the app opens.
 class _CoverAppTile extends StatefulWidget {
   final AppEntry app;
-  final VoidCallback onTap;
+  final void Function(Rect? sourceBounds) onTap;
   final void Function(Offset globalPosition) onLongPress;
 
   const _CoverAppTile({
@@ -1295,19 +1297,29 @@ class _CoverAppTileState extends State<_CoverAppTile> {
     final app = widget.app;
     return Semantics(
       button: true,
-      label: 'Open ${app.label}',
+      label: app.notificationCount > 0
+          ? 'Open ${app.label}, ${app.notificationCount} '
+                'notification${app.notificationCount == 1 ? '' : 's'}'
+          : 'Open ${app.label}',
       // Without this the long-press route to Essentials is unreachable under
       // a screen reader, and the hint below advertises it.
       onLongPress: _semanticLongPress,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTapDown: (_) {
-          HapticFeedback.selectionClick();
+          LauncherHaptics.tick();
           _setPressed(true);
         },
         onTapUp: (_) => _setPressed(false),
         onTapCancel: () => _setPressed(false),
-        onTap: widget.onTap,
+        onTap: () {
+          final renderObject = context.findRenderObject();
+          final Rect? sourceBounds =
+              renderObject is RenderBox && renderObject.hasSize
+              ? renderObject.localToGlobal(Offset.zero) & renderObject.size
+              : null;
+          widget.onTap(sourceBounds);
+        },
         onLongPressStart: (details) {
           _setPressed(false);
           widget.onLongPress(details.globalPosition);
@@ -1320,48 +1332,61 @@ class _CoverAppTileState extends State<_CoverAppTile> {
             mainAxisSize: MainAxisSize.min,
             children: [
               // Clean 48dp squircle icon with soft offset depth. The source
-              // artwork is the icon; there is no nested glowing frame.
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 140),
-                curve: Curves.easeOutCubic,
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: _pressed
-                      ? Color.alphaBlend(
-                          app.accentColor.withValues(alpha: 0.12),
-                          LuminousHomeTheme.glassStrong,
-                        )
-                      : LuminousHomeTheme.glassStrong,
-                  borderRadius: BorderRadius.circular(CoverStyle.tileRadius),
-                  boxShadow: [
-                    BoxShadow(
-                      color: LuminousHomeTheme.shadow.withValues(
-                        alpha: _pressed ? 0.64 : 0.48,
-                      ),
-                      blurRadius: _pressed ? 16 : 12,
-                      offset: Offset(0, _pressed ? 7 : 4),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(CoverStyle.tileRadius),
-                  child: app.iconBytes != null
-                      ? Image.memory(
-                          app.iconBytes!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => Icon(
-                            app.fallbackIcon,
-                            color: app.accentColor,
-                            size: 24,
+              // artwork is the icon; there is no nested glowing frame. The
+              // badge sits over the icon's top-right corner, outside the
+              // clipped artwork.
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 140),
+                    curve: Curves.easeOutCubic,
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: _pressed
+                          ? Color.alphaBlend(
+                              app.accentColor.withValues(alpha: 0.12),
+                              LuminousHomeTheme.glassStrong,
+                            )
+                          : LuminousHomeTheme.glassStrong,
+                      borderRadius: BorderRadius.circular(CoverStyle.tileRadius),
+                      boxShadow: [
+                        BoxShadow(
+                          color: LuminousHomeTheme.shadow.withValues(
+                            alpha: _pressed ? 0.64 : 0.48,
                           ),
-                        )
-                      : Icon(
-                          app.fallbackIcon,
-                          color: app.accentColor,
-                          size: 24,
+                          blurRadius: _pressed ? 16 : 12,
+                          offset: Offset(0, _pressed ? 7 : 4),
                         ),
-                ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(CoverStyle.tileRadius),
+                      child: app.iconBytes != null
+                          ? Image.memory(
+                              app.iconBytes!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) => Icon(
+                                app.fallbackIcon,
+                                color: app.accentColor,
+                                size: 24,
+                              ),
+                            )
+                          : Icon(
+                              app.fallbackIcon,
+                              color: app.accentColor,
+                              size: 24,
+                            ),
+                    ),
+                  ),
+                  if (app.notificationCount > 0)
+                    Positioned(
+                      top: -4,
+                      right: -4,
+                      child: NotificationBadge(count: app.notificationCount),
+                    ),
+                ],
               ),
               const SizedBox(height: 5),
               // App Label

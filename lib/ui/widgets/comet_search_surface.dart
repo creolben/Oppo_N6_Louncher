@@ -1,9 +1,9 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../core/launcher_bridge.dart';
+import '../../core/launcher_haptics.dart';
 import '../../core/search_coordinator.dart';
 import '../../models/web_search.dart';
 import 'answer_body.dart';
@@ -79,13 +79,13 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
   void _submit(String value) {
     final query = value.trim();
     if (query.isEmpty) return;
-    HapticFeedback.lightImpact();
+    LauncherHaptics.click();
     FocusScope.of(context).unfocus();
     widget.coordinator.search(query);
   }
 
   void _openSource(SearchSource source) {
-    HapticFeedback.selectionClick();
+    LauncherHaptics.tick();
     widget.coordinator.openSource(source);
   }
 
@@ -439,7 +439,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
             onPressed: query.trim().isEmpty
                 ? null
                 : () {
-                    HapticFeedback.lightImpact();
+                    LauncherHaptics.click();
                     widget.coordinator.openViaHandoff(query);
                   },
             icon: const Icon(Icons.travel_explore_rounded, size: 18),

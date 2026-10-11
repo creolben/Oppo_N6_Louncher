@@ -5,10 +5,13 @@ import android.content.ComponentName
 import android.content.Intent
 import android.app.SearchManager
 import android.content.pm.ApplicationInfo
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
+import android.content.pm.ShortcutInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.hardware.Sensor
@@ -22,6 +25,13 @@ import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Process
+import android.os.UserHandle
+import android.os.VibrationAttributes
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.media.AudioAttributes
 import android.provider.Settings
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
@@ -61,6 +71,12 @@ class MainActivity : FlutterActivity() {
 
         /** Text extraction stops after this many pages. */
         private const val MAX_EXTRACT_PAGES = 30
+
+        /** Unpinned shortcuts shown per app; pinned ones are always kept. */
+        private const val MAX_UNPINNED_SHORTCUTS = 5
+
+        /** Longest edge a shortcut icon is sent at, in dp. */
+        private const val MAX_SHORTCUT_ICON_DP = 64
     }
 
     /**
@@ -75,6 +91,14 @@ class MainActivity : FlutterActivity() {
 
     /** Off-main-thread executor for PDF parsing and picked-file copying. */
     private val pdfExecutor = Executors.newSingleThreadExecutor()
+
+    /**
+     * Off-main-thread executor for shortcut queries.
+     *
+     * Resolving a package's shortcuts and rasterising their icons is real work
+     * that must not run on the frame the dialog opens on.
+     */
+    private val shortcutExecutor = Executors.newSingleThreadExecutor()
 
     /** The Flutter result waiting on the one in-flight `pickPdf` dialog. */
     private var pendingPdfPickResult: MethodChannel.Result? = null
@@ -174,8 +198,8 @@ class MainActivity : FlutterActivity() {
             this@MainActivity.setOverlayWhenLocked(enabled)
         }
 
-        override fun startTarget(intent: Intent, onStarted: (Boolean) -> Unit) {
-            startTargetWithReturnBridge(intent, onStarted)
+        override fun startTarget(intent: Intent, options: Bundle?, onStarted: (Boolean) -> Unit) {
+            startTargetWithReturnBridge(intent, options, onStarted)
         }
 
         override fun onUnhandledMethod(call: MethodCall, result: MethodChannel.Result): Boolean =
@@ -376,6 +400,7 @@ class MainActivity : FlutterActivity() {
         lockSurface = null
         pendingPdfPickResult = null
         pdfExecutor.shutdown()
+        shortcutExecutor.shutdown()
         screenReceiver?.let { unregisterReceiver(it) }
         packageReceiver?.let { unregisterReceiver(it) }
         super.onDestroy()
@@ -401,6 +426,29 @@ class MainActivity : FlutterActivity() {
      */
     private fun handleMainOnlyMethod(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
+            "getAppShortcuts" -> {
+                val packageName = call.argument<String>("packageName")
+                if (packageName.isNullOrBlank()) {
+                    result.error("INVALID_ARGS", "packageName is required", null)
+                } else {
+                    fetchAppShortcuts(packageName, result)
+                }
+            }
+            "startAppShortcut" -> {
+                val packageName = call.argument<String>("packageName")
+                val id = call.argument<String>("id")
+                if (packageName.isNullOrBlank() || id.isNullOrBlank()) {
+                    result.error("INVALID_ARGS", "packageName and id are required", null)
+                } else {
+                    result.success(
+                        startAppShortcut(packageName, id, readSourceBounds(call)),
+                    )
+                }
+            }
+            "performHaptic" -> {
+                performHaptic(call.argument<String>("type"))
+                result.success(true)
+            }
             "openAppInfo" -> {
                 val packageName = call.argument<String>("packageName")
                 if (packageName != null) {
@@ -511,6 +559,277 @@ class MainActivity : FlutterActivity() {
             else -> return false
         }
         return true
+    }
+
+    // --- App shortcuts ----------------------------------------------------------------
+
+    /**
+     * The launcher's public shortcut entry point.
+     *
+     * Every read is gated on the host permission the platform grants only the
+     * default launcher; without it an empty list is the honest answer, so a
+     * non-default install sees no shortcuts rather than a channel error. The
+     * query itself (and its icon rasterisation) runs off the main thread because
+     * it is real work and the dialog is opening on the frame it is called from.
+     */
+    private fun fetchAppShortcuts(packageName: String, result: MethodChannel.Result) {
+        val apps = launcherApps()
+        if (apps == null) {
+            result.success(emptyList<Map<String, Any?>>())
+            return
+        }
+        if (!apps.hasShortcutHostPermission()) {
+            result.success(emptyList<Map<String, Any?>>())
+            return
+        }
+        shortcutExecutor.execute {
+            val shortcuts = try {
+                queryAppShortcuts(apps, packageName)
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "CF_SHORTCUTS: query failed", error)
+                emptyList()
+            }
+            runOnUiThread { result.success(shortcuts) }
+        }
+    }
+
+    private fun launcherApps(): LauncherApps? =
+        getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
+
+    /**
+     * Resolves the package's dynamic, manifest and pinned shortcuts.
+     *
+     * Pinned shortcuts always survive; everything else is ordered by the app's
+     * own rank and capped, so one app with dozens of shortcuts cannot flood the
+     * action dialog. The icon is rendered at the display density into at most
+     * [MAX_SHORTCUT_ICON_DP] dp so the channel payload stays small.
+     */
+    private fun queryAppShortcuts(
+        apps: LauncherApps,
+        packageName: String,
+    ): List<Map<String, Any?>> {
+        val query = LauncherApps.ShortcutQuery().apply {
+            setPackage(packageName)
+            setQueryFlags(
+                LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST or
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED,
+            )
+        }
+        val found = apps.getShortcuts(query, Process.myUserHandle()) ?: emptyList()
+        val pinned = found.filter { it.isPinned }
+        val ranked = found
+            .filter { !it.isPinned }
+            .sortedWith(compareBy({ it.rank }, { it.id }))
+            .take(MAX_UNPINNED_SHORTCUTS)
+
+        return (pinned + ranked).map { shortcutToMap(apps, it) }
+    }
+
+    private fun shortcutToMap(
+        apps: LauncherApps,
+        shortcut: ShortcutInfo,
+    ): Map<String, Any?> {
+        val iconPng = try {
+            apps.getShortcutIconDrawable(shortcut, resources.displayMetrics.densityDpi)
+                ?.let { drawableToIconPng(it) }
+        } catch (error: Exception) {
+            android.util.Log.d(TAG, "CF_SHORTCUTS: icon unavailable", error)
+            null
+        }
+        return mapOf(
+            "id" to shortcut.id,
+            "packageName" to shortcut.`package`,
+            "shortLabel" to (shortcut.shortLabel?.toString() ?: ""),
+            "longLabel" to (shortcut.longLabel?.toString() ?: ""),
+            "rank" to shortcut.rank,
+            "isPinned" to shortcut.isPinned,
+            "iconPng" to iconPng,
+        )
+    }
+
+    /** Renders [drawable] as a square PNG no larger than 64 dp a side. */
+    private fun drawableToIconPng(drawable: Drawable): ByteArray? {
+        val edge = (MAX_SHORTCUT_ICON_DP * resources.displayMetrics.density)
+            .toInt()
+            .coerceIn(1, 512)
+        return try {
+            val bitmap = Bitmap.createBitmap(edge, edge, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(bitmap)
+                drawable.setBounds(0, 0, canvas.width, canvas.height)
+                drawable.draw(canvas)
+                val stream = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                stream.toByteArray()
+            } finally {
+                bitmap.recycle()
+            }
+        } catch (error: Exception) {
+            android.util.Log.d(TAG, "CF_SHORTCUTS: icon encode failed", error)
+            null
+        }
+    }
+
+    /**
+     * Launches a shortcut, or reports false.
+     *
+     * The host permission is checked first, then the shortcut is resolved and
+     * confirmed enabled, so a disabled or removed shortcut is a plain "no"
+     * rather than a thrown `ActivityNotFoundException` inside the launcher.
+     */
+    private fun startAppShortcut(packageName: String, id: String, sourceBounds: Rect?): Boolean {
+        val apps = launcherApps() ?: return false
+        if (!apps.hasShortcutHostPermission()) return false
+
+        val enabled = try {
+            val query = LauncherApps.ShortcutQuery().apply {
+                setPackage(packageName)
+                setShortcutIds(listOf(id))
+                setQueryFlags(
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or
+                        LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST or
+                        LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED,
+                )
+            }
+            apps.getShortcuts(query, Process.myUserHandle())
+                ?.firstOrNull { it.id == id }
+                ?.isEnabled == true
+        } catch (error: Exception) {
+            false
+        }
+        if (!enabled) return false
+
+        return try {
+            markForeignTaskHandoff()
+            apps.startShortcut(packageName, id, sourceBounds, null, Process.myUserHandle())
+            true
+        } catch (error: Exception) {
+            android.util.Log.d(TAG, "CF_SHORTCUTS: start refused", error)
+            false
+        }
+    }
+
+    /** Reads the optional physical-pixel `sourceBounds` a Dart tap sent. */
+    private fun readSourceBounds(call: MethodCall): Rect? {
+        @Suppress("UNCHECKED_CAST")
+        val map = call.argument<Map<String, Any?>>("sourceBounds") ?: return null
+        val left = (map["left"] as? Number)?.toInt() ?: return null
+        val top = (map["top"] as? Number)?.toInt() ?: return null
+        val right = (map["right"] as? Number)?.toInt() ?: return null
+        val bottom = (map["bottom"] as? Number)?.toInt() ?: return null
+        val rect = Rect(left, top, right, bottom)
+        if (rect.width() <= 0 || rect.height() <= 0) return null
+        return rect
+    }
+
+    // --- Haptics ----------------------------------------------------------------------
+
+    private fun vibrator(): Vibrator? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)
+                ?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+    }
+
+    /**
+     * Plays one of ChronoFold's named touch haptics.
+     *
+     * API 30+ gets a composed primitive when the device can play every primitive
+     * the composition uses; otherwise the platform's predefined touch effects
+     * (29+) or a short one-shot (26–28) stand in. From API 33 the request carries
+     * [VibrationAttributes.USAGE_TOUCH] so the system's own Touch feedback
+     * setting decides whether it plays; below 33 that setting is read directly
+     * and a disabled switch silences the call.
+     */
+    private fun performHaptic(type: String?) {
+        if (type == null) return
+        val vibrator = vibrator()?.takeIf { it.hasVibrator() } ?: return
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            val enabled = try {
+                Settings.System.getInt(
+                    contentResolver,
+                    Settings.System.HAPTIC_FEEDBACK_ENABLED,
+                    1,
+                )
+            } catch (error: Exception) {
+                1
+            }
+            if (enabled == 0) return
+        }
+
+        try {
+            val effect = vibrationEffectFor(vibrator, type) ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                vibrator.vibrate(
+                    effect,
+                    VibrationAttributes.createForUsage(VibrationAttributes.USAGE_TOUCH),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(effect, sonificationAttributes())
+            }
+        } catch (error: Exception) {
+            android.util.Log.d(TAG, "CF_HAPTIC: vibration refused", error)
+        }
+    }
+
+    private fun sonificationAttributes(): AudioAttributes =
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+
+    private fun vibrationEffectFor(vibrator: Vibrator, type: String): VibrationEffect? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val supported = try {
+                vibrator.areAllPrimitivesSupported(
+                    VibrationEffect.Composition.PRIMITIVE_TICK,
+                    VibrationEffect.Composition.PRIMITIVE_CLICK,
+                    VibrationEffect.Composition.PRIMITIVE_LOW_TICK,
+                    VibrationEffect.Composition.PRIMITIVE_THUD,
+                    VibrationEffect.Composition.PRIMITIVE_SPIN,
+                )
+            } catch (error: Exception) {
+                false
+            }
+            if (supported) {
+                val primitive = when (type) {
+                    "tick" -> VibrationEffect.Composition.PRIMITIVE_TICK
+                    "click" -> VibrationEffect.Composition.PRIMITIVE_CLICK
+                    "lowTick" -> VibrationEffect.Composition.PRIMITIVE_LOW_TICK
+                    "heavyClick" -> VibrationEffect.Composition.PRIMITIVE_THUD
+                    "confirm" -> VibrationEffect.Composition.PRIMITIVE_SPIN
+                    "reject" -> VibrationEffect.Composition.PRIMITIVE_THUD
+                    else -> return null
+                }
+                return VibrationEffect.startComposition()
+                    .addPrimitive(primitive, 1.0f)
+                    .compose()
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val predefined = when (type) {
+                "tick", "lowTick" -> VibrationEffect.EFFECT_TICK
+                "click" -> VibrationEffect.EFFECT_CLICK
+                "heavyClick" -> VibrationEffect.EFFECT_HEAVY_CLICK
+                "confirm", "reject" -> VibrationEffect.EFFECT_DOUBLE_CLICK
+                else -> return null
+            }
+            return VibrationEffect.createPredefined(predefined)
+        }
+
+        val durationMs = when (type) {
+            "heavyClick", "confirm", "reject" -> 20L
+            "tick", "click", "lowTick" -> 10L
+            else -> return null
+        }
+        return VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
     }
 
     // --- PDF import ------------------------------------------------------------------
@@ -846,19 +1165,20 @@ class MainActivity : FlutterActivity() {
 
     private fun startTargetWithReturnBridge(
         intent: Intent,
+        options: Bundle?,
         onStarted: (Boolean) -> Unit,
     ) {
         showReturnBridge()
         val bridge = returnBridge
         if (bridge == null) {
-            onStarted(lockSurface?.startActivityQuietly(intent) ?: false)
+            onStarted(lockSurface?.startActivityQuietly(intent, options) ?: false)
             return
         }
 
         // Allow one compositor beat for the native bridge to become the
         // launcher task's visible buffer before the target task takes over.
         bridge.postDelayed({
-            val started = lockSurface?.startActivityQuietly(intent) ?: false
+            val started = lockSurface?.startActivityQuietly(intent, options) ?: false
             if (!started) {
                 hideReturnBridge()
             }

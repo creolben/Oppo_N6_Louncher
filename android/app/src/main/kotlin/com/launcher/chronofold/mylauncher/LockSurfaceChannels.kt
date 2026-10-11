@@ -1,6 +1,7 @@
 package com.launcher.chronofold.mylauncher
 
 import android.app.Activity
+import android.app.ActivityOptions
 import android.app.KeyguardManager
 import android.content.ComponentName
 import android.content.Context
@@ -10,6 +11,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -22,6 +24,7 @@ import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Bundle
 import android.os.CancellationSignal
 import android.os.PowerManager
 import android.provider.MediaStore
@@ -75,7 +78,7 @@ class LockSurfaceChannels(
         fun setOverlayWhenLocked(enabled: Boolean)
 
         /** Start an already-built intent once the keyguard is out of the way. */
-        fun startTarget(intent: Intent, onStarted: (Boolean) -> Unit)
+        fun startTarget(intent: Intent, options: Bundle?, onStarted: (Boolean) -> Unit)
 
         /**
          * Handle a method this shared surface does not own. Return true when
@@ -90,6 +93,7 @@ class LockSurfaceChannels(
         const val SHAKE_CHANNEL = "com.launcher.chronofold/shake"
         const val FINGERPRINT_CHANNEL = "com.launcher.chronofold/fingerprint"
         const val MEDIA_CHANNEL = "com.launcher.chronofold/media"
+        const val BADGES_CHANNEL = "com.launcher.chronofold/badges"
 
         /** High-importance channel the full-screen-intent lock prompt uses. */
         const val LOCK_SURFACE_CHANNEL_ID = "lock_surface"
@@ -138,6 +142,13 @@ class LockSurfaceChannels(
     private var primaryControllerCallback: MediaController.Callback? = null
 
     /**
+     * The live badge sink for this surface. The counts themselves are owned by
+     * [MediaListenerService]; this only forwards them. Null while Dart is not
+     * listening.
+     */
+    private var badgeEvents: EventChannel.EventSink? = null
+
+    /**
      * Signature of the last payload sent, so position ticks do not cross the
      * channel. Only metadata and transport-state changes reset it.
      */
@@ -155,6 +166,17 @@ class LockSurfaceChannels(
     /** The listener [MediaListenerService] holds, so [dispose] can remove it. */
     private val mediaListenerCallback: () -> Unit = {
         activity.runOnUiThread { onMediaListenerStateChanged() }
+    }
+
+    /**
+     * Forwards a badge-count change from [MediaListenerService] to this
+     * surface's Dart listener. The service calls this on its own thread, so the
+     * sink is touched on the main thread.
+     */
+    private val badgeListener: (Map<String, Int>) -> Unit = { counts ->
+        activity.runOnUiThread {
+            badgeEvents?.success(if (hasMediaListenerAccess()) counts else emptyMap<String, Int>())
+        }
     }
 
     /** Registers every channel this surface owns. */
@@ -184,10 +206,11 @@ class LockSurfaceChannels(
                 "launchApp" -> {
                     val packageName = call.argument<String>("packageName")
                     val activityName = call.argument<String>("activityName")
+                    val sourceBounds = readSourceBounds(call)
                     if (packageName != null) {
                         // Resolved only once the keyguard is dismissed and the
                         // activity is started, reporting success back to Flutter.
-                        launchApplication(packageName, activityName) { success ->
+                        launchApplication(packageName, activityName, sourceBounds) { success ->
                             result.success(success)
                         }
                     } else {
@@ -350,6 +373,31 @@ class LockSurfaceChannels(
                 }
             })
 
+        // The per-package notification badges, maintained by the notification
+        // listener. Registered here so both surfaces can consume the same
+        // counts; an empty map is the honest answer without the grant.
+        MediaListenerService.addBadgeListener(badgeListener)
+
+        EventChannel(messenger, BADGES_CHANNEL)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    badgeEvents = events
+                    // The listener's registration push may have arrived before
+                    // the sink existed, so replay the current state now.
+                    events?.success(
+                        if (hasMediaListenerAccess()) {
+                            MediaListenerService.currentBadgeCounts()
+                        } else {
+                            emptyMap<String, Int>()
+                        },
+                    )
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    badgeEvents = null
+                }
+            })
+
         accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
         // EventChannel for Accelerometer Shake Detection
@@ -417,8 +465,10 @@ class LockSurfaceChannels(
         // Drop the sink so a live channel cannot outlive the activity.
         fingerprintEvents = null
         mediaEvents = null
+        badgeEvents = null
         unregisterMediaSessionListener()
         MediaListenerService.removeSessionsMayHaveChangedListener(mediaListenerCallback)
+        MediaListenerService.removeBadgeListener(badgeListener)
         appsMethodChannel.setMethodCallHandler(null)
     }
 
@@ -652,6 +702,7 @@ class LockSurfaceChannels(
      */
     private fun startWhenUnlocked(
         intent: Intent,
+        options: Bundle?,
         onStarted: (Boolean) -> Unit,
     ) {
         val keyguard = activity.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
@@ -659,7 +710,7 @@ class LockSurfaceChannels(
             // This activity must resume as ordinary home content after the
             // target closes, not as an overlay that re-occludes a keyguard.
             host.setOverlayWhenLocked(false)
-            host.startTarget(intent, onStarted)
+            host.startTarget(intent, options, onStarted)
             return
         }
 
@@ -676,7 +727,7 @@ class LockSurfaceChannels(
                     // temporary window flag before starting the target; the
                     // Dart screen-off listener restores it for a real lock.
                     host.setOverlayWhenLocked(false)
-                    host.startTarget(intent, onStarted)
+                    host.startTarget(intent, options, onStarted)
                 }
 
                 override fun onDismissError() {
@@ -749,10 +800,17 @@ class LockSurfaceChannels(
      * point both activities use for every external start. Public so the
      * launcher's own extras (app info, uninstall, overlay settings) reuse it.
      */
-    fun startActivityQuietly(intent: Intent): Boolean {
+    fun startActivityQuietly(intent: Intent, options: Bundle? = null): Boolean {
         return try {
             host.onForeignHandoff()
-            activity.startActivity(intent)
+            // Only a launch that carried a tapped bounds pays for the options
+            // bundle; the lock-screen and settings paths stay byte-for-byte the
+            // plain start they have always been.
+            if (options != null) {
+                activity.startActivity(intent, options)
+            } else {
+                activity.startActivity(intent)
+            }
             true
         } catch (e: Exception) {
             // Nothing was handed anywhere, so the caller still owns the screen.
@@ -761,9 +819,74 @@ class LockSurfaceChannels(
         }
     }
 
+    /**
+     * Reads the optional physical-pixel `sourceBounds` a Dart tap sent.
+     *
+     * The map's values cross the platform channel as boxed numbers, so each is
+     * read as a [Number] rather than trusting a single erased type. A missing or
+     * malformed rect answers null, which is exactly the "no clip reveal"
+     * behaviour older callers already get.
+     */
+    private fun readSourceBounds(call: MethodCall): Rect? {
+        @Suppress("UNCHECKED_CAST")
+        val map = call.argument<Map<String, Any?>>("sourceBounds") ?: return null
+        val left = (map["left"] as? Number)?.toInt() ?: return null
+        val top = (map["top"] as? Number)?.toInt() ?: return null
+        val right = (map["right"] as? Number)?.toInt() ?: return null
+        val bottom = (map["bottom"] as? Number)?.toInt() ?: return null
+        val rect = Rect(left, top, right, bottom)
+        if (rect.width() <= 0 || rect.height() <= 0) return null
+        return rect
+    }
+
+    /**
+     * Builds the launch animation for a tapped bounds, or null to keep the
+     * plain start.
+     *
+     * `makeClipRevealAnimation` is the modern reveal; on a platform that refuses
+     * it this falls back to the older scale-up, and if neither can be built the
+     * launch still happens exactly as before. The rect is already in physical
+     * pixels and relative to the decor view, which is where the platform
+     * measures the reveal from.
+     */
+    private fun buildLaunchOptions(sourceBounds: Rect?): Bundle? {
+        if (sourceBounds == null) return null
+        val view = activity.window?.decorView ?: return null
+        val width = sourceBounds.width()
+        val height = sourceBounds.height()
+        return try {
+            ActivityOptions.makeClipRevealAnimation(
+                view,
+                sourceBounds.left,
+                sourceBounds.top,
+                width,
+                height,
+            ).toBundle()
+        } catch (revealError: Exception) {
+            try {
+                @Suppress("DEPRECATION")
+                ActivityOptions.makeScaleUpAnimation(
+                    view,
+                    sourceBounds.left,
+                    sourceBounds.top,
+                    width,
+                    height,
+                ).toBundle()
+            } catch (scaleError: Exception) {
+                android.util.Log.d(
+                    "ChronoFold",
+                    "CF_LAUNCH: no reveal animation available",
+                    scaleError,
+                )
+                null
+            }
+        }
+    }
+
     private fun launchApplication(
         packageName: String,
         activityName: String?,
+        sourceBounds: Rect?,
         onComplete: (Boolean) -> Unit,
     ) {
         val intent = try {
@@ -785,7 +908,13 @@ class LockSurfaceChannels(
             onComplete(false)
             return
         }
-        startWhenUnlocked(intent, onComplete)
+        // The tapped bounds are also recorded on the intent itself: that is the
+        // platform's own source-of-truth for a launch's origin, and the options
+        // bundle below is only the animation on top of it.
+        if (sourceBounds != null) {
+            intent.sourceBounds = sourceBounds
+        }
+        startWhenUnlocked(intent, buildLaunchOptions(sourceBounds), onComplete)
     }
 
     /**
@@ -816,7 +945,7 @@ class LockSurfaceChannels(
         // "android" is the platform's own ResolverActivity, i.e. a chooser.
         if (resolved.packageName == "android") return false
 
-        startWhenUnlocked(intent) { }
+        startWhenUnlocked(intent, null) { }
         return true
     }
 

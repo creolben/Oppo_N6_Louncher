@@ -80,6 +80,14 @@ class GalaxyCustomPainter extends CustomPainter {
   final Offset? activeTouchScreenPoint;
   final AppEntry? focusedApp;
 
+  /// Bumps when the badge counts behind the app nodes changed.
+  ///
+  /// The render loop repaints continuously while motion is on, but under
+  /// "remove animations" it rests on one frame — and a badge arriving then
+  /// would never be drawn. Comparing this revision forces exactly that one
+  /// repaint without touching the ticker or the motion itself.
+  final int badgeRevision;
+
   /// Ambient system text scale, so painted app names and constellation titles
   /// grow with the setting the same way widget text does.
   final TextScaler textScaler;
@@ -124,6 +132,7 @@ class GalaxyCustomPainter extends CustomPainter {
     this.activeSupernova,
     this.activeTouchScreenPoint,
     this.focusedApp,
+    this.badgeRevision = 0,
     this.textScaler = TextScaler.noScaling,
   }) : super(repaint: repaint);
 
@@ -1116,11 +1125,14 @@ class GalaxyCustomPainter extends CustomPainter {
           p.paint(canvas, pos - Offset(p.width / 2, p.height / 2));
         }
 
-        // ColorOS-like red notification badge; anchor, radius, and gate stay
-        // unchanged so visual and semantic bounds continue to agree.
+        // ColorOS-like notification dot; anchor and radius stay unchanged so
+        // visual and semantic bounds continue to agree. A node still morphing
+        // in — below half its expansion — stays clean, and the count is only
+        // painted when the on-screen dot is wide enough to hold it.
         if (app.notificationCount > 0 &&
             app.badgePainter != null &&
-            effectiveAlpha > 0.6) {
+            effectiveAlpha > 0.6 &&
+            c.expansionProgress >= 0.5) {
           final badgeCenter = pos + Offset(halfSize * 0.85, -halfSize * 0.85);
           const badgeR = 8.0;
           _badgeGlowPaint.color = LuminousHomeTheme.notification.withValues(
@@ -1133,16 +1145,20 @@ class GalaxyCustomPainter extends CustomPainter {
           );
           canvas.drawCircle(badgeCenter, badgeR, _badgePaint);
 
+          // A one-dp dark ring keeps the dot legible over a bright icon.
           _nodeStrokePaint
             ..shader = null
-            ..color = LuminousHomeTheme.textPrimary.withValues(
-              alpha: 0.68 * effectiveAlpha,
+            ..color = LuminousHomeTheme.backgroundDeep.withValues(
+              alpha: 0.85 * effectiveAlpha,
             )
-            ..strokeWidth = 0.7;
+            ..strokeWidth = 1.0;
           canvas.drawCircle(badgeCenter, badgeR, _nodeStrokePaint);
 
-          final bp = app.badgePainter!;
-          bp.paint(canvas, badgeCenter - Offset(bp.width / 2, bp.height / 2));
+          // The 9+ cap is baked into the painter; this is only the room test.
+          if (badgeR * zoom >= 7.0) {
+            final bp = app.badgePainter!;
+            bp.paint(canvas, badgeCenter - Offset(bp.width / 2, bp.height / 2));
+          }
         }
 
         // App Label Logic:
@@ -1223,7 +1239,9 @@ class GalaxyCustomPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant GalaxyCustomPainter oldDelegate) {
     // Repaints are driven by the repaint listenable, but a text-scale change
-    // arrives as a rebuild, and every painted label has to be laid out again.
-    return oldDelegate.textScaler != textScaler;
+    // or a badge-count change arrives as a rebuild and must be drawn once even
+    // when the ticker is resting.
+    return oldDelegate.textScaler != textScaler ||
+        oldDelegate.badgeRevision != badgeRevision;
   }
 }
