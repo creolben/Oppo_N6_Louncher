@@ -8,8 +8,26 @@ import 'galaxy_storage_service.dart';
 import '../ui/theme/luminous_home_theme.dart';
 
 class GalaxyLayoutEngine {
-  static const int maxCoreApps = 6;
+  static const int maxCoreApps = 8;
   static const int maxConstellationApps = 8;
+
+  /// The Essentials ring radius for [count] apps in [posture].
+  ///
+  /// One source for both the initial layout and the per-frame morph, so the
+  /// two cannot disagree. Up to 6 apps the values are unchanged from before.
+  /// 7 and 8 apps widen the ring only when unfolded (112 / 120), which keeps
+  /// node spacing without reaching the outer hubs (top hub at y = -195).
+  /// Folded and tabletop keep their existing rings: tabletop side hubs sit at
+  /// x = +-165, and the folded cover nodes are scaled to 0.76.
+  static double coreRingRadius(int count, DevicePosture posture) {
+    final bool folded = posture == DevicePosture.folded;
+    if (count <= 3) return folded ? 58.0 : 74.0;
+    if (count == 4) return folded ? 64.0 : 84.0;
+    if (count <= 6 || folded || posture == DevicePosture.tabletop) {
+      return folded ? 72.0 : 96.0;
+    }
+    return count == 7 ? 112.0 : 120.0;
+  }
 
   final List<Constellation> constellations = [];
   final List<AppEntry> allApps = [];
@@ -188,7 +206,7 @@ class GalaxyLayoutEngine {
     }
   }
 
-  /// Sets custom core package names (strictly max 6 apps)
+  /// Sets custom core package names (strictly max 8 apps)
   void setCorePackageNames(List<String> packageNames) {
     corePackageNames = packageNames.take(maxCoreApps).toList();
     if (allApps.isNotEmpty) {
@@ -262,7 +280,7 @@ class GalaxyLayoutEngine {
     assignApps(List.from(allApps));
   }
 
-  /// Adds an app to the Center Constellation (max 6)
+  /// Adds an app to the Center Constellation (max 8)
   bool addAppToCore(AppEntry app) {
     final core = constellations.firstWhere((c) => c.id == 'core');
     if (core.apps.any((a) => a.packageName == app.packageName)) {
@@ -372,7 +390,7 @@ class GalaxyLayoutEngine {
 
     final coreConstellation = constellations.firstWhere((c) => c.id == 'core');
 
-    // 1. Assign Center Constellation apps (strictly max 6 apps)
+    // 1. Assign Center Constellation apps (strictly max 8 apps)
     if (corePackageNames.isNotEmpty) {
       for (final pkg in corePackageNames) {
         if (hiddenPackageNames.contains(pkg)) continue;
@@ -481,10 +499,8 @@ class GalaxyLayoutEngine {
       if (count == 0) continue;
 
       if (c.id == 'core') {
-        // Dynamic celestial orbital radius based on app count (1 to 6 apps)
-        final double coreRadius = count <= 3
-            ? 74.0
-            : (count == 4 ? 84.0 : 96.0);
+        // Initial ring uses the unfolded radius; updateGalaxyMorph settles it per posture.
+        final double coreRadius = coreRingRadius(count, DevicePosture.flat);
 
         for (int i = 0; i < count; i++) {
           final angle = (i * 2 * math.pi / count) - (math.pi / 2);
@@ -600,11 +616,7 @@ class GalaxyLayoutEngine {
     core.expansionProgress += (targetCoreExpansion - core.expansionProgress) * (dt * 9.0).clamp(0.0, 1.0);
 
     final int coreCount = core.apps.length;
-    final double targetCoreRadius = coreCount <= 3
-        ? (posture == DevicePosture.folded ? 58.0 : 74.0)
-        : (coreCount == 4
-            ? (posture == DevicePosture.folded ? 64.0 : 84.0)
-            : (posture == DevicePosture.folded ? 72.0 : 96.0));
+    final double targetCoreRadius = coreRingRadius(coreCount, posture);
 
     final double effectiveCoreExpansion = core.expansionProgress.clamp(0.0, 1.0);
     // Celestial blooming spiral curve

@@ -193,7 +193,7 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                                 setState(() {
                                   if (replaceIndex != null && replaceIndex < _coreApps.length) {
                                     _coreApps[replaceIndex] = app;
-                                  } else if (_coreApps.length < 6) {
+                                  } else if (_coreApps.length < GalaxyLayoutEngine.maxCoreApps) {
                                     _coreApps.add(app);
                                   }
                                 });
@@ -266,7 +266,7 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                           ),
                         ),
                         Text(
-                          'Max 6 Core Essentials',
+                          'Max 8 Core Essentials',
                           style: TextStyle(
                             color: LuminousHomeTheme.white54,
                             fontSize: 12,
