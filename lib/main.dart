@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'models/app_entry.dart';
 import 'models/constellation.dart';
+import 'core/badge_controller.dart';
 import 'core/launcher_bridge.dart';
 import 'core/foldable_controller.dart';
 import 'core/galaxy_layout_engine.dart';
@@ -72,12 +73,17 @@ class ChronoFoldApp extends StatelessWidget {
   final Future<PdfTextResult> Function(String path)? extractPdfText;
   final Future<String?> Function()? pickPdf;
 
+  /// The notification-badge stream. Null in production, where the platform
+  /// channel is used; injectable so a test can drive badge changes.
+  final Stream<Map<String, dynamic>>? badgesStream;
+
   const ChronoFoldApp({
     super.key,
     this.isKeyguardLocked,
     this.takePendingSharedPdf,
     this.extractPdfText,
     this.pickPdf,
+    this.badgesStream,
   });
 
   @override
@@ -101,6 +107,7 @@ class ChronoFoldApp extends StatelessWidget {
             takePendingSharedPdf: takePendingSharedPdf,
             extractPdfText: extractPdfText,
             pickPdf: pickPdf,
+            badgesStream: badgesStream,
           ),
         );
       },
@@ -125,12 +132,16 @@ class ChronoFoldHomeScreen extends StatefulWidget {
   final Future<PdfTextResult> Function(String path)? extractPdfText;
   final Future<String?> Function()? pickPdf;
 
+  /// The notification-badge stream. Null in production; injectable for tests.
+  final Stream<Map<String, dynamic>>? badgesStream;
+
   const ChronoFoldHomeScreen({
     super.key,
     this.isKeyguardLocked,
     this.takePendingSharedPdf,
     this.extractPdfText,
     this.pickPdf,
+    this.badgesStream,
   });
 
   @override
@@ -143,6 +154,13 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   late final CameraController _camera;
   late final GalaxyLayoutEngine _layoutEngine;
   late final SearchCoordinator _searchCoordinator;
+
+  /// The per-package notification counts behind the app badges.
+  late final BadgeController _badgeController;
+
+  /// Bumped whenever the counts change, so the galaxy canvas repaints its
+  /// badges even while the ticker is resting under "remove animations".
+  int _badgeRevision = 0;
 
   List<AppEntry> _apps = [];
   bool _isLoading = true;
@@ -205,6 +223,9 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     _shoppingController = ShoppingController();
     unawaited(_shoppingController.load());
 
+    _badgeController = BadgeController(stream: widget.badgesStream);
+    _badgeController.addListener(_onBadgeCountsChanged);
+
     LauncherBridge.setScreenLockListener(_lockForScreenOff);
     LauncherBridge.setSharedPdfListener((String path) {
       if (mounted) {
@@ -238,6 +259,23 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     });
 
     _loadApplications();
+  }
+
+  /// A new badge map arrived: fold it into the app entries and rebuild so every
+  /// surface (galaxy, cover grid, tabletop, search) redraws its dots.
+  void _onBadgeCountsChanged() {
+    if (!mounted) return;
+    setState(() {
+      _badgeRevision++;
+      _applyBadgeCounts(_apps);
+    });
+  }
+
+  /// Copies the controller's per-package counts onto [apps].
+  void _applyBadgeCounts(List<AppEntry> apps) {
+    for (final app in apps) {
+      app.notificationCount = _badgeController.countFor(app.packageName);
+    }
   }
 
   Future<void> _checkDefaultLauncherStatus() async {
@@ -503,6 +541,13 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       setState(() {
         _apps = apps;
         _isLoading = false;
+        // A package-change rescan rebuilds the entries, so the counts that
+        // already arrived must be re-applied to the new objects — but only
+        // once the platform has actually answered, so a desktop simulation
+        // keeps its sample badges.
+        if (_badgeController.hasReceivedEvent) {
+          _applyBadgeCounts(apps);
+        }
       });
     }
 
@@ -631,6 +676,8 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _badgeController.removeListener(_onBadgeCountsChanged);
+    _badgeController.dispose();
     _foldable.dispose();
     _camera.dispose();
     _searchCoordinator.dispose();
@@ -749,6 +796,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                         foldable: _foldable,
                                         camera: _camera,
                                         layoutEngine: _layoutEngine,
+                                        badgeRevision: _badgeRevision,
                                         onAppLongPressed:
                                             _openAppLongPressDialog,
                                         onConstellationLongPressed:

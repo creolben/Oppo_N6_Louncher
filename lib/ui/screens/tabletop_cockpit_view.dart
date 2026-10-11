@@ -1,17 +1,18 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../models/app_entry.dart';
 import '../../models/constellation.dart';
 import '../../core/launcher_bridge.dart';
+import '../../core/launcher_haptics.dart';
 import '../../core/foldable_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
 import '../../canvas/camera_controller.dart';
 import '../../canvas/galaxy_interactive_canvas.dart';
 import '../format/clock_format.dart';
 import '../theme/luminous_home_theme.dart';
+import '../widgets/notification_badge.dart';
 
 class TabletopCockpitView extends StatefulWidget {
   final List<AppEntry> apps;
@@ -151,7 +152,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
             GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () {
-                HapticFeedback.selectionClick();
+                LauncherHaptics.tick();
                 setState(() => _isLaunchpadCollapsed = !_isLaunchpadCollapsed);
               },
               child: _buildCreaseDivider(),
@@ -480,7 +481,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           label: 'Launchpad',
           color: LuminousHomeTheme.accent,
           onTap: () {
-            HapticFeedback.selectionClick();
+            LauncherHaptics.tick();
             setState(() => _isLaunchpadCollapsed = false);
           },
         ),
@@ -665,7 +666,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
       color: Colors.transparent,
       child: InkWell(
         onTap: () {
-          HapticFeedback.selectionClick();
+          LauncherHaptics.tick();
           onTap();
         },
         borderRadius: BorderRadius.circular(LuminousHomeTheme.controlRadius),
@@ -714,89 +715,123 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
     );
   }
 
+  /// The widget's rectangle in global logical pixels, for the launch reveal.
+  Rect? _globalRectOf(BuildContext context) {
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+    return renderObject.localToGlobal(Offset.zero) & renderObject.size;
+  }
+
   Widget _buildTactileAppButton(AppEntry app) {
     final tintedGlass = Color.alphaBlend(
       app.accentColor.withValues(alpha: 0.035),
       LuminousHomeTheme.glassStrong,
     );
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          HapticFeedback.mediumImpact();
-          LauncherBridge.launchApp(app);
-        },
-        onLongPress: () {
-          HapticFeedback.heavyImpact();
-          widget.onAppLongPressed?.call(app, Offset.zero);
-        },
-        borderRadius: BorderRadius.circular(LuminousHomeTheme.controlRadius),
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [tintedGlass, LuminousHomeTheme.glass],
-            ),
-            borderRadius: BorderRadius.circular(
-              LuminousHomeTheme.controlRadius,
-            ),
-            border: Border.all(color: LuminousHomeTheme.hairline, width: 0.8),
-            boxShadow: LuminousHomeTheme.floatingShadow,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Clean squircle app icon without a nested accent ring.
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: LuminousHomeTheme.glassStrong,
-                  borderRadius: BorderRadius.circular(
-                    LuminousHomeTheme.iconRadius,
-                  ),
+    return Builder(builder: (buttonContext) {
+      return Semantics(
+        button: true,
+        label: app.notificationCount > 0
+            ? '${app.label}, ${app.notificationCount} '
+                  'notification${app.notificationCount == 1 ? '' : 's'}'
+            : app.label,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () {
+              LauncherHaptics.click();
+              LauncherBridge.launchApp(
+                app,
+                sourceBounds: _globalRectOf(buttonContext),
+              );
+            },
+            onLongPress: () {
+              LauncherHaptics.heavyClick();
+              widget.onAppLongPressed?.call(app, Offset.zero);
+            },
+            borderRadius: BorderRadius.circular(LuminousHomeTheme.controlRadius),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [tintedGlass, LuminousHomeTheme.glass],
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(
-                    LuminousHomeTheme.iconRadius,
-                  ),
-                  child: app.iconBytes != null
-                      ? Image.memory(
-                          app.iconBytes!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => Icon(
-                            app.fallbackIcon,
-                            color: app.accentColor,
-                            size: 22,
+                borderRadius: BorderRadius.circular(
+                  LuminousHomeTheme.controlRadius,
+                ),
+                border: Border.all(color: LuminousHomeTheme.hairline, width: 0.8),
+                boxShadow: LuminousHomeTheme.floatingShadow,
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // Clean squircle app icon without a nested accent ring. The
+                  // notification badge floats over its top-right corner.
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: LuminousHomeTheme.glassStrong,
+                          borderRadius: BorderRadius.circular(
+                            LuminousHomeTheme.iconRadius,
                           ),
-                        )
-                      : Icon(
-                          app.fallbackIcon,
-                          color: app.accentColor,
-                          size: 22,
                         ),
-                ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(
+                            LuminousHomeTheme.iconRadius,
+                          ),
+                          child: app.iconBytes != null
+                              ? Image.memory(
+                                  app.iconBytes!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) => Icon(
+                                    app.fallbackIcon,
+                                    color: app.accentColor,
+                                    size: 22,
+                                  ),
+                                )
+                              : Icon(
+                                  app.fallbackIcon,
+                                  color: app.accentColor,
+                                  size: 22,
+                                ),
+                        ),
+                      ),
+                      if (app.notificationCount > 0)
+                        Positioned(
+                          top: -4,
+                          right: -4,
+                          child: NotificationBadge(
+                            count: app.notificationCount,
+                            size: 15,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    app.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: LuminousHomeTheme.textPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                app.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: LuminousHomeTheme.textPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   Widget _cockpitActionButton({
@@ -809,7 +844,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
       color: Colors.transparent,
       child: InkWell(
         onTap: () {
-          HapticFeedback.lightImpact();
+          LauncherHaptics.click();
           onTap();
         },
         borderRadius: BorderRadius.circular(LuminousHomeTheme.controlRadius),

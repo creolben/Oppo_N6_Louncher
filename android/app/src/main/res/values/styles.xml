@@ -16,4 +16,10 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+    <!-- The native shortcut-pin prompt. A platform dialog parent keeps it a
+         system-shaped alert; no launcher colour is invented here, the platform
+         theme supplies its own. -->
+    <style name="ShortcutPinTheme" parent="@android:style/Theme.DeviceDefault.Dialog.Alert">
+        <item name="android:windowCloseOnTouchOutside">false</item>
+    </style>
 </resources>

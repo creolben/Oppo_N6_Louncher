@@ -48,6 +48,7 @@
             android:resizeableActivity="true"
             android:screenOrientation="portrait"
             android:clearTaskOnLaunch="true"
+            android:enableOnBackInvokedCallback="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
@@ -121,6 +122,26 @@
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
+        </activity>
+
+        <!-- The system's "pin this shortcut?" receiver. Android starts this
+             with the pin request attached whenever a shortcut is pinned from
+             its owning app. It is exported so the platform can reach it, but it
+             has no LAUNCHER category and its own taskAffinity, so it is never a
+             launcher entry point and never joins the HOME task. Its own dialog
+             theme keeps it a small system-shaped prompt rather than a full
+             screen. -->
+        <activity
+            android:name=".ShortcutPinActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="com.launcher.chronofold.mylauncher.shortcutpin"
+            android:theme="@style/ShortcutPinTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode">
+            <intent-filter>
+                <action android:name="android.content.pm.action.CONFIRM_PIN_SHORTCUT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <!-- The one thing MediaSessionManager needs to answer: an enabled

@@ -2,14 +2,15 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../../models/app_entry.dart';
 import '../../canvas/camera_controller.dart';
 import '../../core/launcher_bridge.dart';
+import '../../core/launcher_haptics.dart';
 
 import '../../core/galaxy_layout_engine.dart';
 import 'comet_orb.dart';
 import '../theme/luminous_home_theme.dart';
+import 'notification_badge.dart';
 
 class CategoryTabItem {
   final String label;
@@ -304,7 +305,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
     }
 
     if (targetIndex != -1 && _scrollController.hasClients) {
-      HapticFeedback.selectionClick();
+      LauncherHaptics.tick();
       setState(() => _activeScrubLetter = letter);
 
       double targetOffset = 0.0;
@@ -345,13 +346,28 @@ class _SearchOverlayState extends State<SearchOverlay> {
     widget.onClose();
   }
 
+  /// The result row's semantics label, with its notification count when there
+  /// is one.
+  String _appSemanticsLabel(AppEntry app) {
+    if (app.notificationCount <= 0) return app.label;
+    return '${app.label}, ${app.notificationCount} '
+        'notification${app.notificationCount == 1 ? '' : 's'}';
+  }
+
+  /// The widget's rectangle in global logical pixels, for the launch reveal.
+  Rect? _globalRectOf(BuildContext context) {
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+    return renderObject.localToGlobal(Offset.zero) & renderObject.size;
+  }
+
   /// Converts a failed app search into a web search, carrying the query over.
   Widget _buildCosmosEscalation() {
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: () {
-          HapticFeedback.lightImpact();
+          LauncherHaptics.click();
           widget.onSearchWeb!(_controller.text.trim());
         },
         borderRadius: BorderRadius.circular(22),
@@ -851,79 +867,100 @@ class _SearchOverlayState extends State<SearchOverlay> {
       itemBuilder: (context, index) {
         final app = apps[index];
 
-        return Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: () {
-              LauncherBridge.launchApp(app);
-              widget.onClose();
-            },
-            onLongPress: () {
-              HapticFeedback.mediumImpact();
-              if (widget.onAppLongPressed != null) {
-                widget.onAppLongPressed!(app, Offset.zero);
-              } else {
-                _flyToAndLaunch(app);
-              }
-            },
-            borderRadius: BorderRadius.circular(18),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-              decoration: BoxDecoration(
-                color: LuminousHomeTheme.glassPanel.withValues(alpha: 0.65),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: app.accentColor.withValues(alpha: 0.25),
-                  width: 1.0,
+        return Semantics(
+          button: true,
+          label: _appSemanticsLabel(app),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () {
+                LauncherBridge.launchApp(
+                  app,
+                  sourceBounds: _globalRectOf(context),
+                );
+                widget.onClose();
+              },
+              onLongPress: () {
+                LauncherHaptics.click();
+                if (widget.onAppLongPressed != null) {
+                  widget.onAppLongPressed!(app, Offset.zero);
+                } else {
+                  _flyToAndLaunch(app);
+                }
+              },
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                decoration: BoxDecoration(
+                  color: LuminousHomeTheme.glassPanel.withValues(alpha: 0.65),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: app.accentColor.withValues(alpha: 0.25),
+                    width: 1.0,
+                  ),
                 ),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: app.accentColor.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
-                      border: Border.all(
-                        color: app.accentColor.withValues(alpha: 0.45),
-                        width: 1.2,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: app.accentColor.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
+                            border: Border.all(
+                              color: app.accentColor.withValues(alpha: 0.45),
+                              width: 1.2,
+                            ),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: app.iconBytes != null
+                                ? Image.memory(
+                                    app.iconBytes!,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (context, error, stackTrace) => Icon(
+                                      app.fallbackIcon,
+                                      color: app.accentColor,
+                                      size: 24,
+                                    ),
+                                  )
+                                : Icon(
+                                    app.fallbackIcon,
+                                    color: app.accentColor,
+                                    size: 24,
+                                  ),
+                          ),
+                        ),
+                        if (app.notificationCount > 0)
+                          Positioned(
+                            top: -4,
+                            right: -4,
+                            child: NotificationBadge(
+                              count: app.notificationCount,
+                              size: 15,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      app.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: LuminousHomeTheme.white,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.2,
                       ),
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: app.iconBytes != null
-                          ? Image.memory(
-                              app.iconBytes!,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) => Icon(
-                                app.fallbackIcon,
-                                color: app.accentColor,
-                                size: 24,
-                              ),
-                            )
-                          : Icon(
-                              app.fallbackIcon,
-                              color: app.accentColor,
-                              size: 24,
-                            ),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    app.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: LuminousHomeTheme.white,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -945,94 +982,118 @@ class _SearchOverlayState extends State<SearchOverlay> {
       itemCount: apps.length,
       itemBuilder: (context, index) {
         final app = apps[index];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          decoration: BoxDecoration(
-            color: LuminousHomeTheme.panel.withValues(alpha: 0.70),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: app.accentColor.withValues(alpha: 0.25),
-              width: 1.0,
-            ),
-          ),
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-            leading: Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
-                color: app.accentColor.withValues(alpha: 0.15),
-                border: Border.all(
-                  color: app.accentColor.withValues(alpha: 0.45),
-                ),
+        return Semantics(
+          button: true,
+          label: _appSemanticsLabel(app),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: LuminousHomeTheme.panel.withValues(alpha: 0.70),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: app.accentColor.withValues(alpha: 0.25),
+                width: 1.0,
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: app.iconBytes != null
-                    ? Image.memory(
-                        app.iconBytes!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) => Icon(
-                          app.fallbackIcon,
-                          color: app.accentColor,
-                          size: 22,
-                        ),
-                      )
-                    : Icon(
-                        app.fallbackIcon,
-                        color: app.accentColor,
-                        size: 22,
+            ),
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+              leading: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
+                      color: app.accentColor.withValues(alpha: 0.15),
+                      border: Border.all(
+                        color: app.accentColor.withValues(alpha: 0.45),
                       ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: app.iconBytes != null
+                          ? Image.memory(
+                              app.iconBytes!,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) => Icon(
+                                app.fallbackIcon,
+                                color: app.accentColor,
+                                size: 22,
+                              ),
+                            )
+                          : Icon(
+                              app.fallbackIcon,
+                              color: app.accentColor,
+                              size: 22,
+                            ),
+                    ),
+                  ),
+                  if (app.notificationCount > 0)
+                    Positioned(
+                      top: -4,
+                      right: -4,
+                      child: NotificationBadge(
+                        count: app.notificationCount,
+                        size: 15,
+                      ),
+                    ),
+                ],
               ),
-            ),
-            title: Text(
-              app.label,
-              style: const TextStyle(
-                color: LuminousHomeTheme.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 15,
-              ),
-            ),
-            subtitle: Text(
-              app.packageName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: LuminousHomeTheme.white.withValues(alpha: 0.40),
-                fontSize: 12,
-              ),
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: Icon(Icons.radar_rounded, color: LuminousHomeTheme.accent, size: 22),
-                  tooltip: 'Locate in galaxy',
-                  onPressed: () => _flyToAndLaunch(app),
+              title: Text(
+                app.label,
+                style: const TextStyle(
+                  color: LuminousHomeTheme.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 15,
                 ),
-                IconButton(
-                  icon: const Icon(Icons.launch_rounded, color: LuminousHomeTheme.white70, size: 22),
-                  tooltip: 'Launch app',
-                  onPressed: () {
-                    LauncherBridge.launchApp(app);
-                    widget.onClose();
-                  },
+              ),
+              subtitle: Text(
+                app.packageName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: LuminousHomeTheme.white.withValues(alpha: 0.40),
+                  fontSize: 12,
                 ),
-              ],
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: Icon(Icons.radar_rounded, color: LuminousHomeTheme.accent, size: 22),
+                    tooltip: 'Locate in galaxy',
+                    onPressed: () => _flyToAndLaunch(app),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.launch_rounded, color: LuminousHomeTheme.white70, size: 22),
+                    tooltip: 'Launch app',
+                    onPressed: () {
+                      LauncherBridge.launchApp(
+                        app,
+                        sourceBounds: _globalRectOf(context),
+                      );
+                      widget.onClose();
+                    },
+                  ),
+                ],
+              ),
+              onLongPress: () {
+                LauncherHaptics.click();
+                if (widget.onAppLongPressed != null) {
+                  widget.onAppLongPressed!(app, Offset.zero);
+                } else {
+                  _flyToAndLaunch(app);
+                }
+              },
+              onTap: () {
+                LauncherBridge.launchApp(
+                  app,
+                  sourceBounds: _globalRectOf(context),
+                );
+                widget.onClose();
+              },
             ),
-            onLongPress: () {
-              HapticFeedback.mediumImpact();
-              if (widget.onAppLongPressed != null) {
-                widget.onAppLongPressed!(app, Offset.zero);
-              } else {
-                _flyToAndLaunch(app);
-              }
-            },
-            onTap: () {
-              LauncherBridge.launchApp(app);
-              widget.onClose();
-            },
           ),
         );
       },

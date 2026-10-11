@@ -175,10 +175,10 @@ class LockActivity : FlutterActivity() {
             // asserts showWhenLocked; there is nothing to toggle.
         }
 
-        override fun startTarget(intent: Intent, onStarted: (Boolean) -> Unit) {
+        override fun startTarget(intent: Intent, options: Bundle?, onStarted: (Boolean) -> Unit) {
             // `startWhenUnlocked` already dismissed the keyguard; start the
             // target and leave so the user lands in it, not on a stale lock.
-            val started = lockSurface?.startActivityQuietly(intent) ?: false
+            val started = lockSurface?.startActivityQuietly(intent, options) ?: false
             onStarted(started)
             if (started) {
                 finishLock("launching target")
