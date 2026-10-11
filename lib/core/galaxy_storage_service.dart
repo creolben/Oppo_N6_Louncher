@@ -164,6 +164,59 @@ class GalaxyStorageService {
     return {};
   }
 
+  /// Reads the stored settings file, returning an empty object when it is
+  /// missing or unreadable. Used by [saveConfig] so a write is a merge into
+  /// whatever is already on disk rather than a full replacement.
+  static Future<Map<String, dynamic>> _readExisting(File file) async {
+    try {
+      if (!file.existsSync()) return {};
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is Map<String, dynamic>) return decoded;
+    } catch (e) {
+      debugPrint('Error reading galaxy storage: $e');
+    }
+    return {};
+  }
+
+  /// Pure merge of the non-null arguments into [existing].
+  ///
+  /// A key is only written when its argument is non-null, so a caller that
+  /// omits a setting (for example the editors, which do not touch
+  /// `nativeLauncherMode`) cannot silently reset it to null. The two legacy
+  /// custom-constellation keys are always written together so old and new
+  /// readers stay in sync.
+  static Map<String, dynamic> mergeConfig(
+    Map<String, dynamic> existing, {
+    required List<String> coreAppPackageNames,
+    List<CustomConstellationConfig>? customConstellations,
+    List<CustomGalaxyConfig>? customGalaxies,
+    Map<String, List<String>>? constellationAppOverrides,
+    List<String>? hiddenPackageNames,
+    bool? nativeLauncherMode,
+  }) {
+    final data = Map<String, dynamic>.from(existing);
+    data['coreAppPackageNames'] = coreAppPackageNames;
+
+    final constellations = customConstellations ?? customGalaxies;
+    if (constellations != null) {
+      final encoded = constellations.map((g) => g.toJson()).toList();
+      data['customConstellations'] = encoded;
+      data['customGalaxies'] = encoded;
+    }
+
+    if (constellationAppOverrides != null) {
+      data['constellationAppOverrides'] = constellationAppOverrides;
+    }
+    if (hiddenPackageNames != null) {
+      data['hiddenPackageNames'] = hiddenPackageNames;
+    }
+    if (nativeLauncherMode != null) {
+      data['nativeLauncherMode'] = nativeLauncherMode;
+    }
+
+    return data;
+  }
+
   static Future<void> saveConfig({
     required List<String> coreAppPackageNames,
     List<CustomConstellationConfig>? customConstellations,
@@ -175,15 +228,16 @@ class GalaxyStorageService {
     try {
       final file = await _getFile();
       if (file != null) {
-        final constellations = customConstellations ?? customGalaxies ?? [];
-        final data = {
-          'coreAppPackageNames': coreAppPackageNames,
-          'customConstellations': constellations.map((g) => g.toJson()).toList(),
-          'customGalaxies': constellations.map((g) => g.toJson()).toList(),
-          'constellationAppOverrides': ?constellationAppOverrides,
-          'hiddenPackageNames': ?hiddenPackageNames,
-          'nativeLauncherMode': ?nativeLauncherMode,
-        };
+        final existing = await _readExisting(file);
+        final data = mergeConfig(
+          existing,
+          coreAppPackageNames: coreAppPackageNames,
+          customConstellations: customConstellations,
+          customGalaxies: customGalaxies,
+          constellationAppOverrides: constellationAppOverrides,
+          hiddenPackageNames: hiddenPackageNames,
+          nativeLauncherMode: nativeLauncherMode,
+        );
         await file.writeAsString(jsonEncode(data), flush: true);
       }
     } catch (e) {

@@ -226,6 +226,107 @@ void main() {
       final social = engine.constellations.firstWhere((c) => c.id == 'social');
       expect(social.isExpanded, false);
     });
+
+    test('createCustomConstellation is idempotent by id', () {
+      final engine = GalaxyLayoutEngine();
+      final apps = [
+        AppEntry(packageName: 'com.test.a', label: 'A', category: AppCategory.tools),
+        AppEntry(packageName: 'com.test.b', label: 'B', category: AppCategory.tools),
+        AppEntry(packageName: 'com.test.c', label: 'C', category: AppCategory.tools),
+      ];
+      engine.assignApps(apps);
+
+      engine.createCustomConstellation(
+        id: 'custom_stable',
+        name: 'First',
+        primaryColor: const Color(0xFF00E5FF),
+        emblemIcon: Icons.auto_awesome_rounded,
+        packageNames: ['com.test.a', 'com.test.b'],
+      );
+      final countAfterFirst = engine.constellations.length;
+
+      // A second call with the same id — as a package-change broadcast used to
+      // make — must update the existing constellation, not add another.
+      final second = engine.createCustomConstellation(
+        id: 'custom_stable',
+        name: 'Second',
+        primaryColor: const Color(0xFFFF0000),
+        emblemIcon: Icons.rocket_launch_rounded,
+        packageNames: ['com.test.c'],
+      );
+
+      expect(engine.constellations.length, countAfterFirst);
+      expect(
+        engine.constellations.where((c) => c.id == 'custom_stable').length,
+        1,
+      );
+      expect(second.name, 'Second');
+      expect(second.primaryColor, const Color(0xFFFF0000));
+      expect(second.emblemIcon, Icons.rocket_launch_rounded);
+      expect(second.customPackageNames, ['com.test.c']);
+      expect(second.apps.map((a) => a.packageName), ['com.test.c']);
+
+      final stored = engine.constellations.firstWhere(
+        (c) => c.id == 'custom_stable',
+      );
+      expect(stored.name, 'Second');
+      expect(stored.customPackageNames, ['com.test.c']);
+    });
+
+    test('customConstellations serialises stored membership, not resolved apps',
+        () {
+      final engine = GalaxyLayoutEngine();
+
+      // One package is installed, the other is hidden/uninstalled and so never
+      // resolves into the painted app ring.
+      engine.createCustomConstellation(
+        id: 'custom_missing',
+        name: 'Archive',
+        primaryColor: const Color(0xFF00E5FF),
+        emblemIcon: Icons.menu_book_rounded,
+        packageNames: ['com.test.installed', 'com.test.gone'],
+      );
+      engine.assignApps([
+        AppEntry(
+          packageName: 'com.test.installed',
+          label: 'Installed',
+          category: AppCategory.tools,
+        ),
+      ]);
+
+      final custom = engine.constellations.firstWhere(
+        (c) => c.id == 'custom_missing',
+      );
+      expect(custom.apps.map((a) => a.packageName), ['com.test.installed']);
+
+      final stored = engine.customConstellations.single;
+      expect(
+        stored.packageNames,
+        containsAll(['com.test.installed', 'com.test.gone']),
+      );
+    });
+
+    test('setConstellationAppPackages updates a custom membership list', () {
+      final engine = GalaxyLayoutEngine();
+      final custom = engine.createCustomConstellation(
+        id: 'custom_edit',
+        name: 'Editable',
+        primaryColor: const Color(0xFF00E5FF),
+        emblemIcon: Icons.auto_awesome_rounded,
+        packageNames: ['com.test.a'],
+      );
+
+      engine.setConstellationAppPackages(custom.id, [
+        'com.test.b',
+        'com.test.c',
+      ]);
+
+      expect(custom.customPackageNames, ['com.test.b', 'com.test.c']);
+      expect(
+        engine.customConstellations.single.packageNames,
+        ['com.test.b', 'com.test.c'],
+      );
+    });
   });
 
   group('CameraController Coordinate Transformations', () {
