@@ -494,10 +494,19 @@ class MainActivity : FlutterActivity() {
                 result.success(true)
             }
             "openHomeSettings" -> {
-                val intent = Intent(Settings.ACTION_HOME_SETTINGS)
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                lockSurface?.startActivityQuietly(intent)
-                result.success(true)
+                // ACTION_HOME_SETTINGS is not resolvable on every OEM build.
+                // Fall back to the top-level Settings screen so the button
+                // always does something, and report the real start result
+                // rather than a blind success.
+                val homeIntent = Intent(Settings.ACTION_HOME_SETTINGS)
+                homeIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                var opened = lockSurface?.startActivityQuietly(homeIntent) ?: false
+                if (!opened) {
+                    val settingsIntent = Intent(Settings.ACTION_SETTINGS)
+                    settingsIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    opened = lockSurface?.startActivityQuietly(settingsIntent) ?: false
+                }
+                result.success(opened)
             }
             "openCosmicLiveWallpaperPreview" -> {
                 result.success(openCosmicLiveWallpaperPreview())
