@@ -191,5 +191,33 @@ void main() {
 
       expect(locked, isTrue);
     });
+
+    testWidgets('CosmicHeaderHud keeps the Lock button in Native mode too',
+        (tester) async {
+      var locked = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CosmicHeaderHud(
+              foldable: FoldableController(),
+              isDefaultLauncher: true,
+              nativeMode: true,
+              onLockScreen: () => locked = true,
+              onToggleNativeMode: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Native'), findsOneWidget);
+      expect(find.text('Lock'), findsOneWidget);
+
+      await tester.tap(find.text('Lock'));
+      await tester.pump();
+
+      expect(locked, isTrue);
+    });
   });
 }

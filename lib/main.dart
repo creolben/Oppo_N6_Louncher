@@ -185,16 +185,6 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   bool _isSearchOpen = false;
   bool _isLocked = false;
 
-  /// Whether the lock panel about to mount was raised by an explicit user
-  /// action — the LOCK buttons — rather than by a screen-off or a cold
-  /// start over a locked keyguard.
-  ///
-  /// Read once per mount, when the panel below is constructed. It decides
-  /// `reconcileOnMount`: a panel mounted for a lock the platform may have
-  /// already satisfied clears itself at its first frame rather than
-  /// ghosting, while the privacy lock the user asked for stays up on an
-  /// unlocked device.
-  bool _lockMountedByUserAction = false;
   bool _isCockpitMode = false;
 
   /// Whether ColorOS owns the lock screen instead of ChronoFold's Cosmic
@@ -442,31 +432,41 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       return;
     }
     debugPrint('CF_LOCK: overlay re-asserted for screen-off lock');
-    _lockMountedByUserAction = false;
     setState(() => _isLocked = true);
   }
 
-  /// Mounts the lock panel for an explicit user action (the LOCK buttons).
+  /// Locks the device through the optional accessibility service.
   ///
-  /// The four lock buttons used to mount the panel inline without pushing the
-  /// overlay flag, so whether the wake after them showed the cosmic panel or
-  /// the ColorOS keyguard depended on whether any earlier app launch had
-  /// cleared the flag. Single-sourcing the two here makes the invariant above
-  /// hold for manual locks too. Native mode keeps delegating the whole lock
-  /// surface to ColorOS, so the push is skipped there — the button still
-  /// mounts the panel exactly as it did before.
+  /// The LOCK buttons used to mount the in-app cosmic panel directly, which
+  /// meant an explicit lock only ever raised the fingerprint reader over an
+  /// unlocked device instead of turning the screen off. When the service is
+  /// connected and accepts the action, the platform performs the real lock and
+  /// the resulting screen-off broadcast mounts the panel through
+  /// [_lockForScreenOff] in Cosmic mode, so there is nothing left to do here.
+  /// Native mode delegates the whole lock surface to ColorOS, and the real
+  /// screen-off is what it reacts to as well.
   ///
-  /// This is also the one mount that is deliberately exempt from keyguard
-  /// reconciliation: the user asked for this surface on a device that may
-  /// well be unlocked, and it stays up until they dismiss it.
-  void _mountLockPanel() {
-    if (!mounted) return;
-    if (!_nativeMode) {
-      unawaited(LauncherBridge.setLockScreenOverlayEnabled(true));
-      debugPrint('CF_LOCK: panel mounted by user action');
+  /// Otherwise the lock cannot happen. The panel is deliberately not mounted:
+  /// it would ask for a fingerprint over a device that was never locked. The
+  /// user is pointed at the single grant that enables instant locking instead.
+  Future<void> _lockDevice() async {
+    if (await SystemGestures.isEnabled()) {
+      final bool locked = await SystemGestures.lockScreen();
+      if (locked) return;
     }
-    _lockMountedByUserAction = true;
-    setState(() => _isLocked = true);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'Turn on ChronoFold in Accessibility to lock instantly',
+        ),
+        action: SnackBarAction(
+          label: 'Enable',
+          textColor: LuminousHomeTheme.accent,
+          onPressed: () => unawaited(SystemGestures.openSettings()),
+        ),
+      ),
+    );
   }
 
   /// Whether the sleep-on-double-tap gesture may fire right now.
@@ -631,10 +631,8 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       debugPrint(
         'CF_LOCK: cold start with keyguard locked; mounting lock surface',
       );
-      // Not a user action: this panel stands for the keyguard, so it
-      // reconciles like a screen-off mount in case the platform satisfies
-      // the lock before the launcher ever draws.
-      _lockMountedByUserAction = false;
+      // This panel stands for the keyguard, so it reconciles in case the
+      // platform satisfies the lock before the launcher ever draws.
       if (mounted) {
         setState(() => _isLocked = true);
       }
@@ -864,7 +862,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       setState(() => _isSearchOpen = true),
                                   onOpenSettings: () =>
                                       LauncherBridge.openHomeSettings(),
-                                  onLock: _mountLockPanel,
+                                  onLock: _lockDevice,
                                   onAppLongPressed: _openAppLongPressDialog,
                                   onConstellationLongPressed:
                                       _openConstellationEditorModal,
@@ -887,7 +885,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       setState(() => _isSearchOpen = true),
                                   onOpenSettings: () =>
                                       LauncherBridge.openHomeSettings(),
-                                  onLock: _mountLockPanel,
+                                  onLock: _lockDevice,
                                   onAppLongPressed: _openAppLongPressDialog,
                                   onConstellationLongPressed:
                                       _openConstellationEditorModal,
@@ -939,7 +937,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                         },
                                         nativeMode: _nativeMode,
                                         onToggleNativeMode: _toggleNativeMode,
-                                        onLockScreen: _mountLockPanel,
+                                        onLockScreen: _lockDevice,
                                         onToggleCockpit: _foldable.isTabletop
                                             ? () => setState(
                                                 () => _isCockpitMode = true,
@@ -964,7 +962,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                             _openCometSearch(),
                                         onOpenSettings: () =>
                                             LauncherBridge.openHomeSettings(),
-                                        onLock: _mountLockPanel,
+                                        onLock: _lockDevice,
                                         onCreateConstellation:
                                             _openCreateConstellationModal,
                                         onEditCore:
@@ -1022,15 +1020,13 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                             foldable: _foldable,
                             apps: _apps,
                             onUnlock: _handleUnlock,
-                            // Not raised by the LOCK buttons → the mount is
-                            // for a lock the platform may have satisfied
-                            // before this panel could draw (screen-off
-                            // behind a foreign app, or a cold start raced by
-                            // an unlock). The panel checks the keyguard at
-                            // its first frame and clears itself if the lock
-                            // is gone; the user-raised privacy lock is
-                            // exempt and stays up.
-                            reconcileOnMount: !_lockMountedByUserAction,
+                            // Every mount now stands for a lock the platform
+                            // may have satisfied before this panel could draw
+                            // (screen-off behind a foreign app, or a cold start
+                            // raced by an unlock), so it always reconciles:
+                            // the panel checks the keyguard at its first frame
+                            // and clears itself if the lock is gone.
+                            reconcileOnMount: true,
                           ),
                         ),
                     ],
@@ -1225,8 +1221,7 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                                     emphasized: true,
                                     onTap: widget.onToggleNativeMode!,
                                   ),
-                                if (!widget.nativeMode &&
-                                    widget.onLockScreen != null)
+                                if (widget.onLockScreen != null)
                                   _utilityButton(
                                     icon: Icons.lock_rounded,
                                     label: 'Lock',

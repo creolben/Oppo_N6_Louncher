@@ -5,6 +5,7 @@ import 'package:mylauncher/canvas/galaxy_interactive_canvas.dart';
 import 'package:mylauncher/core/foldable_controller.dart';
 import 'package:mylauncher/core/galaxy_layout_engine.dart';
 import 'package:mylauncher/core/system_gestures.dart';
+import 'package:mylauncher/features/lockscreen/cosmic_lock_screen.dart';
 import 'package:mylauncher/main.dart';
 import 'package:mylauncher/models/app_entry.dart';
 import 'package:mylauncher/ui/widgets/search_overlay.dart';
@@ -13,6 +14,7 @@ import 'package:mylauncher/ui/widgets/search_overlay.dart';
 /// standing in for the platform so none of this needs a device.
 class _FakeGestures implements SystemGesturesBackend {
   bool enabled = true;
+  bool performResult = true;
   final List<String> actions = <String>[];
   int settingsOpened = 0;
 
@@ -28,7 +30,7 @@ class _FakeGestures implements SystemGesturesBackend {
   @override
   Future<bool> performGlobalAction(String action) async {
     actions.add(action);
-    return true;
+    return performResult;
   }
 }
 
@@ -264,6 +266,91 @@ void main() {
 
       expect(find.byType(SearchOverlay), findsOneWidget);
       expect(fake.actions, isEmpty);
+    });
+  });
+
+  group('Lock buttons on the launcher', () {
+    Future<void> pumpLauncher(WidgetTester tester) async {
+      await tester.pumpWidget(
+        ChronoFoldApp(isKeyguardLocked: () async => false),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(GalaxyInteractiveCanvas), findsOneWidget);
+    }
+
+    /// Taps the cockpit shelf's Lock control. The shelf is a horizontal
+    /// scroller and its lock button sits near the end, so it must be brought
+    /// into view before the tap lands.
+    Future<void> tapLock(WidgetTester tester) async {
+      final Finder lock = find.byTooltip('Lock screen');
+      expect(lock, findsOneWidget);
+      await tester.ensureVisible(lock);
+      await tester.pump();
+      await tester.tap(lock);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    testWidgets(
+        'locks through the service without mounting the cosmic panel',
+        (tester) async {
+      await pumpLauncher(tester);
+
+      await tapLock(tester);
+
+      expect(fake.actions, <String>[SystemGestures.actionLockScreen]);
+      expect(
+        find.byType(CosmicLockScreen),
+        findsNothing,
+        reason: 'the real screen-off broadcast mounts the panel, not the tap',
+      );
+    });
+
+    testWidgets('a disabled service points at Accessibility instead',
+        (tester) async {
+      fake.enabled = false;
+      await pumpLauncher(tester);
+
+      await tapLock(tester);
+
+      expect(fake.actions, isEmpty);
+      expect(find.byType(CosmicLockScreen), findsNothing);
+      expect(
+        find.text('Turn on ChronoFold in Accessibility to lock instantly'),
+        findsOneWidget,
+      );
+
+      // The action is the one grant that turns instant locking on. Invoke it
+      // directly: the floating snack bar overlaps the cockpit shelf, so its
+      // action is not reliably hit-testable from the test surface.
+      final SnackBarAction action = tester.widget<SnackBarAction>(
+        find.byType(SnackBarAction),
+      );
+      action.onPressed();
+      await tester.pump();
+      expect(fake.settingsOpened, 1);
+      expect(find.byType(CosmicLockScreen), findsNothing);
+
+      // Drain the snack bar's auto-dismiss timer.
+      await tester.pump(const Duration(seconds: 5));
+    });
+
+    testWidgets('a service that refuses the lock shows the same guidance',
+        (tester) async {
+      fake.performResult = false;
+      await pumpLauncher(tester);
+
+      await tapLock(tester);
+
+      expect(fake.actions, <String>[SystemGestures.actionLockScreen]);
+      expect(find.byType(CosmicLockScreen), findsNothing);
+      expect(
+        find.text('Turn on ChronoFold in Accessibility to lock instantly'),
+        findsOneWidget,
+      );
+
+      // Drain the snack bar's auto-dismiss timer.
+      await tester.pump(const Duration(seconds: 5));
     });
   });
 }
