@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mylauncher/core/launcher_bridge.dart';
 import 'package:mylauncher/features/lockscreen/cosmic_lock_screen.dart';
 import 'package:mylauncher/lock_main.dart';
 import 'package:mylauncher/models/app_entry.dart';
@@ -32,6 +33,10 @@ Future<void> _settle(WidgetTester tester) async {
 }
 
 void main() {
+  // The request-frame listener is process-global state on the bridge; a test
+  // that leaves it set would hand the next one's frames to a disposed surface.
+  tearDown(() => LauncherBridge.setRequestFrameListener(null));
+
   testWidgets('hosts the cosmic panel in reconcile mode with the loaded apps', (
     tester,
   ) async {
@@ -103,5 +108,51 @@ void main() {
     await tester.pump();
 
     expect(finished, equals(1));
+  });
+
+  testWidgets('a native requestFrame forces a frame from the lock surface', (
+    tester,
+  ) async {
+    var frames = 0;
+    await tester.pumpWidget(
+      LockSurfaceApp(
+        loadApps: () async => _apps(),
+        isKeyguardLocked: () async => true,
+        onFinish: () async => true,
+        requestFrame: () => frames++,
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    await _settle(tester);
+    final int before = frames;
+
+    // The native lock activity asks on every wake; the surface answers with a
+    // forced frame so Android can finally draw the DRAW_PENDING window.
+    LauncherBridge.dispatchRequestFrameForTesting();
+    await tester.pump();
+
+    expect(frames, equals(before + 1));
+  });
+
+  testWidgets('a resumed lifecycle change forces a frame', (tester) async {
+    var frames = 0;
+    await tester.pumpWidget(
+      LockSurfaceApp(
+        loadApps: () async => _apps(),
+        isKeyguardLocked: () async => true,
+        onFinish: () async => true,
+        requestFrame: () => frames++,
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    await _settle(tester);
+    final int before = frames;
+
+    // Coming back from a screen-off, the engine resumed but may still hold the
+    // first-draw gate closed; the surface must schedule a frame on resume.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+
+    expect(frames, equals(before + 1));
   });
 }

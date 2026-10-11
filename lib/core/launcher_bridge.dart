@@ -51,6 +51,7 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   static VoidCallback? _onHomeButtonListener;
   static VoidCallback? _onScreenOnListener;
   static VoidCallback? _onUserPresentListener;
+  static VoidCallback? _onRequestFrameListener;
   static void Function(String path)? _onSharedPdfListener;
   static bool _handlerInitialized = false;
 
@@ -73,6 +74,9 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
           break;
         case 'userPresent':
           _onUserPresentListener?.call();
+          break;
+        case 'requestFrame':
+          _onRequestFrameListener?.call();
           break;
         case 'onSystemPaletteChanged':
           _systemPaletteController.add(SystemPalette.fromMap(call.arguments));
@@ -107,6 +111,23 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   @visibleForTesting
   static void dispatchUserPresentForTesting() {
     _onUserPresentListener?.call();
+  }
+
+  /// Fires when the native lock surface needs a frame it can present.
+  ///
+  /// The lock activity can be RESUMED and top-most while its window is still
+  /// `DRAW_PENDING`: the framework installs a pre-draw gate that opens only on
+  /// `onFlutterUiDisplayed`, and a surface that produced no frame before the
+  /// display went off has nothing scheduling one on wake. The native side asks
+  /// here, and the lock surface answers with a forced frame.
+  static void setRequestFrameListener(VoidCallback? onRequestFrame) {
+    _onRequestFrameListener = onRequestFrame;
+    _ensureHandlerInitialized();
+  }
+
+  @visibleForTesting
+  static void dispatchRequestFrameForTesting() {
+    _onRequestFrameListener?.call();
   }
 
   /// Fires when the panel turns on, i.e. the moment the platform will let an

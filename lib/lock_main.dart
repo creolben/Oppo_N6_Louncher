@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'core/foldable_controller.dart';
 import 'core/launcher_bridge.dart';
@@ -47,18 +48,26 @@ class LockSurfaceApp extends StatefulWidget {
   /// [LauncherBridge.isKeyguardLocked].
   final Future<bool> Function()? isKeyguardLocked;
 
+  /// Schedules the forced frame that makes Android draw the lock window.
+  /// Defaults to [SchedulerBinding.instance.scheduleForcedFrame]; injectable so
+  /// a test can count requests without the panel's live animations leaving
+  /// `hasScheduledFrame` permanently true.
+  final VoidCallback? requestFrame;
+
   const LockSurfaceApp({
     super.key,
     this.loadApps,
     this.onFinish,
     this.isKeyguardLocked,
+    this.requestFrame,
   });
 
   @override
   State<LockSurfaceApp> createState() => _LockSurfaceAppState();
 }
 
-class _LockSurfaceAppState extends State<LockSurfaceApp> {
+class _LockSurfaceAppState extends State<LockSurfaceApp>
+    with WidgetsBindingObserver {
   late final FoldableController _foldable;
   List<AppEntry> _apps = const [];
 
@@ -74,7 +83,41 @@ class _LockSurfaceAppState extends State<LockSurfaceApp> {
   void initState() {
     super.initState();
     _foldable = FoldableController();
+    // A lock surface raised while the display is off can resume with its window
+    // still `DRAW_PENDING`: frames were disabled while the engine was stopped,
+    // and nothing in the framework schedules one when it comes back. Both
+    // signals below answer with a forced frame so Android finally draws it.
+    WidgetsBinding.instance.addObserver(this);
+    LauncherBridge.setRequestFrameListener(_requestFrame);
     _loadApps();
+  }
+
+  /// Produces a frame even while the engine believes frames are disabled.
+  ///
+  /// [SchedulerBinding.scheduleFrame] would be dropped in the paused/stopped
+  /// state that a screen-off lock resumes from; the forced variant reaches
+  /// `PlatformDispatcher.scheduleFrame` unconditionally, which is what the
+  /// `DRAW_PENDING` window needs to make `isReadyForDisplay()` true.
+  void _requestFrame() {
+    final request = widget.requestFrame;
+    if (request != null) {
+      request();
+    } else {
+      SchedulerBinding.instance.scheduleForcedFrame();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+      case AppLifecycleState.inactive:
+        _requestFrame();
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        break;
+    }
   }
 
   Future<void> _loadApps() async {
@@ -90,6 +133,8 @@ class _LockSurfaceAppState extends State<LockSurfaceApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    LauncherBridge.setRequestFrameListener(null);
     _foldable.dispose();
     super.dispose();
   }
