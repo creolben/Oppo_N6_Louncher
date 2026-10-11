@@ -217,8 +217,11 @@ abstract final class LuminousHomeTheme {
   /// The modal backdrop used by every editor sheet.
   static const Color panelScrim = Color(0xEE0B0E1E);
 
-  /// The app-search overlay scrim.
-  static const Color scrim = Color(0xCC04060E);
+  /// The app-search overlay scrim. The alpha matches ColorOS
+  /// `coui_color_mask_dark` (`#99000000`): 60% over the galaxy instead of the
+  /// older 80%, so the field stays present behind search while the blur keeps
+  /// the text legible.
+  static const Color scrim = Color(0x9904060E);
 
   /// A faint blue info fill.
   static const Color infoFill = Color(0x1418BFEA);
@@ -388,12 +391,62 @@ abstract final class LuminousHomeTheme {
   static const Color brandMaps = Color(0xFF34A853);
   static const Color brandFiles = Color(0xFF42A5F5);
 
+  // ── Motion (ColorOS coui) ──────────────────────────────────────────────────
+  // Curves and durations measured from ColorOS 16's decoded resources and named
+  // after the coui tokens they come from. They replace Material's overshoot
+  // curves on launcher chrome so panels settle the way the system launcher's
+  // do. Galaxy motion keeps its own curves; only chrome uses these.
+  /// `coui_ease`: the standard fade curve for opacity.
+  static const Cubic easeStandard = Cubic(0.33, 0.0, 0.67, 1.0);
+
+  /// `coui_ease_move`: the decelerating curve for surfaces that move or enter.
+  static const Cubic easeMove = Cubic(0.3, 0.0, 0.1, 1.0);
+
+  /// `android_alert_dialog_exit`: the accelerated curve a dialog leaves on.
+  static const Cubic easeExit = Cubic(0.3, 0.0, 1.0, 1.0);
+
+  /// ColorOS `coui_animation_time_moment` (100 ms): an immediate state flash.
+  static const Duration motionMoment = Duration(milliseconds: 100);
+
+  /// ColorOS `coui_animation_time_move_veryfast` (200 ms): a small state change.
+  static const Duration motionFast = Duration(milliseconds: 200);
+
+  /// ColorOS `coui_animation_time_move_fast` (240 ms): a content fade.
+  static const Duration motionShort = Duration(milliseconds: 240);
+
+  /// ColorOS `coui_animation_time_move` (330 ms): a surface that travels.
+  static const Duration motionMove = Duration(milliseconds: 330);
+
+  /// ColorOS `coui_open_panel_fragment_enter` (350 ms): a panel or dialog entering.
+  static const Duration motionPanel = Duration(milliseconds: 350);
+
+  /// ColorOS `coui_open_panel_fragment_exit` (150 ms): a panel or dialog leaving.
+  static const Duration motionPanelExit = Duration(milliseconds: 150);
+
+  /// ColorOS `coui_animation_time_move_slow` (420 ms): a large, deliberate transition.
+  static const Duration motionSlow = Duration(milliseconds: 420);
+
+  /// Returns [d], or [Duration.zero] when the platform asks for reduced motion.
+  ///
+  /// Every chrome animation routes its duration through here so the system
+  /// "Remove animations" preference is honoured in one place.
+  static Duration motion(BuildContext context, Duration d) =>
+      MediaQuery.disableAnimationsOf(context) ? Duration.zero : d;
+
   // ── Geometry ──────────────────────────────────────────────────────────────
   static const double screenGutter = 20;
   static const double cardRadius = 28;
   static const double controlRadius = 18;
   static const double iconRadius = 16;
   static const double dockRadius = 32;
+
+  // ColorOS os17 round-corner scale. The small/medium/large steps cover chips,
+  // menus and dialogs, and [radiusFull] is the pill used by larger sheets.
+  static const double radiusS = 11;
+  static const double radiusM = 16;
+  static const double radiusL = 22;
+  static const double radiusFull = 72;
+
   static const double glassBlur = 24;
   static const double minimumTouchTarget = 48;
 
@@ -438,6 +491,16 @@ abstract final class LuminousHomeTheme {
     fontSize: 11,
     fontWeight: FontWeight.w600,
     letterSpacing: 0.2,
+  );
+
+  /// The sentence-case 12sp label for header utility chips. Deliberately no
+  /// [TextStyle.letterSpacing]: ColorOS chrome does not track its labels, and
+  /// the old 9.5sp all-caps treatment read as a system badge rather than a
+  /// button.
+  static TextStyle get chipLabel => const TextStyle(
+    color: textSecondary,
+    fontSize: 12,
+    fontWeight: FontWeight.w500,
   );
 
   static const List<BoxShadow> floatingShadow = [

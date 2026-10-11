@@ -111,7 +111,7 @@ void main() {
           reason: 'Bypasses redundant auth when keyguard is already unlocked');
     });
 
-    testWidgets('CosmicHeaderHud displays SET DEFAULT button when not default',
+    testWidgets('CosmicHeaderHud displays Set default button when not default',
         (tester) async {
       var requestedDefault = false;
 
@@ -130,14 +130,14 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('SET DEFAULT'), findsOneWidget);
-      await tester.tap(find.text('SET DEFAULT'));
+      expect(find.text('Set default'), findsOneWidget);
+      await tester.tap(find.text('Set default'));
       await tester.pump();
 
       expect(requestedDefault, isTrue);
     });
 
-    testWidgets('CosmicHeaderHud displays and toggles NATIVE / COSMIC mode',
+    testWidgets('CosmicHeaderHud displays and toggles Native / Cosmic mode',
         (tester) async {
       var toggled = false;
 
@@ -155,16 +155,16 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('NATIVE'), findsOneWidget);
-      expect(find.text('SET DEFAULT'), findsNothing);
+      expect(find.text('Native'), findsOneWidget);
+      expect(find.text('Set default'), findsNothing);
 
-      await tester.tap(find.text('NATIVE'));
+      await tester.tap(find.text('Native'));
       await tester.pump();
 
       expect(toggled, isTrue);
     });
 
-    testWidgets('CosmicHeaderHud displays LOCK button in Cosmic mode',
+    testWidgets('CosmicHeaderHud displays Lock button in Cosmic mode',
         (tester) async {
       var locked = false;
 
@@ -183,10 +183,10 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('COSMIC'), findsOneWidget);
-      expect(find.text('LOCK'), findsOneWidget);
+      expect(find.text('Cosmic'), findsOneWidget);
+      expect(find.text('Lock'), findsOneWidget);
 
-      await tester.tap(find.text('LOCK'));
+      await tester.tap(find.text('Lock'));
       await tester.pump();
 
       expect(locked, isTrue);

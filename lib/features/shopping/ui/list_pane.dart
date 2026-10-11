@@ -185,7 +185,7 @@ class _ItemRow extends StatelessWidget {
     final bool reduceMotion = MediaQuery.disableAnimationsOf(context);
     final Duration duration = reduceMotion
         ? Duration.zero
-        : const Duration(milliseconds: 240);
+        : LuminousHomeTheme.motionShort;
 
     return Dismissible(
       key: ValueKey<String>('dismiss_${item.id}'),
@@ -216,7 +216,7 @@ class _ItemRow extends StatelessWidget {
               child: AnimatedOpacity(
                 opacity: item.checked ? 0.55 : 1.0,
                 duration: duration,
-                curve: Curves.easeOutCubic,
+                curve: LuminousHomeTheme.easeStandard,
                 child: Container(
                   constraints: const BoxConstraints(
                     minHeight: LuminousHomeTheme.minimumTouchTarget,
@@ -245,7 +245,7 @@ class _ItemRow extends StatelessWidget {
                           children: <Widget>[
                             AnimatedDefaultTextStyle(
                               duration: duration,
-                              curve: Curves.easeOutCubic,
+                              curve: LuminousHomeTheme.easeStandard,
                               style: LuminousHomeTheme.title.copyWith(
                                 color: item.checked
                                     ? LuminousHomeTheme.textMuted

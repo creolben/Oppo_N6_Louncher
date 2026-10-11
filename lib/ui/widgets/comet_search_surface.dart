@@ -451,7 +451,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
               ),
               padding: const EdgeInsets.symmetric(vertical: 13),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
               ),
             ),
           ),
@@ -511,12 +511,12 @@ class _SourceCard extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             decoration: BoxDecoration(
               color: CometPalette.nodeFill.withValues(alpha: 0.75),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
               border: Border.all(
                 color: CometPalette.amber.withValues(alpha: 0.20),
               ),
