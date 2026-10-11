@@ -35,12 +35,17 @@ import android.os.CancellationSignal
 import android.os.PowerManager
 import android.provider.MediaStore
 import androidx.annotation.NonNull
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.Executors
 
 import android.app.Notification
@@ -48,6 +53,35 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 class MainActivity : FlutterActivity() {
+    companion object {
+        private const val TAG = "ChronoFold"
+
+        /** Request code for the single in-flight `pickPdf` document dialog. */
+        private const val REQUEST_PICK_PDF = 0x5046
+
+        /** Text extraction stops after this many pages. */
+        private const val MAX_EXTRACT_PAGES = 30
+    }
+
+    /**
+     * A PDF path received from [ShareReceiverActivity] that Dart has not yet
+     * consumed.
+     *
+     * Kept until `takePendingSharedPdf` clears it, so a cold start can pull it
+     * after the engine is ready even when the `onSharedPdf` push raced Dart's
+     * handler installation.
+     */
+    private var pendingSharedPdfPath: String? = null
+
+    /** Off-main-thread executor for PDF parsing and picked-file copying. */
+    private val pdfExecutor = Executors.newSingleThreadExecutor()
+
+    /** The Flutter result waiting on the one in-flight `pickPdf` dialog. */
+    private var pendingPdfPickResult: MethodChannel.Result? = null
+
+    /** Whether PDFBoxResourceLoader has been initialized for this process. */
+    private var pdfBoxInitialized = false
+
     /**
      * Whether the keyguard required authentication when the panel last went
      * off. Only an unlock that follows a genuinely locked keyguard is handed to
@@ -268,6 +302,12 @@ class MainActivity : FlutterActivity() {
             addDataScheme("package")
         }
         registerReceiver(packageReceiver, pkgFilter)
+
+        // A cold start through ShareReceiverActivity carries the PDF path in
+        // the launch intent. Consume it here, after the engine is configured:
+        // the push reaches Dart when it is listening, and the retained pending
+        // path covers the case where Dart has not bound its handler yet.
+        handleSharedPdfExtra(intent)
     }
     override fun onPause() {
         launcherResumed = false
@@ -325,12 +365,17 @@ class MainActivity : FlutterActivity() {
                 lockSurface?.invokeAppsMethod("onHomePressed", null)
             }
         }
+        // A warm hand-off from ShareReceiverActivity reuses this activity
+        // (NEW_TASK | CLEAR_TOP | SINGLE_TOP), so the path arrives here.
+        handleSharedPdfExtra(intent)
     }
     override fun onDestroy() {
         // Everything the shared surface acquired (sensors, the media session
         // callback, the apps channel handler) is released here.
         lockSurface?.dispose()
         lockSurface = null
+        pendingPdfPickResult = null
+        pdfExecutor.shutdown()
         screenReceiver?.let { unregisterReceiver(it) }
         packageReceiver?.let { unregisterReceiver(it) }
         super.onDestroy()
@@ -445,9 +490,167 @@ class MainActivity : FlutterActivity() {
                 requestOverlayAccess()
                 result.success(true)
             }
+            "takePendingSharedPdf" -> {
+                // Pull, and clear so Dart owns the path from here: the same PDF
+                // is never imported twice by a push and a pull.
+                val path = pendingSharedPdfPath
+                pendingSharedPdfPath = null
+                result.success(path)
+            }
+            "extractPdfText" -> {
+                val path = call.argument<String>("path")
+                if (path.isNullOrBlank()) {
+                    result.error("INVALID_ARGS", "path is required", null)
+                } else {
+                    extractPdfText(path, result)
+                }
+            }
+            "pickPdf" -> {
+                pickPdf(result)
+            }
             else -> return false
         }
         return true
+    }
+
+    // --- PDF import ------------------------------------------------------------------
+
+    /**
+     * Stores a shared/opened PDF path and forwards it to Dart.
+     *
+     * The extra is removed from the intent first so a re-delivery (a config
+     * change reusing the same intent) cannot repeat the import. The path is
+     * retained in [pendingSharedPdfPath] as well, because the push is
+     * best-effort: on a cold start Dart may not have installed its handler yet,
+     * and `takePendingSharedPdf` is how it collects the path then.
+     */
+    private fun handleSharedPdfExtra(source: Intent?) {
+        val path = source?.getStringExtra(ShareReceiverActivity.EXTRA_SHARED_PDF_PATH)
+            ?: return
+        source.removeExtra(ShareReceiverActivity.EXTRA_SHARED_PDF_PATH)
+        pendingSharedPdfPath = path
+        lockSurface?.invokeAppsMethod("onSharedPdf", mapOf("path" to path))
+    }
+
+    /**
+     * Extracts the text layer of the PDF at [path] off the main thread and
+     * answers on it.
+     *
+     * The document is capped at [MAX_EXTRACT_PAGES] pages with position-sorted
+     * text; [PDDocument.numberOfPages] still reports the true total so Dart can
+     * say the result was truncated. An encrypted document reports
+     * `PDF_ENCRYPTED`; every other failure reports `PDF_UNREADABLE`. There is
+     * deliberately no OCR here: a PDF with no text layer comes back empty, not
+     * unrecognized.
+     */
+    private fun extractPdfText(path: String, result: MethodChannel.Result) {
+        pdfExecutor.execute {
+            try {
+                // Cheap hygiene before every parse: imports older than a day are
+                // dropped, so the cache cannot grow without bound. The file just
+                // copied is new and survives.
+                ShareReceiverActivity.cleanupOldImports(applicationContext)
+                val file = File(path)
+                if (!file.exists()) {
+                    runOnUiThread {
+                        result.error("PDF_UNREADABLE", "The PDF file is missing", null)
+                    }
+                    return@execute
+                }
+                ensurePdfBoxInitialized()
+                val document = try {
+                    PDDocument.load(file)
+                } catch (e: InvalidPasswordException) {
+                    runOnUiThread {
+                        result.error("PDF_ENCRYPTED", "The PDF is password protected", null)
+                    }
+                    return@execute
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        result.error("PDF_UNREADABLE", e.message, null)
+                    }
+                    return@execute
+                }
+                document.use { doc ->
+                    val totalPages = doc.numberOfPages
+                    val lastPage = minOf(totalPages, MAX_EXTRACT_PAGES)
+                    val stripper = PDFTextStripper().apply {
+                        sortByPosition = true
+                        startPage = 1
+                        endPage = lastPage
+                    }
+                    val text = stripper.getText(doc)
+                    val payload = mapOf(
+                        "text" to text,
+                        "pageCount" to totalPages,
+                        "truncated" to (totalPages > MAX_EXTRACT_PAGES),
+                    )
+                    runOnUiThread {
+                        result.success(payload)
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    result.error("PDF_UNREADABLE", e.message, null)
+                }
+            }
+        }
+    }
+
+    /** Initializes PDFBox's asset-backed resources exactly once. */
+    private fun ensurePdfBoxInitialized() {
+        if (pdfBoxInitialized) return
+        PDFBoxResourceLoader.init(applicationContext)
+        pdfBoxInitialized = true
+    }
+
+    /**
+     * Raises the system document picker for a single PDF and answers with the
+     * cached path, or null when the user cancels.
+     *
+     * Only one pick may be in flight: a second request while the chooser is up
+     * is refused rather than overwriting the first result.
+     */
+    private fun pickPdf(result: MethodChannel.Result) {
+        if (pendingPdfPickResult != null) {
+            result.error("PICK_IN_PROGRESS", "A PDF pick is already in progress", null)
+            return
+        }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/pdf"
+        }
+        pendingPdfPickResult = result
+        try {
+            startActivityForResult(intent, REQUEST_PICK_PDF)
+        } catch (e: Exception) {
+            pendingPdfPickResult = null
+            result.error("PDF_UNREADABLE", "No document picker is available", null)
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQUEST_PICK_PDF) {
+            val pending = pendingPdfPickResult
+            pendingPdfPickResult = null
+            val uri = data?.data
+            if (resultCode != RESULT_OK || uri == null) {
+                // A cancel and a pick that returned nothing are both "null": no
+                // path was produced, and Dart treats that as a cancelled import.
+                pending?.success(null)
+                return
+            }
+            // Reading a potentially large stream must not block the main thread.
+            pdfExecutor.execute {
+                ShareReceiverActivity.cleanupOldImports(applicationContext)
+                val path = ShareReceiverActivity.copyToImports(applicationContext, uri)
+                runOnUiThread {
+                    pending?.success(path)
+                }
+            }
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     // --- Lock activity over a foreign task ---------------------------------------------

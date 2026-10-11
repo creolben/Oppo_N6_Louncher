@@ -254,6 +254,19 @@ abstract final class LuminousHomeTheme {
   /// A deeper cyan, one step under [aqua].
   static const Color aquaDeep = Color(0xFF00B8D4);
 
+  // ── Grocery roles ─────────────────────────────────────────────────────────
+  // The shopping list's accent family: mint, the cool sibling of the warm
+  // search/comet amber, so the grocery surface reads as its own place while
+  // staying inside the Luminous language. The alpha ladder mirrors
+  // [aquaFaint]..[aquaStrong] so every grocery surface stacks the same way.
+  static const Color groceryAccent = mint;
+  static const Color groceryFaint = Color(0x1869E5C2);
+  static const Color grocerySoft = Color(0x2269E5C2);
+  static const Color groceryGlow = Color(0x3369E5C2);
+  static const Color groceryMid = Color(0x4469E5C2);
+  static const Color groceryBright = Color(0x5569E5C2);
+  static const Color groceryStrong = Color(0x6669E5C2);
+
   // ── Dynamic accent ────────────────────────────────────────────────────────
   // The one family that follows the device's Material You palette. Everything
   // else above stays a fixed ChronoFold colour so the launcher keeps its

@@ -13,3 +13,19 @@
 # does not use deferred components, so the classes are absent at compile time and
 # the missing-class warnings are expected.
 -dontwarn com.google.android.play.core.**
+
+# PdfBox-Android's JPX (JPEG 2000) filter names the optional com.gemalto.jp2
+# decoder/encoder, which is deliberately not a dependency of this app. R8 must
+# not fail the minified release build on the missing classes; PDFBox only
+# reaches for them when a PDF actually contains a JPX stream. (Phase 3 extracts
+# text only, so this path is never exercised.)
+-dontwarn com.gemalto.jp2.**
+
+# PdfBox-Android instantiates its security handlers and the document-interchange
+# handlers reflectively, so R8 must keep them by name. The AAR ships these same
+# rules as consumer ProGuard rules; they are restated here so the app's own
+# minify configuration pins the behaviour even if the library ever drops them.
+-keep,allowobfuscation class * extends com.tom_roush.pdfbox.pdmodel.encryption.SecurityHandler {
+    public <init>(...);
+}
+-keep,allowobfuscation class com.tom_roush.pdfbox.pdmodel.documentinterchange.** { *; }

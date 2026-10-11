@@ -103,7 +103,9 @@ class GalaxyLayoutEngine {
             name: c.name,
             primaryColorValue: c.primaryColor.toARGB32(),
             emblemIconCodePoint: c.emblemIcon.codePoint,
-            packageNames: c.apps.map((a) => a.packageName).toList(),
+            // Membership is the stored package list, not the resolved apps:
+            // hidden or temporarily uninstalled packages must survive a save.
+            packageNames: List<String>.from(c.customPackageNames),
           ))
       .toList();
 
@@ -282,7 +284,12 @@ class GalaxyLayoutEngine {
     assignApps(List.from(allApps));
   }
 
-  /// Creates a brand new custom constellation (strictly max 8 apps)
+  /// Creates a brand new custom constellation (strictly max 8 apps).
+  ///
+  /// Idempotent by [id]: if a custom constellation with that id already exists
+  /// its identity (name, colour, emblem and package membership) is replaced and
+  /// the same list slot is reused, so callers that apply stored config on every
+  /// package-change broadcast cannot append duplicates.
   Constellation createCustomConstellation({
     String? id,
     required String name,
@@ -291,6 +298,34 @@ class GalaxyLayoutEngine {
     required List<String> packageNames,
   }) {
     final String constellationId = id ?? 'custom_${DateTime.now().millisecondsSinceEpoch}';
+    final cappedPackages = packageNames.take(maxConstellationApps).toList();
+
+    final existingIndex = constellations.indexWhere(
+      (c) => c.id == constellationId && c.isCustom,
+    );
+    if (existingIndex != -1) {
+      final existing = constellations[existingIndex];
+      final updated = Constellation(
+        id: constellationId,
+        name: name,
+        category: existing.category,
+        primaryColor: primaryColor,
+        secondaryColor: primaryColor.withValues(alpha: 0.7),
+        glowColor: primaryColor.withValues(alpha: 0.35),
+        emblemIcon: emblemIcon,
+        center: existing.center,
+        radius: existing.radius,
+        rotation: existing.rotation,
+        isExpanded: existing.isExpanded,
+        initialProgress: existing.expansionProgress,
+        isCustom: true,
+        customPackageNames: cappedPackages,
+      );
+      constellations[existingIndex] = updated;
+      assignApps(List.from(allApps));
+      return updated;
+    }
+
     final outerCount = constellations.where((c) => c.id != 'core').length + 1;
     final double angle = ((outerCount - 1) * 2 * math.pi / outerCount) - (math.pi / 2);
     final initialCenter = Offset(math.cos(angle) * 240.0, math.sin(angle) * 195.0);
@@ -307,7 +342,7 @@ class GalaxyLayoutEngine {
       radius: 140,
       isExpanded: false,
       isCustom: true,
-      customPackageNames: List.from(packageNames.take(maxConstellationApps)),
+      customPackageNames: cappedPackages,
     );
 
     constellations.add(customC);

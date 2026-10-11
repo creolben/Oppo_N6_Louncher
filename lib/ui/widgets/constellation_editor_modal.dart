@@ -40,16 +40,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
     widget.layoutEngine.setConstellationAppPackages(widget.constellation.id, pkgNames);
     widget.onUpdated();
 
-    final customConfigs = widget.layoutEngine.constellations
-        .where((c) => c.isCustom)
-        .map((c) => CustomGalaxyConfig(
-              id: c.id,
-              name: c.name,
-              primaryColorValue: c.primaryColor.toARGB32(),
-              emblemIconCodePoint: c.emblemIcon.codePoint,
-              packageNames: c.apps.map((a) => a.packageName).toList(),
-            ))
-        .toList();
+    final customConfigs = widget.layoutEngine.customConstellations;
 
     GalaxyStorageService.saveConfig(
       coreAppPackageNames: widget.layoutEngine.corePackageNames,

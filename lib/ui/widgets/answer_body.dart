@@ -104,7 +104,15 @@ class AnswerBody extends StatelessWidget {
             case AnswerText(:final text):
               return TextSpan(text: text);
             case AnswerCitation(:final number):
-              final source = sources.firstWhere((s) => s.index == number);
+              final source =
+                  sources.where((s) => s.index == number).firstOrNull;
+              if (source == null) {
+                // parseAnswerSegments already leaves unmatched markers as
+                // text, so this only guards a source list that changed between
+                // parsing and painting. A citation with nowhere to go degrades
+                // to plain text instead of throwing.
+                return TextSpan(text: '[$number]');
+              }
               return WidgetSpan(
                 alignment: PlaceholderAlignment.middle,
                 child: _CitationMarker(

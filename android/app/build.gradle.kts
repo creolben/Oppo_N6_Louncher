@@ -84,3 +84,11 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // On-device PDF text-layer extraction (Phase 3). Pinned to 2.0.27.0 — the
+    // newest release in Maven Central (metadata lastUpdated 2023-01-02) — so a
+    // later publish cannot change the text extractor under the launcher.
+    // https://repo1.maven.org/maven2/com/tom-roush/pdfbox-android/maven-metadata.xml
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+}

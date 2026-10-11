@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mylauncher/core/search_coordinator.dart';
 import 'package:mylauncher/core/search_providers/fixture_search_provider.dart';
@@ -105,6 +106,34 @@ void main() {
       final segments = parseAnswerSegments('Done [2]', sources);
       expect(segments.length, 2);
       expect((segments.last as AnswerCitation).number, 2);
+    });
+  });
+
+  group('AnswerBody', () {
+    testWidgets('renders a citation with no matching source as plain text',
+        (tester) async {
+      // The parser normally keeps unmatched markers literal. This pins the
+      // widget-level guarantee too: a citation whose source cannot be found
+      // must degrade to "[n]" rather than throwing out of build.
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: AnswerBody(
+              answer: 'Alpha [9] beta',
+              sources: [
+                SearchSource(title: 'One', url: 'https://one.example', index: 1),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(
+        find.textContaining('Alpha [9] beta', findRichText: true),
+        findsOneWidget,
+      );
     });
   });
 
