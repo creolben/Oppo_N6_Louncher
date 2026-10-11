@@ -26,6 +26,7 @@ class TabletopCockpitView extends StatefulWidget {
   final VoidCallback? onCreateConstellation;
   final VoidCallback? onEditCore;
   final VoidCallback? onToggleFullscreen;
+  final VoidCallback? onOpenShopping;
 
   const TabletopCockpitView({
     super.key,
@@ -41,6 +42,7 @@ class TabletopCockpitView extends StatefulWidget {
     this.onCreateConstellation,
     this.onEditCore,
     this.onToggleFullscreen,
+    this.onOpenShopping,
   });
 
   @override
@@ -488,6 +490,13 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           color: LuminousHomeTheme.accent,
           onTap: widget.onOpenSearch,
         ),
+        if (widget.onOpenShopping != null)
+          _cockpitActionButton(
+            icon: Icons.shopping_cart_rounded,
+            label: 'Shopping list',
+            color: LuminousHomeTheme.groceryAccent,
+            onTap: widget.onOpenShopping!,
+          ),
         if (widget.onToggleFullscreen != null)
           _cockpitActionButton(
             icon: Icons.fullscreen_rounded,
@@ -606,6 +615,13 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
               color: LuminousHomeTheme.accent,
               onTap: widget.onOpenSearch,
             ),
+            if (widget.onOpenShopping != null)
+              _cockpitActionButton(
+                icon: Icons.shopping_cart_rounded,
+                label: 'Shopping list',
+                color: LuminousHomeTheme.groceryAccent,
+                onTap: widget.onOpenShopping!,
+              ),
             if (widget.onCreateConstellation != null)
               _cockpitActionButton(
                 icon: Icons.add_circle_outline_rounded,

@@ -36,6 +36,7 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   static VoidCallback? _onHomeButtonListener;
   static VoidCallback? _onScreenOnListener;
   static VoidCallback? _onUserPresentListener;
+  static void Function(String path)? _onSharedPdfListener;
   static bool _handlerInitialized = false;
 
   static void _ensureHandlerInitialized() {
@@ -60,6 +61,15 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
           break;
         case 'onSystemPaletteChanged':
           _systemPaletteController.add(SystemPalette.fromMap(call.arguments));
+          break;
+        case 'onSharedPdf':
+          final Object? args = call.arguments;
+          if (args is Map) {
+            final Object? path = args['path'];
+            if (path is String && path.isNotEmpty) {
+              _onSharedPdfListener?.call(path);
+            }
+          }
           break;
       }
     });
@@ -99,6 +109,19 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   static void setHomeButtonListener(VoidCallback onHomePressed) {
     _onHomeButtonListener = onHomePressed;
     _ensureHandlerInitialized();
+  }
+
+  /// Receives the path of a PDF handed to the launcher from the share sheet or
+  /// "Open with". The native side copies the URI into its cache first, so the
+  /// path is a private file the launcher can read directly.
+  static void setSharedPdfListener(void Function(String path) onSharedPdf) {
+    _onSharedPdfListener = onSharedPdf;
+    _ensureHandlerInitialized();
+  }
+
+  @visibleForTesting
+  static void dispatchSharedPdfForTesting(String path) {
+    _onSharedPdfListener?.call(path);
   }
 
 
@@ -846,6 +869,68 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return null;
   }
 
+  /// Extracts the text layer of the PDF at [path] on-device.
+  ///
+  /// The native side runs PdfBox-Android off the main thread, caps extraction
+  /// at 30 pages and reports the true page count plus whether it truncated.
+  /// Nothing here is OCR: a scanned PDF answers an empty [PdfTextResult.text].
+  /// A platform refusal travels in [PdfTextResult.errorCode] rather than an
+  /// exception, following this bridge's existing try/catch style.
+  static Future<PdfTextResult> extractPdfText(String path) async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        final Map<Object?, Object?>? raw = await _appsChannel
+            .invokeMethod<Map<Object?, Object?>>('extractPdfText', {
+          'path': path,
+        });
+        if (raw == null) {
+          return const PdfTextResult(errorCode: 'PDF_UNREADABLE');
+        }
+        return PdfTextResult(
+          text: raw['text'] as String? ?? '',
+          pageCount: (raw['pageCount'] as num?)?.toInt() ?? 0,
+          truncated: raw['truncated'] == true,
+        );
+      } on PlatformException catch (e) {
+        debugPrint('CF_PDF: extractPdfText failed: ${e.code} ${e.message}');
+        return PdfTextResult(errorCode: e.code);
+      } catch (e) {
+        debugPrint('CF_PDF: extractPdfText failed: $e');
+        return const PdfTextResult(errorCode: 'PDF_UNREADABLE');
+      }
+    }
+    return const PdfTextResult(errorCode: 'PDF_UNREADABLE');
+  }
+
+  /// Raises the system PDF picker and resolves to the cached path of the chosen
+  /// document, or null when the user cancels. Only one pick may be pending at a
+  /// time; a second request resolves null rather than replacing the first.
+  static Future<String?> pickPdf() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        return await _appsChannel.invokeMethod<String>('pickPdf');
+      } catch (e) {
+        debugPrint('CF_PDF: pickPdf failed: $e');
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /// Takes the PDF path a share/open delivered at startup, clearing it so it is
+  /// never imported twice, or null when there is none.
+  static Future<String?> takePendingSharedPdf() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      try {
+        return await _appsChannel.invokeMethod<String>('takePendingSharedPdf');
+      } catch (e) {
+        debugPrint('CF_PDF: takePendingSharedPdf failed: $e');
+        return null;
+      }
+    }
+    return null;
+  }
+
   static AppCategory _mapCategory(int cat, String pkg, String label) {
     final lower = '$pkg $label'.toLowerCase();
 
@@ -1191,4 +1276,26 @@ class WebSearchHandoff {
       holdsBrowserRole: map['holdsBrowserRole'] as bool? ?? false,
     );
   }
+}
+
+/// The on-device result of reading a PDF's text layer.
+///
+/// A failure carries only [errorCode] (`PDF_ENCRYPTED` or `PDF_UNREADABLE`), so
+/// a caller can name the reason instead of treating every failure as the same
+/// unreadable file. The text is empty — never absent — when a PDF has no text
+/// layer, which is what a scanned document looks like.
+class PdfTextResult {
+  final String text;
+  final int pageCount;
+  final bool truncated;
+  final String? errorCode;
+
+  const PdfTextResult({
+    this.text = '',
+    this.pageCount = 0,
+    this.truncated = false,
+    this.errorCode,
+  });
+
+  bool get hasError => errorCode != null;
 }

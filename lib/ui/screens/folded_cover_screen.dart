@@ -57,6 +57,7 @@ class FoldedCoverScreen extends StatefulWidget {
   final Function(Constellation constellation)? onConstellationLongPressed;
   final VoidCallback? onCreateConstellation;
   final VoidCallback? onEditCore;
+  final VoidCallback? onOpenShopping;
 
   const FoldedCoverScreen({
     super.key,
@@ -70,6 +71,7 @@ class FoldedCoverScreen extends StatefulWidget {
     this.onConstellationLongPressed,
     this.onCreateConstellation,
     this.onEditCore,
+    this.onOpenShopping,
   });
 
   @override
@@ -945,6 +947,15 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                     tooltip: 'Search Apps',
                     onTap: widget.onOpenSearch,
                   ),
+
+                  // Shopping list
+                  if (widget.onOpenShopping != null)
+                    _dockIconButton(
+                      icon: Icons.shopping_cart_rounded,
+                      color: LuminousHomeTheme.groceryAccent,
+                      tooltip: 'Shopping list',
+                      onTap: widget.onOpenShopping!,
+                    ),
 
                   // Fold Simulator Toggle
                   _dockIconButton(

@@ -22,6 +22,12 @@ import 'ui/widgets/constellation_editor_modal.dart';
 import 'ui/widgets/create_constellation_modal.dart';
 import 'core/galaxy_storage_service.dart';
 import 'features/lockscreen/cosmic_lock_screen.dart';
+import 'features/shopping/parsing/document_parser.dart';
+import 'features/shopping/parsing/pdf_text_import.dart';
+import 'features/shopping/shopping_controller.dart';
+import 'features/shopping/ui/grocery_chrome.dart';
+import 'features/shopping/ui/import_review_sheet.dart';
+import 'features/shopping/ui/shopping_surface.dart';
 import 'ui/format/clock_format.dart';
 import 'ui/screens/folded_cover_screen.dart';
 import 'ui/screens/tabletop_cockpit_view.dart';
@@ -60,7 +66,18 @@ class ChronoFoldApp extends StatelessWidget {
   /// production, where the home screen asks the bridge itself.
   final Future<bool> Function()? isKeyguardLocked;
 
-  const ChronoFoldApp({super.key, this.isKeyguardLocked});
+  /// Pass-through seams for [ChronoFoldHomeScreen]. Null in production.
+  final Future<String?> Function()? takePendingSharedPdf;
+  final Future<PdfTextResult> Function(String path)? extractPdfText;
+  final Future<String?> Function()? pickPdf;
+
+  const ChronoFoldApp({
+    super.key,
+    this.isKeyguardLocked,
+    this.takePendingSharedPdf,
+    this.extractPdfText,
+    this.pickPdf,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -78,7 +95,12 @@ class ChronoFoldApp extends StatelessWidget {
           title: 'ChronoFold Launcher',
           debugShowCheckedModeBanner: false,
           theme: LuminousHomeTheme.buildTheme(),
-          home: ChronoFoldHomeScreen(isKeyguardLocked: isKeyguardLocked),
+          home: ChronoFoldHomeScreen(
+            isKeyguardLocked: isKeyguardLocked,
+            takePendingSharedPdf: takePendingSharedPdf,
+            extractPdfText: extractPdfText,
+            pickPdf: pickPdf,
+          ),
         );
       },
     );
@@ -96,7 +118,19 @@ class ChronoFoldHomeScreen extends StatefulWidget {
   /// posture child.
   final Future<bool> Function()? isKeyguardLocked;
 
-  const ChronoFoldHomeScreen({super.key, this.isKeyguardLocked});
+  /// Injection seams for the PDF import path. Null in production, where the
+  /// bridge is used; a widget test stands in for the platform channel here.
+  final Future<String?> Function()? takePendingSharedPdf;
+  final Future<PdfTextResult> Function(String path)? extractPdfText;
+  final Future<String?> Function()? pickPdf;
+
+  const ChronoFoldHomeScreen({
+    super.key,
+    this.isKeyguardLocked,
+    this.takePendingSharedPdf,
+    this.extractPdfText,
+    this.pickPdf,
+  });
 
   @override
   State<ChronoFoldHomeScreen> createState() => _ChronoFoldHomeScreenState();
@@ -141,6 +175,20 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   bool _isCometSearchOpen = false;
   String? _cometInitialQuery;
 
+  /// Whether the shopping surface is up. It owns the persisted lists, which are
+  /// loaded once and saved through the controller's debounced store.
+  late final ShoppingController _shoppingController;
+  bool _isShoppingOpen = false;
+
+  /// A shared PDF that arrived while the lock panel was up. It is held here and
+  /// imported only after the panel clears, so the review sheet is never drawn
+  /// over a locked surface.
+  String? _pendingSharedPdfPath;
+
+  /// Whether the startup pull of a native pending share has run. Set before the
+  /// await so a package-change reload cannot pull it twice.
+  bool _pendingSharedPdfChecked = false;
+
   @override
   void initState() {
     super.initState();
@@ -153,8 +201,15 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     _searchCoordinator = SearchCoordinator(
       providers: [FixtureSearchProvider()],
     );
+    _shoppingController = ShoppingController();
+    unawaited(_shoppingController.load());
 
     LauncherBridge.setScreenLockListener(_lockForScreenOff);
+    LauncherBridge.setSharedPdfListener((String path) {
+      if (mounted) {
+        unawaited(_onSharedPdf(path));
+      }
+    });
     _checkDefaultLauncherStatus();
 
     LauncherBridge.setPackageChangeListener(() {
@@ -173,6 +228,9 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
           // Clear the previous answer too: the home button means "start over",
           // so reopening must not show a stale result.
           _searchCoordinator.reset();
+        }
+        if (_isShoppingOpen) {
+          setState(() => _isShoppingOpen = false);
         }
         _camera.resetView();
       }
@@ -254,6 +312,21 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     _searchCoordinator.reset();
   }
 
+  /// Opens the shopping surface, closing the search surfaces beneath it so Back
+  /// and the TickerMode mute stay ordered.
+  void _openShopping() {
+    setState(() {
+      _isSearchOpen = false;
+      _isCometSearchOpen = false;
+      _isShoppingOpen = true;
+    });
+    _searchCoordinator.reset();
+  }
+
+  void _closeShopping() {
+    setState(() => _isShoppingOpen = false);
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -331,54 +404,66 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     setState(() => _isLocked = true);
   }
 
+  /// Whether the persisted layout has been applied to [_layoutEngine].
+  ///
+  /// [_loadApplications] runs again on every package-change broadcast. The
+  /// stored config (core pin, custom constellations, overrides, hidden apps,
+  /// native mode) must be read once; re-applying it on each broadcast is what
+  /// used to append a duplicate custom constellation per package change. After
+  /// the first load a broadcast only refreshes the app list.
+  bool _storedConfigApplied = false;
+
   Future<void> _loadApplications() async {
     final apps = await LauncherBridge.getInstalledApps();
 
-    // Load persisted galaxy configuration
-    final config = await GalaxyStorageService.loadConfig();
-    if (config.isNotEmpty) {
-      final customList =
-          (config['customConstellations'] ?? config['customGalaxies']) as List?;
-      if (customList != null) {
-        for (final raw in customList) {
-          if (raw is Map<String, dynamic>) {
-            final customConfig = CustomConstellationConfig.fromJson(raw);
-            _layoutEngine.createCustomConstellation(
-              id: customConfig.id,
-              name: customConfig.name,
-              primaryColor: Color(customConfig.primaryColorValue),
-              emblemIcon: customConfig.icon,
-              packageNames: customConfig.packageNames,
-            );
+    // Load persisted galaxy configuration once, on the first load only.
+    if (!_storedConfigApplied) {
+      _storedConfigApplied = true;
+      final config = await GalaxyStorageService.loadConfig();
+      if (config.isNotEmpty) {
+        final customList =
+            (config['customConstellations'] ?? config['customGalaxies']) as List?;
+        if (customList != null) {
+          for (final raw in customList) {
+            if (raw is Map<String, dynamic>) {
+              final customConfig = CustomConstellationConfig.fromJson(raw);
+              _layoutEngine.createCustomConstellation(
+                id: customConfig.id,
+                name: customConfig.name,
+                primaryColor: Color(customConfig.primaryColorValue),
+                emblemIcon: customConfig.icon,
+                packageNames: customConfig.packageNames,
+              );
+            }
           }
         }
-      }
-      if (config.containsKey('coreAppPackageNames') &&
-          config['coreAppPackageNames'] is List) {
-        final corePkgs = List<String>.from(
-          config['coreAppPackageNames'] as List,
-        );
-        _layoutEngine.setCorePackageNames(corePkgs);
-      }
-      if (config.containsKey('constellationAppOverrides') &&
-          config['constellationAppOverrides'] is Map) {
-        final rawOverrides =
-            config['constellationAppOverrides'] as Map<String, dynamic>;
-        for (final entry in rawOverrides.entries) {
-          if (entry.value is List) {
-            _layoutEngine.constellationAppOverrides[entry.key] =
-                List<String>.from(entry.value as List);
+        if (config.containsKey('coreAppPackageNames') &&
+            config['coreAppPackageNames'] is List) {
+          final corePkgs = List<String>.from(
+            config['coreAppPackageNames'] as List,
+          );
+          _layoutEngine.setCorePackageNames(corePkgs);
+        }
+        if (config.containsKey('constellationAppOverrides') &&
+            config['constellationAppOverrides'] is Map) {
+          final rawOverrides =
+              config['constellationAppOverrides'] as Map<String, dynamic>;
+          for (final entry in rawOverrides.entries) {
+            if (entry.value is List) {
+              _layoutEngine.constellationAppOverrides[entry.key] =
+                  List<String>.from(entry.value as List);
+            }
           }
         }
+        if (config.containsKey('hiddenPackageNames') &&
+            config['hiddenPackageNames'] is List) {
+          final hiddenPkgs = List<String>.from(
+            config['hiddenPackageNames'] as List,
+          );
+          _layoutEngine.setHiddenPackageNames(hiddenPkgs);
+        }
+        _nativeMode = config['nativeLauncherMode'] as bool? ?? false;
       }
-      if (config.containsKey('hiddenPackageNames') &&
-          config['hiddenPackageNames'] is List) {
-        final hiddenPkgs = List<String>.from(
-          config['hiddenPackageNames'] as List,
-        );
-        _layoutEngine.setHiddenPackageNames(hiddenPkgs);
-      }
-      _nativeMode = config['nativeLauncherMode'] as bool? ?? false;
     }
 
     // Never start cold over a locked keyguard. Pushing the overlay flag here
@@ -419,6 +504,85 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
         _isLoading = false;
       });
     }
+
+    // A PDF shared before the launcher started was retained natively; collect
+    // it now that the cold-start keyguard check above has settled `_isLocked`.
+    // Guarded so the package-change reloads do not pull it repeatedly.
+    if (!_pendingSharedPdfChecked) {
+      _pendingSharedPdfChecked = true;
+      unawaited(_pullPendingSharedPdf());
+    }
+  }
+
+  /// Pulls the native pending share at startup and routes it through the same
+  /// lock-aware handoff as a live push.
+  Future<void> _pullPendingSharedPdf() async {
+    final String? path = await (widget.takePendingSharedPdf ??
+        LauncherBridge.takePendingSharedPdf)();
+    if (!mounted || path == null || path.isEmpty) return;
+    await _onSharedPdf(path);
+  }
+
+  /// Handles a shared PDF path: import it now, or hold it if the lock panel is
+  /// up. A locked device must never show the shopping surface or its review
+  /// sheet, so the path waits for [_handleUnlock].
+  Future<void> _onSharedPdf(String path) async {
+    if (!mounted) return;
+    if (_isLocked) {
+      _pendingSharedPdfPath = path;
+      return;
+    }
+    await _openSharedPdf(path);
+  }
+
+  /// Extracts, parses and reviews a shared PDF, then leaves the user in the
+  /// shopping surface. Failures are themed snack bars rather than silent drops.
+  Future<void> _openSharedPdf(String path) async {
+    final PdfImportService service = PdfImportService(
+      extract: widget.extractPdfText ?? LauncherBridge.extractPdfText,
+      pick: widget.pickPdf ?? LauncherBridge.pickPdf,
+    );
+    final PdfImportResult result = await service.importPath(path);
+    if (!mounted) return;
+    if (!result.isSuccess) {
+      if (result.error == PdfImportErrorKind.cancelled) return;
+      _showSharedPdfError(
+        result.message ?? 'This PDF could not be read.',
+      );
+      return;
+    }
+
+    final ParsedDocument document = result.document!;
+    _openShopping();
+    if (document.isEmpty) {
+      _showSharedPdfError('No list items found in this PDF');
+      return;
+    }
+    await showImportReviewSheet(
+      context,
+      document: document,
+      onConfirm: (List<int> indices) =>
+          _shoppingController.importParsedDocument(document, indices),
+    );
+  }
+
+  void _showSharedPdfError(String message) {
+    if (!mounted) return;
+    showGrocerySnackBar(context, message);
+  }
+
+  /// Clears the lock panel and, if a shared PDF was held back while locked,
+  /// imports it now that the surface is clear.
+  void _handleUnlock() {
+    setState(() => _isLocked = false);
+    final String? path = _pendingSharedPdfPath;
+    if (path == null) return;
+    _pendingSharedPdfPath = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(_openSharedPdf(path));
+      }
+    });
   }
 
   void _openAppLongPressDialog(AppEntry app, Offset screenPosition) {
@@ -520,6 +684,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     _foldable.dispose();
     _camera.dispose();
     _searchCoordinator.dispose();
+    _shoppingController.dispose();
     super.dispose();
   }
 
@@ -531,7 +696,15 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        if (_isSearchOpen) {
+        // Back is consumed by the topmost surface first. The shopping surface
+        // sits above the comet web-search surface and app search, so it must
+        // close before them; otherwise Back recenters the galaxy while the
+        // shopping list stays up.
+        if (_isShoppingOpen) {
+          _closeShopping();
+        } else if (_isCometSearchOpen) {
+          _closeCometSearch();
+        } else if (_isSearchOpen) {
           setState(() => _isSearchOpen = false);
         } else {
           _camera.resetView();
@@ -559,8 +732,10 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                       // stops the search blur from re-filtering a moving
                       // background every frame.
                       TickerMode(
-                        enabled:
-                            !(_isLocked || _isSearchOpen || _isCometSearchOpen),
+                        enabled: !(_isLocked ||
+                            _isSearchOpen ||
+                            _isCometSearchOpen ||
+                            _isShoppingOpen),
                         child: AnimatedSwitcher(
                           duration: const Duration(milliseconds: 320),
                           switchInCurve: Curves.easeOutCubic,
@@ -589,6 +764,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       _openCreateConstellationModal,
                                   onEditCore:
                                       _openCenterConstellationEditorModal,
+                                  onOpenShopping: _openShopping,
                                 )
                               : (_isCockpitMode && _foldable.isTabletop)
                               ? TabletopCockpitView(
@@ -611,6 +787,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       _openCenterConstellationEditorModal,
                                   onToggleFullscreen: () =>
                                       setState(() => _isCockpitMode = false),
+                                  onOpenShopping: _openShopping,
                                 )
                               : Stack(
                                   key: const ValueKey('unfolded_galaxy_screen'),
@@ -679,6 +856,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                             _openCreateConstellationModal,
                                         onEditCore:
                                             _openCenterConstellationEditorModal,
+                                        onOpenShopping: _openShopping,
                                       ),
                                     ),
                                   ],
@@ -713,13 +891,23 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                           ),
                         ),
 
+                      // Shopping List Surface
+                      if (_isShoppingOpen)
+                        Positioned.fill(
+                          child: ShoppingSurface(
+                            controller: _shoppingController,
+                            foldable: _foldable,
+                            onClose: _closeShopping,
+                          ),
+                        ),
+
                       // Celestial Foldable Lock Screen
                       if (_isLocked)
                         Positioned.fill(
                           child: CosmicLockScreen(
                             foldable: _foldable,
                             apps: _apps,
-                            onUnlock: () => setState(() => _isLocked = false),
+                            onUnlock: _handleUnlock,
                             // Not raised by the LOCK buttons → the mount is
                             // for a lock the platform may have satisfied
                             // before this panel could draw (screen-off

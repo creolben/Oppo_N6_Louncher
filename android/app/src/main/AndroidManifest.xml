@@ -67,6 +67,34 @@
             </intent-filter>
         </activity>
 
+        <!-- The share/open entry point for PDFs. It has no UI and no launcher
+             entry: it copies the one URI it is handed into its own cache,
+             starts MainActivity with that path, and finishes. `noHistory` and
+             `excludeFromRecents` keep it out of the task stack and recents,
+             and its own taskAffinity keeps it from being folded into the HOME
+             task. It never takes a persistable URI permission and reads
+             nothing but the given URI. -->
+        <activity
+            android:name=".ShareReceiverActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="com.launcher.chronofold.mylauncher.share"
+            android:noHistory="true"
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+                <data android:scheme="content" />
+            </intent-filter>
+        </activity>
+
         <!-- The lock surface raised over a foreign task on screen-off. Its own
              task, so finishing it reveals exactly the app that was underneath
              instead of the HOME task. It is not exported and has no

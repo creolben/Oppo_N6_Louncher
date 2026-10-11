@@ -24,6 +24,10 @@ class FoldableCockpitBar extends StatefulWidget {
   /// used by surfaces that have no business opening web search.
   final VoidCallback? onOpenWebSearch;
 
+  /// Summons the shopping list surface. Optional so existing call sites and
+  /// tests keep compiling without a shopping controller of their own.
+  final VoidCallback? onOpenShopping;
+
   const FoldableCockpitBar({
     super.key,
     required this.foldable,
@@ -36,6 +40,7 @@ class FoldableCockpitBar extends StatefulWidget {
     this.onCreateGalaxy,
     this.onEditCore,
     this.onOpenWebSearch,
+    this.onOpenShopping,
   });
 
   @override
@@ -291,6 +296,13 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                       ),
                       if (widget.onOpenWebSearch != null)
                         _cometButton(widget.onOpenWebSearch!),
+                      if (widget.onOpenShopping != null)
+                        _cockpitIconButton(
+                          icon: Icons.shopping_cart_rounded,
+                          color: LuminousHomeTheme.groceryAccent,
+                          tooltip: 'Shopping list',
+                          onTap: widget.onOpenShopping!,
+                        ),
                       const _ShelfDivider(),
                       ...widget.layoutEngine.constellations.map((
                         constellation,
