@@ -325,8 +325,8 @@ class _SearchOverlayState extends State<SearchOverlay> {
       final maxOffset = _scrollController.position.maxScrollExtent;
       _scrollController.animateTo(
         targetOffset.clamp(0.0, maxOffset),
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
+        duration: LuminousHomeTheme.motion(context, LuminousHomeTheme.motionFast),
+        curve: LuminousHomeTheme.easeMove,
       );
 
       // Cancellable, and cancelled on dispose: a fire-and-forget delay here
@@ -538,7 +538,11 @@ class _SearchOverlayState extends State<SearchOverlay> {
                           },
                           borderRadius: BorderRadius.circular(20),
                           child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
+                            duration: LuminousHomeTheme.motion(
+                              context,
+                              LuminousHomeTheme.motionFast,
+                            ),
+                            curve: LuminousHomeTheme.easeStandard,
                             padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
                             decoration: BoxDecoration(
                               color: isSelected
@@ -736,7 +740,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                           horizontal: 2),
                                       decoration: BoxDecoration(
                                         color: LuminousHomeTheme.fieldFill,
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                                         border: Border.all(
                                           color: LuminousHomeTheme.accentFaint,
                                           width: _scrubberBorder,
@@ -881,7 +885,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
                     height: 44,
                     decoration: BoxDecoration(
                       color: app.accentColor.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                       border: Border.all(
                         color: app.accentColor.withValues(alpha: 0.45),
                         width: 1.2,
@@ -957,7 +961,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                 color: app.accentColor.withValues(alpha: 0.15),
                 border: Border.all(
                   color: app.accentColor.withValues(alpha: 0.45),

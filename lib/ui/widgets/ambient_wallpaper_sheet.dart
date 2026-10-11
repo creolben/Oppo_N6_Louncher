@@ -326,7 +326,7 @@ class _OwnershipCell extends StatelessWidget {
       padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
         border: Border.all(color: color.withValues(alpha: 0.28)),
       ),
       child: Row(

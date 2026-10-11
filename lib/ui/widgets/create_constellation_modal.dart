@@ -156,7 +156,7 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                   height: 46,
                   decoration: BoxDecoration(
                     color: LuminousHomeTheme.glassCool,
-                    borderRadius: BorderRadius.circular(23),
+                    borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusL),
                     border: Border.all(color: _selectedColor.withValues(alpha: 0.4)),
                   ),
                   child: TextField(
@@ -278,7 +278,7 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                           color: isSelected
                               ? _selectedColor.withValues(alpha: 0.15)
                               : LuminousHomeTheme.panel.withValues(alpha: 0.5),
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                           border: Border.all(
                             color: isSelected ? _selectedColor.withValues(alpha: 0.6) : Colors.transparent,
                           ),
@@ -343,7 +343,7 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _selectedColor,
                       foregroundColor: LuminousHomeTheme.panelDeep,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(23)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusL)),
                     ),
                     onPressed: _nameController.text.trim().isNotEmpty ? _createConstellation : null,
                     child: Text(

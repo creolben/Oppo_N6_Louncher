@@ -18,6 +18,7 @@ import 'ui/widgets/ambient_wallpaper_sheet.dart';
 import 'core/search_coordinator.dart';
 import 'core/search_providers/fixture_search_provider.dart';
 import 'ui/widgets/app_action_dialog.dart';
+import 'ui/widgets/native_panel_transition.dart';
 import 'ui/widgets/constellation_editor_modal.dart';
 import 'ui/widgets/create_constellation_modal.dart';
 import 'core/galaxy_storage_service.dart';
@@ -586,61 +587,27 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   }
 
   void _openAppLongPressDialog(AppEntry app, Offset screenPosition) {
-    showGeneralDialog(
+    showNativePanel(
       context: context,
-      barrierDismissible: true,
       barrierLabel: 'AppActions',
-      barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 240),
-      pageBuilder: (context, anim1, anim2) {
-        return AppActionDialog(
-          app: app,
-          layoutEngine: _layoutEngine,
-          onActionCompleted: () => setState(() {}),
-        );
-      },
-      transitionBuilder: (context, anim, secondaryAnim, child) {
-        return FadeTransition(
-          opacity: CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
-          child: ScaleTransition(
-            scale: Tween<double>(
-              begin: 0.85,
-              end: 1.0,
-            ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutBack)),
-            child: child,
-          ),
-        );
-      },
+      pageBuilder: (context) => AppActionDialog(
+        app: app,
+        layoutEngine: _layoutEngine,
+        onActionCompleted: () => setState(() {}),
+      ),
     );
   }
 
   void _openConstellationEditorModal(Constellation constellation) {
-    showGeneralDialog(
+    showNativePanel(
       context: context,
-      barrierDismissible: true,
       barrierLabel: 'ConstellationEditor',
-      barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 260),
-      pageBuilder: (context, anim1, anim2) {
-        return ConstellationEditorModal(
-          constellation: constellation,
-          layoutEngine: _layoutEngine,
-          allApps: _apps,
-          onUpdated: () => setState(() {}),
-        );
-      },
-      transitionBuilder: (context, anim, secondaryAnim, child) {
-        return FadeTransition(
-          opacity: CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
-          child: ScaleTransition(
-            scale: Tween<double>(
-              begin: 0.9,
-              end: 1.0,
-            ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutBack)),
-            child: child,
-          ),
-        );
-      },
+      pageBuilder: (context) => ConstellationEditorModal(
+        constellation: constellation,
+        layoutEngine: _layoutEngine,
+        allApps: _apps,
+        onUpdated: () => setState(() {}),
+      ),
     );
   }
 
@@ -650,31 +617,14 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   }
 
   void _openCreateConstellationModal() {
-    showGeneralDialog(
+    showNativePanel(
       context: context,
-      barrierDismissible: true,
       barrierLabel: 'CreateConstellation',
-      barrierColor: Colors.transparent,
-      transitionDuration: const Duration(milliseconds: 260),
-      pageBuilder: (context, anim1, anim2) {
-        return CreateConstellationModal(
-          layoutEngine: _layoutEngine,
-          allApps: _apps,
-          onCreated: () => setState(() {}),
-        );
-      },
-      transitionBuilder: (context, anim, secondaryAnim, child) {
-        return FadeTransition(
-          opacity: CurvedAnimation(parent: anim, curve: Curves.easeOutCubic),
-          child: ScaleTransition(
-            scale: Tween<double>(
-              begin: 0.9,
-              end: 1.0,
-            ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutBack)),
-            child: child,
-          ),
-        );
-      },
+      pageBuilder: (context) => CreateConstellationModal(
+        layoutEngine: _layoutEngine,
+        allApps: _apps,
+        onCreated: () => setState(() {}),
+      ),
     );
   }
 
@@ -1080,7 +1030,7 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                                     widget.onSetDefaultLauncher != null)
                                   _utilityButton(
                                     icon: Icons.home_rounded,
-                                    label: 'SET DEFAULT',
+                                    label: 'Set default',
                                     tooltip: 'Set as default launcher',
                                     color: LuminousHomeTheme.accent,
                                     emphasized: true,
@@ -1089,7 +1039,7 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                                 if (widget.onOpenLiveWallpaper != null)
                                   _utilityButton(
                                     icon: Icons.wallpaper_rounded,
-                                    label: 'AMBIENT',
+                                    label: 'Ambient',
                                     tooltip: 'Choose ambient wallpaper',
                                     color: LuminousHomeTheme.accent,
                                     onTap: widget.onOpenLiveWallpaper!,
@@ -1100,8 +1050,8 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                                         ? Icons.shield_outlined
                                         : Icons.lock_outline_rounded,
                                     label: widget.nativeMode
-                                        ? 'NATIVE'
-                                        : 'COSMIC',
+                                        ? 'Native'
+                                        : 'Cosmic',
                                     tooltip: widget.nativeMode
                                         ? 'Use Cosmic lock screen'
                                         : 'Use native lock screen',
@@ -1115,7 +1065,7 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                                     widget.onLockScreen != null)
                                   _utilityButton(
                                     icon: Icons.lock_rounded,
-                                    label: 'LOCK',
+                                    label: 'Lock',
                                     tooltip: 'Lock now',
                                     color: LuminousHomeTheme.orchid,
                                     onTap: widget.onLockScreen!,
@@ -1123,7 +1073,7 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                                 if (widget.onToggleCockpit != null)
                                   _utilityButton(
                                     icon: Icons.splitscreen_rounded,
-                                    label: 'COCKPIT',
+                                    label: 'Cockpit',
                                     tooltip: 'Open tabletop cockpit',
                                     color: LuminousHomeTheme.accent,
                                     onTap: widget.onToggleCockpit!,
@@ -1201,12 +1151,7 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                       const SizedBox(width: 6),
                       Text(
                         label,
-                        style: const TextStyle(
-                          color: LuminousHomeTheme.textSecondary,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.35,
-                        ),
+                        style: LuminousHomeTheme.chipLabel,
                       ),
                     ],
                   ),

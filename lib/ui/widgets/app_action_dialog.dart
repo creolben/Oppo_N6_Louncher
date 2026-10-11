@@ -29,7 +29,7 @@ class AppActionDialog extends StatelessWidget {
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             color: LuminousHomeTheme.panelScrim,
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusL),
             border: Border.all(
               color: app.accentColor.withOpacity(0.4),
               width: 1.2,
@@ -210,7 +210,7 @@ class AppActionDialog extends StatelessWidget {
         label,
         style: TextStyle(color: color, fontSize: 13.5, fontWeight: FontWeight.w500),
       ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM)),
       onTap: onTap,
     );
   }

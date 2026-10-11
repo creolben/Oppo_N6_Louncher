@@ -131,7 +131,7 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                         height: 46,
                         decoration: BoxDecoration(
                           color: LuminousHomeTheme.panelRaised,
-                          borderRadius: BorderRadius.circular(23),
+                          borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusL),
                           border: Border.all(color: LuminousHomeTheme.white12),
                         ),
                         child: TextField(
@@ -158,7 +158,7 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                             margin: const EdgeInsets.only(bottom: 6),
                             decoration: BoxDecoration(
                               color: LuminousHomeTheme.panel.withValues(alpha: 0.6),
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                               border: Border.all(color: app.accentColor.withValues(alpha: 0.2)),
                             ),
                             child: ListTile(
@@ -348,7 +348,7 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                                   width: 46,
                                   height: 46,
                                   decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(14),
+                                    borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                                     color: isFilled
                                         ? LuminousHomeTheme.panelRaised
                                         : LuminousHomeTheme.panel.withValues(alpha: 0.5),
@@ -361,7 +361,7 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                                   ),
                                   child: isFilled
                                       ? ClipRRect(
-                                          borderRadius: BorderRadius.circular(12),
+                                          borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                                           child: app!.iconBytes != null
                                               ? Image.memory(app.iconBytes!, fit: BoxFit.cover)
                                               : Icon(app.fallbackIcon, color: app.accentColor, size: 22),
@@ -415,7 +415,7 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                     style: ElevatedButton.styleFrom(
                       backgroundColor: LuminousHomeTheme.accentCore,
                       foregroundColor: LuminousHomeTheme.nodeFill,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(23)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusL)),
                     ),
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text(

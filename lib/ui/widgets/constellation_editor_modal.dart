@@ -143,7 +143,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                         height: 46,
                         decoration: BoxDecoration(
                           color: LuminousHomeTheme.panelRaised,
-                          borderRadius: BorderRadius.circular(23),
+                          borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusL),
                           border: Border.all(color: LuminousHomeTheme.white12),
                         ),
                         child: TextField(
@@ -171,7 +171,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                             margin: const EdgeInsets.only(bottom: 6),
                             decoration: BoxDecoration(
                               color: LuminousHomeTheme.panel.withValues(alpha: 0.6),
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                               border: Border.all(color: app.accentColor.withValues(alpha: 0.2)),
                             ),
                             child: ListTile(
@@ -374,7 +374,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                     width: 44,
                                     height: 44,
                                     decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(13),
+                                      borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                                       color: isFilled
                                           ? LuminousHomeTheme.panelRaised
                                           : LuminousHomeTheme.panel.withValues(alpha: 0.5),
@@ -447,14 +447,14 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                               height: 48,
                                               decoration: BoxDecoration(
                                                 color: LuminousHomeTheme.panelRaised,
-                                                borderRadius: BorderRadius.circular(14),
+                                                borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                                                 border: Border.all(
                                                   color: c.primaryColor.withValues(alpha: 0.5),
                                                   width: 1.2,
                                                 ),
                                               ),
                                               child: ClipRRect(
-                                                borderRadius: BorderRadius.circular(12),
+                                                borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                                                 child: app.iconBytes != null
                                                     ? Image.memory(app.iconBytes!, fit: BoxFit.cover)
                                                     : Icon(app.fallbackIcon,
@@ -516,7 +516,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                             height: 48,
                                             decoration: BoxDecoration(
                                               color: c.primaryColor.withValues(alpha: 0.1),
-                                              borderRadius: BorderRadius.circular(14),
+                                              borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                                               border: Border.all(
                                                 color: c.primaryColor.withValues(alpha: 0.4),
                                                 width: 1.2,
@@ -571,7 +571,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: c.primaryColor,
                       foregroundColor: LuminousHomeTheme.nodeFill,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(23)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusL)),
                     ),
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text(
