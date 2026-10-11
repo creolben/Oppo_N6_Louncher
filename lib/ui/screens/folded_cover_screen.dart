@@ -10,6 +10,7 @@ import '../../core/launcher_bridge.dart';
 import '../../core/launcher_haptics.dart';
 import '../../core/foldable_controller.dart';
 import '../../core/galaxy_layout_engine.dart';
+import '../../core/system_gestures.dart';
 import '../format/clock_format.dart';
 import '../theme/luminous_home_theme.dart';
 import '../widgets/fading_horizontal_scroll.dart';
@@ -60,6 +61,15 @@ class FoldedCoverScreen extends StatefulWidget {
   final VoidCallback? onEditCore;
   final VoidCallback? onOpenShopping;
 
+  /// Whether a double tap on empty cover space should sleep the screen.
+  ///
+  /// Gated again on the accessibility service being connected at tap time. The
+  /// owner keeps this false while the lock panel is mounted.
+  final bool doubleTapToSleep;
+
+  /// Opens the Gestures sheet, when the cover has a cockpit entry for it.
+  final VoidCallback? onOpenGestures;
+
   const FoldedCoverScreen({
     super.key,
     required this.apps,
@@ -73,6 +83,8 @@ class FoldedCoverScreen extends StatefulWidget {
     this.onCreateConstellation,
     this.onEditCore,
     this.onOpenShopping,
+    this.doubleTapToSleep = false,
+    this.onOpenGestures,
   });
 
   @override
@@ -86,6 +98,14 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
 
   String? _selectedSectorId;
   bool _showFoldControls = false;
+
+  /// The candidate first tap of the cover's sleep gesture.
+  ///
+  /// Timestamp-based rather than a `DoubleTapGestureRecognizer`, so a tap on an
+  /// app tile launches on the frame the finger lifts. The surrounding detector
+  /// only sees taps no child claimed — every tile, chip and dock button wins its
+  /// own tap in the gesture arena — so this is exactly the empty space.
+  final DoubleTapTracker _emptyTap = DoubleTapTracker();
 
   late final AnimationController _pulseController;
 
@@ -153,6 +173,35 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     LauncherBridge.launchApp(app, sourceBounds: sourceBounds);
   }
 
+  /// Records or consumes the empty-space tap behind the sleep gesture.
+  ///
+  /// Only reached for taps no interactive child claimed; a tile, chip or dock
+  /// button resolves its own tap first, so a node tap never starts or completes
+  /// this gesture and is never delayed by it.
+  void _handleCoverTapUp(TapUpDetails details) {
+    if (!widget.doubleTapToSleep) {
+      _emptyTap.clear();
+      return;
+    }
+    if (_emptyTap.matches(details.localPosition)) {
+      _emptyTap.clear();
+      unawaited(_sleepOnDoubleTap());
+      return;
+    }
+    _emptyTap.record(details.localPosition);
+  }
+
+  /// Sleeps the screen for a double tap on empty cover space.
+  ///
+  /// Re-checks the preference and the service at tap time, so a disabled service
+  /// makes the gesture a no-op rather than an error; [SystemGestures.lockScreen]
+  /// answers false rather than throwing when the platform refuses.
+  Future<void> _sleepOnDoubleTap() async {
+    if (!widget.doubleTapToSleep) return;
+    if (!await SystemGestures.isEnabled()) return;
+    await SystemGestures.lockScreen();
+  }
+
   @override
   Widget build(BuildContext context) {
     final coreConstellation = _coreConstellation;
@@ -163,7 +212,14 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
 
     return Scaffold(
       backgroundColor: CoverStyle.page,
-      body: Stack(
+      // The detector wraps the whole cover with translucent hit testing, so it
+      // receives the taps no interactive child claimed — the empty space the
+      // sleep gesture lives on. It only listens for taps; dragging and scrolling
+      // still belong to the list and its children.
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTapUp: _handleCoverTapUp,
+        child: Stack(
         children: [
           // 1. Luminous Horizon atmosphere: an ink-blue OLED field with a
           // low cobalt horizon and restrained aqua/orchid light.
@@ -325,7 +381,8 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
               bottom: 92,
               child: _buildFoldControlsSheet(),
             ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -981,6 +1038,15 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                     onTap: widget.onLock,
                   ),
 
+                  // Gestures
+                  if (widget.onOpenGestures != null)
+                    _dockIconButton(
+                      icon: Icons.touch_app_rounded,
+                      color: LuminousHomeTheme.textSecondary,
+                      tooltip: 'Gestures',
+                      onTap: widget.onOpenGestures!,
+                    ),
+
                   // Settings
                   _dockIconButton(
                     icon: Icons.settings_outlined,
@@ -1014,8 +1080,12 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic,
-            width: CoverStyle.touchTarget + 4,
-            height: CoverStyle.touchTarget + 4,
+            // Exactly the 48dp baseline, not the baseline-plus-breathing-room
+            // this used to reserve: the dock now carries six controls, and at
+            // 360dp that extra 4dp per button was the difference between fitting
+            // and a one-pixel overflow.
+            width: CoverStyle.touchTarget,
+            height: CoverStyle.touchTarget,
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: isActive

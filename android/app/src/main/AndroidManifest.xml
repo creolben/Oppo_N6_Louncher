@@ -175,6 +175,27 @@
                 android:resource="@xml/cosmic_live_wallpaper" />
         </service>
 
+        <!-- ChronoFold's optional, off-by-default accessibility service. It is
+             bound only when the user enables it in Android's accessibility
+             settings, and it exists solely to perform three public global
+             actions: open the notification shade, lock the screen and show
+             recent apps. Its metadata requests no event types and no window
+             content (see res/xml/chronofold_accessibility_service.xml), so it
+             reads nothing on screen. The platform permission is what restricts
+             binding to the system. -->
+        <service
+            android:name=".ChronoFoldAccessibilityService"
+            android:exported="true"
+            android:label="@string/chronofold_accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/chronofold_accessibility_service" />
+        </service>
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

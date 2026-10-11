@@ -18,10 +18,12 @@ import 'ui/widgets/comet_search_surface.dart';
 import 'ui/widgets/ambient_wallpaper_sheet.dart';
 import 'core/search_coordinator.dart';
 import 'core/search_providers/fixture_search_provider.dart';
+import 'core/system_gestures.dart';
 import 'ui/widgets/app_action_dialog.dart';
 import 'ui/widgets/native_panel_transition.dart';
 import 'ui/widgets/constellation_editor_modal.dart';
 import 'ui/widgets/create_constellation_modal.dart';
+import 'ui/widgets/gestures_sheet.dart';
 import 'core/galaxy_storage_service.dart';
 import 'features/lockscreen/cosmic_lock_screen.dart';
 import 'features/shopping/parsing/document_parser.dart';
@@ -77,6 +79,12 @@ class ChronoFoldApp extends StatelessWidget {
   /// channel is used; injectable so a test can drive badge changes.
   final Stream<Map<String, dynamic>>? badgesStream;
 
+  /// Test seams for the two gesture preferences. Null in production, where they
+  /// are read from `galaxy_settings.json`; a widget test states them directly
+  /// rather than standing in for the settings file.
+  final bool? doubleTapToSleep;
+  final String? swipeDownAction;
+
   const ChronoFoldApp({
     super.key,
     this.isKeyguardLocked,
@@ -84,6 +92,8 @@ class ChronoFoldApp extends StatelessWidget {
     this.extractPdfText,
     this.pickPdf,
     this.badgesStream,
+    this.doubleTapToSleep,
+    this.swipeDownAction,
   });
 
   @override
@@ -108,6 +118,8 @@ class ChronoFoldApp extends StatelessWidget {
             extractPdfText: extractPdfText,
             pickPdf: pickPdf,
             badgesStream: badgesStream,
+            doubleTapToSleep: doubleTapToSleep,
+            swipeDownAction: swipeDownAction,
           ),
         );
       },
@@ -135,6 +147,10 @@ class ChronoFoldHomeScreen extends StatefulWidget {
   /// The notification-badge stream. Null in production; injectable for tests.
   final Stream<Map<String, dynamic>>? badgesStream;
 
+  /// Test seams for the two persisted gesture preferences. Null in production.
+  final bool? doubleTapToSleep;
+  final String? swipeDownAction;
+
   const ChronoFoldHomeScreen({
     super.key,
     this.isKeyguardLocked,
@@ -142,6 +158,8 @@ class ChronoFoldHomeScreen extends StatefulWidget {
     this.extractPdfText,
     this.pickPdf,
     this.badgesStream,
+    this.doubleTapToSleep,
+    this.swipeDownAction,
   });
 
   @override
@@ -188,6 +206,14 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   /// platform keyguard before the Cosmic surface reveals or launches anything.
   bool _nativeMode = false;
   bool _isDefaultLauncher = true;
+
+  /// The two persisted gesture preferences.
+  ///
+  /// Both default to today's behaviour: no sleep-on-double-tap, and a swipe down
+  /// opens search. They only take effect through the optional accessibility
+  /// service, which is off until the user enables it.
+  bool _doubleTapToSleep = false;
+  String _swipeDownAction = SwipeDownAction.search;
 
   /// Whether the comet web-search surface is up, and the query it was opened
   /// with when escalated from an app-search miss.
@@ -443,6 +469,79 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     setState(() => _isLocked = true);
   }
 
+  /// Whether the sleep-on-double-tap gesture may fire right now.
+  ///
+  /// Never while the cosmic lock panel is mounted: re-locking a locked launcher
+  /// is exactly the ghost-panel behaviour the lock code exists to prevent. The
+  /// canvas and cover re-check the service themselves, at tap time.
+  bool get _doubleTapToSleepArmed => _doubleTapToSleep && !_isLocked;
+
+  /// Persists the two gesture preferences through the same
+  /// [GalaxyStorageService] the layout uses.
+  ///
+  /// `nativeLauncherMode` is deliberately omitted: a null argument leaves the
+  /// stored value alone, so saving a gesture cannot silently reset the lock mode.
+  Future<void> _saveGestureSettings() async {
+    await GalaxyStorageService.saveConfig(
+      coreAppPackageNames: _layoutEngine.corePackageNames,
+      customConstellations: _layoutEngine.customConstellations,
+      constellationAppOverrides: _layoutEngine.constellationAppOverrides,
+      hiddenPackageNames: _layoutEngine.hiddenPackageNames,
+      doubleTapToSleep: _doubleTapToSleep,
+      swipeDownAction: _swipeDownAction,
+    );
+  }
+
+  /// Opens the small Gestures sheet.
+  ///
+  /// The service state is read once on open so the sheet never shows a stale
+  /// "on"; the sheet then re-reads it after a trip to Android's settings.
+  Future<void> _openGesturesSheet() async {
+    final bool enabled = await SystemGestures.isEnabled();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: LuminousHomeTheme.lockScrim,
+      builder: (sheetContext) => GesturesSheet(
+        serviceEnabled: enabled,
+        doubleTapToSleep: _doubleTapToSleep,
+        swipeDownAction: _swipeDownAction,
+        onDoubleTapToSleepChanged: (value) {
+          setState(() => _doubleTapToSleep = value);
+          unawaited(_saveGestureSettings());
+        },
+        onSwipeDownActionChanged: (action) {
+          setState(() => _swipeDownAction = SwipeDownAction.normalise(action));
+          unawaited(_saveGestureSettings());
+        },
+      ),
+    );
+  }
+
+  /// The galaxy's swipe-down action.
+  ///
+  /// Configured for notifications and with the service connected, it opens the
+  /// shade; a platform refusal falls back to search rather than swallowing the
+  /// gesture. Otherwise it opens app search exactly as it always has.
+  void _handleSwipeDown() {
+    if (_swipeDownAction == SwipeDownAction.notifications) {
+      unawaited(_showNotificationsOrSearch());
+      return;
+    }
+    setState(() => _isSearchOpen = true);
+  }
+
+  Future<void> _showNotificationsOrSearch() async {
+    if (await SystemGestures.isEnabled()) {
+      final bool opened = await SystemGestures.notifications();
+      if (opened) return;
+    }
+    if (!mounted) return;
+    setState(() => _isSearchOpen = true);
+  }
+
   /// Whether the persisted layout has been applied to [_layoutEngine].
   ///
   /// [_loadApplications] runs again on every package-change broadcast. The
@@ -502,6 +601,18 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
           _layoutEngine.setHiddenPackageNames(hiddenPkgs);
         }
         _nativeMode = config['nativeLauncherMode'] as bool? ?? false;
+        _doubleTapToSleep = config['doubleTapToSleep'] as bool? ?? false;
+        _swipeDownAction = SwipeDownAction.normalise(
+          config['swipeDownAction'],
+        );
+      }
+      // Test seams win over the stored file. Production passes neither, so this
+      // is inert there.
+      if (widget.doubleTapToSleep != null) {
+        _doubleTapToSleep = widget.doubleTapToSleep!;
+      }
+      if (widget.swipeDownAction != null) {
+        _swipeDownAction = SwipeDownAction.normalise(widget.swipeDownAction);
       }
     }
 
@@ -762,6 +873,8 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                   onEditCore:
                                       _openCenterConstellationEditorModal,
                                   onOpenShopping: _openShopping,
+                                  onOpenGestures: _openGesturesSheet,
+                                  doubleTapToSleep: _doubleTapToSleepArmed,
                                 )
                               : (_isCockpitMode && _foldable.isTabletop)
                               ? TabletopCockpitView(
@@ -785,6 +898,8 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                   onToggleFullscreen: () =>
                                       setState(() => _isCockpitMode = false),
                                   onOpenShopping: _openShopping,
+                                  onSwipeDown: _handleSwipeDown,
+                                  doubleTapToSleep: _doubleTapToSleepArmed,
                                 )
                               : Stack(
                                   key: const ValueKey('unfolded_galaxy_screen'),
@@ -801,9 +916,9 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                             _openAppLongPressDialog,
                                         onConstellationLongPressed:
                                             _openConstellationEditorModal,
-                                        onSwipeDown: () => setState(
-                                          () => _isSearchOpen = true,
-                                        ),
+                                        onSwipeDown: _handleSwipeDown,
+                                        doubleTapToSleep:
+                                            _doubleTapToSleepArmed,
                                       ),
                                     ),
 
@@ -855,6 +970,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                         onEditCore:
                                             _openCenterConstellationEditorModal,
                                         onOpenShopping: _openShopping,
+                                        onOpenGestures: _openGesturesSheet,
                                       ),
                                     ),
                                   ],

@@ -2,4 +2,9 @@
 <resources>
     <string name="cosmic_live_wallpaper_name">ChronoFold Ambient Galaxy</string>
     <string name="cosmic_live_wallpaper_description">An ambient cosmic starfield with drifting nebulae, meteors, and a living astrolabe core.</string>
+    <!-- Shown in Android's accessibility settings. It states the limit plainly
+         so enabling ChronoFold is an informed choice, and it is the only place
+         the launcher explains it: the Gestures sheet never nags. -->
+    <string name="chronofold_accessibility_label">ChronoFold gestures</string>
+    <string name="chronofold_accessibility_description">ChronoFold uses this only to open the notification shade, lock the screen, and show recent apps when you use its gestures. It never reads screen content.</string>
 </resources>

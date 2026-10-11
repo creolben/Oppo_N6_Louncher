@@ -28,6 +28,10 @@ class FoldableCockpitBar extends StatefulWidget {
   /// tests keep compiling without a shopping controller of their own.
   final VoidCallback? onOpenShopping;
 
+  /// Opens the small Gestures sheet. Optional; when null the sheet's cockpit
+  /// entry points are not drawn at all.
+  final VoidCallback? onOpenGestures;
+
   const FoldableCockpitBar({
     super.key,
     required this.foldable,
@@ -41,6 +45,7 @@ class FoldableCockpitBar extends StatefulWidget {
     this.onEditCore,
     this.onOpenWebSearch,
     this.onOpenShopping,
+    this.onOpenGestures,
   });
 
   @override
@@ -361,10 +366,21 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
                           tooltip: 'Lock screen',
                           onTap: widget.onLock,
                         ),
+                      if (widget.onOpenGestures != null)
+                        _cockpitIconButton(
+                          icon: Icons.touch_app_rounded,
+                          color: LuminousHomeTheme.textSecondary,
+                          tooltip: 'Gestures',
+                          onTap: widget.onOpenGestures!,
+                        ),
                       _cockpitIconButton(
                         icon: Icons.settings_outlined,
                         color: LuminousHomeTheme.textSecondary,
                         tooltip: 'Settings',
+                        // Long-press is the second way into the Gestures sheet,
+                        // so the setting is discoverable from the control a user
+                        // already reaches for.
+                        onLongPress: widget.onOpenGestures,
                         onTap: widget.onOpenSettings,
                       ),
                     ],
@@ -407,12 +423,15 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
     required Color color,
     required String tooltip,
     required VoidCallback onTap,
+    VoidCallback? onLongPress,
     bool emphasized = false,
   }) {
     final radius = BorderRadius.circular(LuminousHomeTheme.iconRadius);
     return Semantics(
       button: true,
       label: tooltip,
+      hint: onLongPress == null ? null : 'Long press for gestures',
+      onLongPress: onLongPress,
       child: Tooltip(
         message: tooltip,
         child: SizedBox.square(
@@ -424,6 +443,7 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
             borderRadius: radius,
             child: InkWell(
               onTap: onTap,
+              onLongPress: onLongPress,
               borderRadius: radius,
               child: Center(
                 child: ExcludeSemantics(

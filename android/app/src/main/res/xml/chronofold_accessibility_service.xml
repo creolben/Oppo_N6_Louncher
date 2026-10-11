@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The declaration Android reads before it binds ChronoFoldAccessibilityService.
+
+  Deliberately minimal: no accessibilityEventTypes are requested (the empty
+  value is the empty set), canRetrieveWindowContent is false and
+  canPerformGestures is false, so the platform never hands this service window
+  content and it never asks for any. No accessibilityFlags are set either, which
+  is what keeps flagRequestFilterKeyEvents off. notificationTimeout is 0.
+
+  The only thing ChronoFold's service does is performGlobalAction() for the three actions
+  named in the description below.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/chronofold_accessibility_description"
+    android:accessibilityEventTypes=""
+    android:canRetrieveWindowContent="false"
+    android:canPerformGestures="false"
+    android:notificationTimeout="0" />
