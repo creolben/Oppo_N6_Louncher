@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.WindowManager
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
@@ -28,11 +30,33 @@ import io.flutter.plugin.common.MethodChannel
 class LockActivity : FlutterActivity() {
     private companion object {
         const val TAG = "ChronoFold"
+
+        /** How long a RESUMED lock surface may stay `DRAW_PENDING`. */
+        const val FIRST_FRAME_TIMEOUT_MS = 500L
     }
 
     private var lockSurface: LockSurfaceChannels? = null
     private var resumed = false
     private var userPresentReceiver: BroadcastReceiver? = null
+    private var screenOnReceiver: BroadcastReceiver? = null
+
+    /**
+     * Whether Flutter has presented a frame Android is allowed to draw.
+     *
+     * A lock surface can be RESUMED and top-most while its window is still
+     * `DRAW_PENDING`: `FlutterActivityAndFragmentDelegate.delayFirstAndroidViewDraw`
+     * gates the first draw on `onFlutterUiDisplayed`, and a surface raised while
+     * the display was off never produced that frame. [onStart], [onResume] and
+     * the screen-on broadcast ask Dart for one while this is false; the watchdog
+     * is the backstop when none arrives.
+     */
+    private var uiDisplayed = false
+
+    /** Runs the first-frame watchdog and every frame request on the main thread. */
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** Posted once per wake to reveal the keyguard if the surface never drew. */
+    private val firstFrameWatchdog = Runnable { checkFirstFrame() }
 
     /**
      * Whether this activity has already been asked to leave.
@@ -87,6 +111,31 @@ class LockActivity : FlutterActivity() {
             userPresentReceiver,
             IntentFilter(Intent.ACTION_USER_PRESENT),
         )
+
+        // The lock surface is raised at screen-off to be ready for the next
+        // wake, so the display coming on is its normal moment to draw. Its
+        // frames were disabled while it was stopped, so it asks Dart for one
+        // and arms the watchdog that reveals the keyguard if none arrives.
+        screenOnReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_SCREEN_ON) {
+                    requestLockFrameIfNeeded("screen on")
+                    armFirstFrameWatchdog()
+                }
+            }
+        }
+        registerReceiver(
+            screenOnReceiver,
+            IntentFilter(Intent.ACTION_SCREEN_ON),
+        )
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // onStart runs after onCreate configured the engine, so the surface is
+        // already published; a request that arrives before Dart is listening is
+        // harmless, and onResume and the screen-on broadcast ask again.
+        requestLockFrameIfNeeded("onStart")
     }
 
     override fun onResume() {
@@ -103,10 +152,19 @@ class LockActivity : FlutterActivity() {
         // Same re-read as the launcher: a theme change resumes this surface
         // too, and the lock panel must not keep the old accent.
         lockSurface?.pushSystemPaletteIfChanged()
+        // The window may still be `DRAW_PENDING` if the surface was stopped
+        // before it ever drew; ask for a frame now the engine is resumed.
+        requestLockFrameIfNeeded("onResume")
+        // An interactive display at resume is a real wake rather than a
+        // configuration change, so this is a moment the watchdog can time out.
+        if (power?.isInteractive == true) {
+            armFirstFrameWatchdog()
+        }
     }
 
     override fun onPause() {
         resumed = false
+        cancelFirstFrameWatchdog()
         super.onPause()
     }
 
@@ -124,11 +182,73 @@ class LockActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        cancelFirstFrameWatchdog()
         lockSurface?.dispose()
         lockSurface = null
         userPresentReceiver?.let { unregisterReceiver(it) }
         userPresentReceiver = null
+        screenOnReceiver?.let { unregisterReceiver(it) }
+        screenOnReceiver = null
         super.onDestroy()
+    }
+
+    override fun onFlutterUiDisplayed() {
+        super.onFlutterUiDisplayed()
+        uiDisplayed = true
+        // A drawn window is the watchdog's success condition; stop the timer.
+        cancelFirstFrameWatchdog()
+        android.util.Log.d(TAG, "CF_LOCK: lock frame displayed")
+    }
+
+    override fun onFlutterUiNoLongerDisplayed() {
+        super.onFlutterUiNoLongerDisplayed()
+        uiDisplayed = false
+        android.util.Log.d(TAG, "CF_LOCK: lock frame no longer displayed")
+    }
+
+    /**
+     * Asks Dart for a frame while Android has not presented one.
+     *
+     * The lock surface can be RESUMED and top-most while it is still
+     * `DRAW_PENDING`, because the first-draw gate opens only on
+     * `onFlutterUiDisplayed` and a paused/stopped engine schedules no frame of
+     * its own. Dart answers by forcing one; the request is a no-op once the
+     * window is real.
+     */
+    private fun requestLockFrameIfNeeded(reason: String) {
+        if (uiDisplayed) return
+        runOnUiThread {
+            if (uiDisplayed) return@runOnUiThread
+            val surface = lockSurface ?: return@runOnUiThread
+            surface.invokeAppsMethod("requestFrame", null)
+            android.util.Log.d(TAG, "CF_LOCK: requested lock frame ($reason)")
+        }
+    }
+
+    /** Arms the one-shot first-frame watchdog, replacing any pending run. */
+    private fun armFirstFrameWatchdog() {
+        mainHandler.removeCallbacks(firstFrameWatchdog)
+        mainHandler.postDelayed(firstFrameWatchdog, FIRST_FRAME_TIMEOUT_MS)
+    }
+
+    private fun cancelFirstFrameWatchdog() {
+        mainHandler.removeCallbacks(firstFrameWatchdog)
+    }
+
+    /**
+     * Reveals the platform keyguard when Flutter never presented a frame.
+     *
+     * Finishing is not an unlock: the keyguard is the surface that must be in
+     * front, and this only removes a black window that was hiding it.
+     */
+    private fun checkFirstFrame() {
+        if (resumed && !isFinishing && !uiDisplayed) {
+            android.util.Log.d(
+                TAG,
+                "CF_LOCK: lock frame stalled; finishing to reveal keyguard",
+            )
+            finishLock("first frame stalled")
+        }
     }
 
     /**
