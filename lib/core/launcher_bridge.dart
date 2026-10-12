@@ -663,6 +663,21 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return true;
   }
 
+  /// Holds the screen awake while the shopping surface is in store mode, or
+  /// releases it when store mode ends or the surface closes.
+  ///
+  /// A no-op on a non-Android host, where there is no window flag to set. The
+  /// shopping surface takes an injectable callback so a widget test never needs
+  /// this channel.
+  static Future<void> setKeepScreenOn(bool enabled) async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _appsChannel.invokeMethod('setKeepScreenOn', {'enabled': enabled});
+    } catch (e) {
+      debugPrint('CF_SHOPPING: setKeepScreenOn failed: $e');
+    }
+  }
+
   /// Leaves the lock surface so the user lands on whatever is underneath.
   ///
   /// Only meaningful for the lock activity (`lockMain`): dismissing the panel

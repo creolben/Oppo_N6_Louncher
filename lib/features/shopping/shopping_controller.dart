@@ -44,6 +44,7 @@ class ShoppingController extends ChangeNotifier {
   final Map<String, String> _aisleMemory = <String, String>{};
   String? _activeListId;
   bool _preferImperial = false;
+  bool _storeMode = false;
   bool _loaded = false;
   int _idCounter = 0;
   Timer? _saveTimer;
@@ -55,6 +56,9 @@ class ShoppingController extends ChangeNotifier {
   String? get activeListId => _activeListId;
 
   bool get preferImperial => _preferImperial;
+
+  /// Whether the store-walk presentation is active. Persisted with the store.
+  bool get storeMode => _storeMode;
 
   bool get isLoaded => _loaded;
 
@@ -99,6 +103,7 @@ class ShoppingController extends ChangeNotifier {
       ..addAll(data.recipes);
     _activeListId = data.activeListId;
     _preferImperial = data.preferImperial;
+    _storeMode = data.storeMode;
     _aisleMemory
       ..clear()
       ..addAll(data.aisleMemory);
@@ -306,6 +311,26 @@ class ShoppingController extends ChangeNotifier {
   /// The index is clamped to the aisle, so a reorder never crosses into another
   /// aisle. Items that are checked or already indented are left alone.
   void moveItem(String listId, String itemId, int newIndexWithinAisle) {
+    _moveItemUnit(listId, itemId, newIndexWithinAisle, withinAisle: true);
+  }
+
+  /// Moves [itemId] and its children to [newIndex] among every unchecked
+  /// top-level item of [listId], ignoring aisle boundaries.
+  ///
+  /// This backs the "My order" presentation, where the list is one flat
+  /// section. Like [moveItem], children travel with their parent and checked
+  /// items keep their existing slots, so a reorder never disturbs the Done
+  /// section. The index is clamped to the ends of the unchecked run.
+  void moveItemAcrossList(String listId, String itemId, int newIndex) {
+    _moveItemUnit(listId, itemId, newIndex, withinAisle: false);
+  }
+
+  void _moveItemUnit(
+    String listId,
+    String itemId,
+    int newIndex, {
+    required bool withinAisle,
+  }) {
     final index = _lists.indexWhere((list) => list.id == listId);
     if (index < 0) return;
     final list = _lists[index];
@@ -317,7 +342,7 @@ class ShoppingController extends ChangeNotifier {
     final units = <List<ShoppingItem>>[];
     for (final candidate in list.items) {
       if (candidate.checked || candidate.parentId != null) continue;
-      if (candidate.aisle != aisle) continue;
+      if (withinAisle && candidate.aisle != aisle) continue;
       units.add(<ShoppingItem>[
         candidate,
         ...list.items.where((child) => child.parentId == candidate.id),
@@ -325,7 +350,7 @@ class ShoppingController extends ChangeNotifier {
     }
     final int current = units.indexWhere((unit) => unit.first.id == itemId);
     if (current < 0) return;
-    final int target = newIndexWithinAisle.clamp(0, units.length - 1);
+    final int target = newIndex.clamp(0, units.length - 1);
     if (target == current) return;
 
     final List<ShoppingItem> moved = units.removeAt(current);
@@ -369,7 +394,11 @@ class ShoppingController extends ChangeNotifier {
     if (item == null) return;
 
     if (item.parentId == null) {
-      moveItem(listId, itemId, target);
+      if (list.sortMode == ShoppingSortMode.manual) {
+        moveItemAcrossList(listId, itemId, target);
+      } else {
+        moveItem(listId, itemId, target);
+      }
       return;
     }
 
@@ -399,9 +428,14 @@ class ShoppingController extends ChangeNotifier {
     final item = list.itemById(itemId);
     if (item == null || item.checked) return null;
     if (item.parentId == null) {
+      // "My order" treats the whole unchecked run as one section, so an
+      // up/down move crosses aisles; by-aisle mode stays inside its group.
+      final bool acrossList = list.sortMode == ShoppingSortMode.manual;
       final units = <ShoppingItem>[
         for (final entry in list.items)
-          if (!entry.checked && entry.parentId == null && entry.aisle == item.aisle)
+          if (!entry.checked &&
+              entry.parentId == null &&
+              (acrossList || entry.aisle == item.aisle))
             entry,
       ];
       final int current = units.indexWhere((entry) => entry.id == itemId);
@@ -463,6 +497,18 @@ class ShoppingController extends ChangeNotifier {
     if (_lists[index].checkedCollapsed == collapsed) return;
     _lists[index] = _lists[index].copyWith(
       checkedCollapsed: collapsed,
+      updatedAt: _clock(),
+    );
+    _afterMutation();
+  }
+
+  /// Sets how [listId] orders its unchecked rows.
+  void setSortMode(String listId, ShoppingSortMode mode) {
+    final index = _lists.indexWhere((list) => list.id == listId);
+    if (index < 0) return;
+    if (_lists[index].sortMode == mode) return;
+    _lists[index] = _lists[index].copyWith(
+      sortMode: mode,
       updatedAt: _clock(),
     );
     _afterMutation();
@@ -708,6 +754,14 @@ class ShoppingController extends ChangeNotifier {
     _afterMutation();
   }
 
+  /// Turns the store-walk presentation on or off, persisting the choice with
+  /// the rest of the store.
+  void setStoreMode(bool value) {
+    if (_storeMode == value) return;
+    _storeMode = value;
+    _afterMutation();
+  }
+
   /// Forces any pending debounced save to complete now.
   Future<void> flush() async {
     _saveTimer?.cancel();
@@ -747,6 +801,7 @@ class ShoppingController extends ChangeNotifier {
         activeListId: _activeListId,
         preferImperial: _preferImperial,
         aisleMemory: _aisleMemory,
+        storeMode: _storeMode,
       ),
     );
   }

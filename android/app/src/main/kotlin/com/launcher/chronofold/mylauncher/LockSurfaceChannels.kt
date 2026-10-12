@@ -29,6 +29,7 @@ import android.os.CancellationSignal
 import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
+import android.view.WindowManager
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -252,6 +253,24 @@ class LockSurfaceChannels(
                     val enabled = call.argument<Boolean>("enabled") ?: false
                     activity.runOnUiThread {
                         host.setOverlayWhenLocked(enabled)
+                        result.success(true)
+                    }
+                }
+                "setKeepScreenOn" -> {
+                    // Store mode holds the screen awake while walking the shop;
+                    // the window flag is touched on the UI thread and released
+                    // the moment Dart asks for false.
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    activity.runOnUiThread {
+                        if (enabled) {
+                            activity.window.addFlags(
+                                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                            )
+                        } else {
+                            activity.window.clearFlags(
+                                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                            )
+                        }
                         result.success(true)
                     }
                 }

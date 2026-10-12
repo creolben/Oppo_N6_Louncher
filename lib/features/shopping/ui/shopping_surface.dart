@@ -34,12 +34,20 @@ class ShoppingSurface extends StatefulWidget {
   /// injectable so the picker-to-review flow can be exercised without a device.
   final PdfImportService? pdfImportService;
 
+  /// Drives the platform's keep-screen-on flag while store mode is active.
+  ///
+  /// Defaults to [LauncherBridge.setKeepScreenOn]. Injectable (and therefore a
+  /// no-op on a test host) so a widget test can assert the request and release
+  /// without touching a platform channel.
+  final ValueChanged<bool>? onKeepScreenOn;
+
   const ShoppingSurface({
     super.key,
     required this.controller,
     required this.foldable,
     required this.onClose,
     this.pdfImportService,
+    this.onKeepScreenOn,
   });
 
   @override
@@ -49,10 +57,71 @@ class ShoppingSurface extends StatefulWidget {
 class _ShoppingSurfaceState extends State<ShoppingSurface> {
   String? _selectedRecipeId;
 
+  /// Whether the folded-posture store-mode suggestion has been dismissed.
+  bool _storeModeHintDismissed = false;
+
+  /// Whether this surface currently holds the platform keep-screen-on flag.
+  bool _keepScreenOnActive = false;
+
   Recipe? get _selectedRecipe {
     final String? id = _selectedRecipeId;
     if (id == null) return null;
     return widget.controller.recipeById(id);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onControllerChanged);
+    _syncKeepScreenOn();
+  }
+
+  void _onControllerChanged() => _syncKeepScreenOn();
+
+  /// Requests or releases the keep-screen-on flag so it tracks store mode.
+  void _syncKeepScreenOn() {
+    final bool shouldKeep = widget.controller.storeMode;
+    if (shouldKeep == _keepScreenOnActive) return;
+    _keepScreenOnActive = shouldKeep;
+    (widget.onKeepScreenOn ?? LauncherBridge.setKeepScreenOn)(shouldKeep);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
+    // Never leave the screen pinned awake after the surface goes away.
+    if (_keepScreenOnActive) {
+      _keepScreenOnActive = false;
+      (widget.onKeepScreenOn ?? LauncherBridge.setKeepScreenOn)(false);
+    }
+    super.dispose();
+  }
+
+  /// Whether the cover-display store-mode hint should be offered right now.
+  bool get _showStoreHint =>
+      !widget.controller.storeMode &&
+      !_storeModeHintDismissed &&
+      (widget.foldable.isFolded || widget.foldable.isOnCoverDisplay);
+
+  /// Wraps a list view with the optional store-mode hint and (when asked) the
+  /// store-aware quick-add capsule.
+  Widget _buildListArea(Widget listView, {required bool showQuickAdd}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (_showStoreHint)
+          _StoreModeHint(
+            onEnable: () => widget.controller.setStoreMode(true),
+            onDismiss: () => setState(() => _storeModeHintDismissed = true),
+          ),
+        Expanded(child: listView),
+        if (showQuickAdd)
+          _StoreQuickAdd(
+            controller: widget.controller,
+            storeMode: widget.controller.storeMode,
+          ),
+      ],
+    );
   }
 
   Future<void> _openNavigatorSheet() async {
@@ -202,9 +271,16 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
                 )
               : list == null
                   ? const _NoListState()
-                  : ListPane(controller: widget.controller, list: list),
+                  : _buildListArea(
+                      ListPane(controller: widget.controller, list: list),
+                      showQuickAdd: false,
+                    ),
         ),
-        if (recipe == null) QuickAddCapsule(controller: widget.controller),
+        if (recipe == null)
+          _StoreQuickAdd(
+            controller: widget.controller,
+            storeMode: widget.controller.storeMode,
+          ),
       ],
     );
   }
@@ -238,9 +314,10 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
                   recipe: recipe,
                   onClose: () => setState(() => _selectedRecipeId = null),
                 )
-              : _ListColumn(
-                  controller: widget.controller,
-                  list: list,
+              : _buildListArea(
+                  list == null
+                      ? const _NoListState()
+                      : ListPane(controller: widget.controller, list: list),
                   showQuickAdd: true,
                 ),
         ),
@@ -275,7 +352,10 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
               height: topHeight,
               child: list == null
                   ? const _NoListState()
-                  : ListPane(controller: widget.controller, list: list),
+                  : _buildListArea(
+                      ListPane(controller: widget.controller, list: list),
+                      showQuickAdd: false,
+                    ),
             ),
             Container(height: 1, color: LuminousHomeTheme.groceryGlow),
             Expanded(
@@ -289,7 +369,10 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
                         compact: true,
                       ),
                     ),
-                  QuickAddCapsule(controller: widget.controller),
+                  _StoreQuickAdd(
+                    controller: widget.controller,
+                    storeMode: widget.controller.storeMode,
+                  ),
                 ],
               ),
             ),
@@ -300,28 +383,132 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
   }
 }
 
-class _ListColumn extends StatelessWidget {
+/// The quick-add capsule under store mode: collapsed to one large "Add item"
+/// button until tapped, when it expands into the normal capsule.
+class _StoreQuickAdd extends StatefulWidget {
   final ShoppingController controller;
-  final ShoppingList? list;
-  final bool showQuickAdd;
+  final bool storeMode;
 
-  const _ListColumn({
-    required this.controller,
-    required this.list,
-    required this.showQuickAdd,
-  });
+  const _StoreQuickAdd({required this.controller, required this.storeMode});
+
+  @override
+  State<_StoreQuickAdd> createState() => _StoreQuickAddState();
+}
+
+class _StoreQuickAddState extends State<_StoreQuickAdd> {
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(covariant _StoreQuickAdd oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Entering or leaving store mode always starts collapsed again.
+    if (oldWidget.storeMode != widget.storeMode) {
+      _expanded = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: <Widget>[
-        Expanded(
-          child: list == null
-              ? const _NoListState()
-              : ListPane(controller: controller, list: list!),
+    if (!widget.storeMode || _expanded) {
+      return QuickAddCapsule(controller: widget.controller);
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        LuminousHomeTheme.screenGutter,
+        LuminousHomeTheme.space8,
+        LuminousHomeTheme.screenGutter,
+        LuminousHomeTheme.space12,
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: GroceryActionButton(
+          key: const ValueKey<String>('store_add_item'),
+          icon: Icons.add_rounded,
+          label: 'Add item',
+          onTap: () => setState(() => _expanded = true),
         ),
-        if (showQuickAdd) QuickAddCapsule(controller: controller),
-      ],
+      ),
+    );
+  }
+}
+
+/// A dismissible suggestion, offered on the cover display, to enter store mode.
+class _StoreModeHint extends StatelessWidget {
+  final VoidCallback onEnable;
+  final VoidCallback onDismiss;
+
+  const _StoreModeHint({required this.onEnable, required this.onDismiss});
+
+  @override
+  Widget build(BuildContext context) {
+    final BorderRadius radius = BorderRadius.circular(
+      LuminousHomeTheme.controlRadius,
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        LuminousHomeTheme.screenGutter,
+        LuminousHomeTheme.space8,
+        LuminousHomeTheme.screenGutter,
+        0,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: LuminousHomeTheme.grocerySoft,
+          borderRadius: radius,
+          border: Border.all(color: LuminousHomeTheme.groceryBright),
+        ),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Semantics(
+                button: true,
+                label: 'Turn on store mode',
+                child: Material(
+                  color: Colors.transparent,
+                  borderRadius: radius,
+                  child: InkWell(
+                    onTap: onEnable,
+                    borderRadius: radius,
+                    child: Container(
+                      constraints: const BoxConstraints(
+                        minHeight: LuminousHomeTheme.minimumTouchTarget,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: LuminousHomeTheme.space12,
+                      ),
+                      child: Row(
+                        children: <Widget>[
+                          const Icon(
+                            Icons.storefront_rounded,
+                            size: 18,
+                            color: LuminousHomeTheme.groceryAccent,
+                          ),
+                          const SizedBox(width: LuminousHomeTheme.space8),
+                          Flexible(
+                            child: Text(
+                              'Store mode',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: LuminousHomeTheme.label,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            GroceryIconButton(
+              key: const ValueKey<String>('dismiss_store_hint'),
+              icon: Icons.close_rounded,
+              label: 'Dismiss store mode hint',
+              color: LuminousHomeTheme.textMuted,
+              onTap: onDismiss,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -378,8 +565,48 @@ class _ShoppingCapsule extends StatelessWidget {
     required this.onImportPdf,
   });
 
+  /// The active list's name, falling back to the surface's own title.
+  String get _listName => controller.activeList?.name ?? 'Shopping list';
+
+  /// The screen-reader label for the list switcher.
+  String get _switchListLabel {
+    final ShoppingList? list = controller.activeList;
+    final int total = list?.items.length ?? 0;
+    final int done = list?.checkedCount ?? 0;
+    return 'Switch list, current $_listName, $done of $total done';
+  }
+
+  static PopupMenuItem<String> _menuItem({
+    required String value,
+    required IconData icon,
+    required String title,
+    bool selected = false,
+  }) {
+    return PopupMenuItem<String>(
+      value: value,
+      child: ListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(
+          selected ? Icons.check_rounded : icon,
+          color: selected
+              ? LuminousHomeTheme.groceryAccent
+              : LuminousHomeTheme.textSecondary,
+        ),
+        title: Text(title),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final ShoppingList? list = controller.activeList;
+    final ShoppingSortMode sortMode =
+        list?.sortMode ?? ShoppingSortMode.byAisle;
+    final bool storeMode = controller.storeMode;
+    final int total = list?.items.length ?? 0;
+    final int done = list?.checkedCount ?? 0;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         LuminousHomeTheme.space16,
@@ -418,17 +645,78 @@ class _ShoppingCapsule extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: Text(
-                'Shopping list',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: LuminousHomeTheme.title,
+              child: Semantics(
+                container: true,
+                button: true,
+                excludeSemantics: true,
+                label: _switchListLabel,
+                onTap: onOpenNavigator,
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: onOpenNavigator,
+                    borderRadius: BorderRadius.circular(
+                      LuminousHomeTheme.controlRadius,
+                    ),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        minHeight: LuminousHomeTheme.minimumTouchTarget,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: LuminousHomeTheme.space4,
+                        ),
+                        child: Row(
+                          children: <Widget>[
+                            Flexible(
+                              child: Text(
+                                _listName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: LuminousHomeTheme.title,
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            const Icon(
+                              Icons.expand_more_rounded,
+                              size: 16,
+                              color: LuminousHomeTheme.textMuted,
+                            ),
+                            if (total > 0) ...<Widget>[
+                              const SizedBox(width: LuminousHomeTheme.space8),
+                              Flexible(
+                                child: Text(
+                                  '$done of $total',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: LuminousHomeTheme.caption.copyWith(
+                                    color: LuminousHomeTheme.textMuted,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
-            _UnitToggle(
-              preferImperial: controller.preferImperial,
-              onChanged: controller.setPreferImperial,
-            ),
+            if (!storeMode)
+              _UnitToggle(
+                preferImperial: controller.preferImperial,
+                onChanged: controller.setPreferImperial,
+              ),
+            if (storeMode)
+              GroceryIconButton(
+                key: const ValueKey<String>('exit_store_mode'),
+                icon: Icons.storefront_rounded,
+                label: 'Exit store mode',
+                color: LuminousHomeTheme.groceryAccent,
+                emphasized: true,
+                onTap: () => controller.setStoreMode(false),
+              ),
             PopupMenuButton<String>(
               tooltip: 'Shopping options',
               icon: const Icon(
@@ -443,14 +731,22 @@ class _ShoppingCapsule extends StatelessWidget {
                   onPasteText();
                 } else if (value == 'importPdf') {
                   onImportPdf();
+                } else if (value == 'sortByAisle') {
+                  if (list != null) {
+                    controller.setSortMode(list.id, ShoppingSortMode.byAisle);
+                  }
+                } else if (value == 'sortManual') {
+                  if (list != null) {
+                    controller.setSortMode(list.id, ShoppingSortMode.manual);
+                  }
+                } else if (value == 'storeMode') {
+                  controller.setStoreMode(!controller.storeMode);
                 } else if (value == 'uncheckAll') {
-                  final ShoppingList? list = controller.activeList;
                   if (list != null && list.checkedCount > 0) {
                     controller.uncheckAll(list.id);
                     showGrocerySnackBar(context, 'All items unchecked');
                   }
                 } else if (value == 'deleteChecked') {
-                  final ShoppingList? list = controller.activeList;
                   if (list != null) {
                     clearCheckedWithUndo(context, controller, list);
                   }
@@ -458,61 +754,56 @@ class _ShoppingCapsule extends StatelessWidget {
                   showUnitConverterSheet(context);
                 }
               },
-              itemBuilder: (BuildContext context) =>
-                  const <PopupMenuEntry<String>>[
-                PopupMenuItem<String>(
+              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                _menuItem(
                   value: 'navigator',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.list_alt_rounded),
-                    title: Text('Lists & recipes'),
-                  ),
+                  icon: Icons.list_alt_rounded,
+                  title: 'Lists & recipes',
                 ),
-                PopupMenuItem<String>(
+                _menuItem(
                   value: 'paste',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.content_paste_rounded),
-                    title: Text('Paste text'),
-                  ),
+                  icon: Icons.content_paste_rounded,
+                  title: 'Paste text',
                 ),
-                PopupMenuItem<String>(
+                _menuItem(
                   value: 'importPdf',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.picture_as_pdf_rounded),
-                    title: Text('Import PDF'),
-                  ),
+                  icon: Icons.picture_as_pdf_rounded,
+                  title: 'Import PDF',
                 ),
-                PopupMenuItem<String>(
+                if (list != null) ...<PopupMenuEntry<String>>[
+                  _menuItem(
+                    value: 'sortByAisle',
+                    icon: Icons.view_agenda_rounded,
+                    title: 'Sort: By aisle',
+                    selected: sortMode == ShoppingSortMode.byAisle,
+                  ),
+                  _menuItem(
+                    value: 'sortManual',
+                    icon: Icons.reorder_rounded,
+                    title: 'Sort: My order',
+                    selected: sortMode == ShoppingSortMode.manual,
+                  ),
+                ],
+                _menuItem(
+                  value: 'storeMode',
+                  icon: Icons.storefront_rounded,
+                  title: 'Store mode',
+                  selected: storeMode,
+                ),
+                _menuItem(
                   value: 'uncheckAll',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.check_box_outline_blank_rounded),
-                    title: Text('Uncheck all items'),
-                  ),
+                  icon: Icons.check_box_outline_blank_rounded,
+                  title: 'Uncheck all items',
                 ),
-                PopupMenuItem<String>(
+                _menuItem(
                   value: 'deleteChecked',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.delete_sweep_rounded),
-                    title: Text('Delete checked items'),
-                  ),
+                  icon: Icons.delete_sweep_rounded,
+                  title: 'Delete checked items',
                 ),
-                PopupMenuItem<String>(
+                _menuItem(
                   value: 'unitConverter',
-                  child: ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.straighten_rounded),
-                    title: Text('Unit converter'),
-                  ),
+                  icon: Icons.straighten_rounded,
+                  title: 'Unit converter',
                 ),
               ],
             ),

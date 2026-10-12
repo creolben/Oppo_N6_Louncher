@@ -11,6 +11,12 @@ import 'item_edit_sheet.dart';
 /// Left inset applied to an indented child row, matching Keep's sub-items.
 const double _childIndent = 32;
 
+/// Minimum row height in store mode, so a row is easy to hit while walking.
+const double _storeRowMinHeight = 64;
+
+/// Checkbox side in store mode.
+const double _storeCheckbox = 32;
+
 /// Clears the checked items on [list] and offers an undo snackbar.
 ///
 /// Shared by the Done header and the surface overflow so both paths restore the
@@ -32,13 +38,16 @@ void clearCheckedWithUndo(
   );
 }
 
-/// The active shopping list, grouped into sticky aisle sections with a Done
-/// section sinking the checked items to the bottom.
+/// The active shopping list, grouped by aisle or shown in the user's own order,
+/// with a Done section sinking the checked items to the bottom.
 ///
-/// Unchecked rows are reorderable within their aisle; indented children render
-/// directly under their parent. The pane is a plain view over [controller];
-/// every mutation goes back through the controller so the debounced save and the
-/// store stay the single source of truth.
+/// In "By aisle" mode the unchecked rows are grouped into sticky aisle sections
+/// and carry no drag handles; in "My order" mode they form one flat,
+/// reorderable section. Indented children render directly under their parent in
+/// both. Store mode enlarges the rows and removes the reorder/delete gestures
+/// so a walk through the shop cannot lose an item by accident. The pane is a
+/// plain view over [controller]; every mutation goes back through the controller
+/// so the debounced save and the store stay the single source of truth.
 class ListPane extends StatelessWidget {
   final ShoppingController controller;
   final ShoppingList list;
@@ -52,6 +61,8 @@ class ListPane extends StatelessWidget {
     }
 
     final bool reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final bool storeMode = controller.storeMode;
+    final bool manualOrder = list.sortMode == ShoppingSortMode.manual;
     final List<ShoppingItem> unchecked = list.items
         .where((ShoppingItem item) => !item.checked)
         .toList();
@@ -98,42 +109,67 @@ class ListPane extends StatelessWidget {
 
     return CustomScrollView(
       slivers: <Widget>[
-        for (final String aisle in aisles) ...<Widget>[
-          SliverPersistentHeader(
-            pinned: true,
-            delegate: _AisleHeaderDelegate(
-              aisle: aisle,
-              count: grouped[aisle]!.length,
-              height: _headerHeight(context),
-            ),
-          ),
+        if (manualOrder)
           SliverReorderableList(
-            itemCount: grouped[aisle]!.length,
-            proxyDecorator: (Widget child, int index, Animation<double> animation) =>
-                _proxy(child, reduceMotion),
+            itemCount: topLevel.length,
+            proxyDecorator:
+                (Widget child, int index, Animation<double> animation) =>
+                    _proxy(child, reduceMotion),
             onReorder: (int oldIndex, int newIndex) {
               if (newIndex > oldIndex) newIndex -= 1;
-              controller.moveItem(
+              controller.moveItemAcrossList(
                 list.id,
-                grouped[aisle]![oldIndex].id,
+                topLevel[oldIndex].id,
                 newIndex,
               );
             },
             itemBuilder: (BuildContext context, int index) {
-              final ShoppingItem parent = grouped[aisle]![index];
+              final ShoppingItem parent = topLevel[index];
               return KeyedSubtree(
                 key: ValueKey<String>('reorder_${parent.id}'),
-                child: _AisleItem(
+                child: _ItemUnit(
                   controller: controller,
                   list: list,
                   parent: parent,
-                  children: childrenByParent[parent.id] ?? const <ShoppingItem>[],
-                  reorderIndex: index,
+                  children:
+                      childrenByParent[parent.id] ?? const <ShoppingItem>[],
+                  reorderIndex: storeMode ? null : index,
+                  storeMode: storeMode,
+                  showAisleCaption: true,
                 ),
               );
             },
-          ),
-        ],
+          )
+        else
+          for (final String aisle in aisles) ...<Widget>[
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _AisleHeaderDelegate(
+                aisle: aisle,
+                count: grouped[aisle]!.length,
+                height: _headerHeight(context),
+              ),
+            ),
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (BuildContext context, int index) {
+                  final ShoppingItem parent = grouped[aisle]![index];
+                  return _ItemUnit(
+                    key: ValueKey<String>('reorder_${parent.id}'),
+                    controller: controller,
+                    list: list,
+                    parent: parent,
+                    children:
+                        childrenByParent[parent.id] ?? const <ShoppingItem>[],
+                    reorderIndex: null,
+                    storeMode: storeMode,
+                    showAisleCaption: false,
+                  );
+                },
+                childCount: grouped[aisle]!.length,
+              ),
+            ),
+          ],
         if (checked.isNotEmpty) ...<Widget>[
           SliverToBoxAdapter(
             child: _DoneHeader(
@@ -154,6 +190,7 @@ class ListPane extends StatelessWidget {
                   controller: controller,
                   list: list,
                   item: checked[index],
+                  storeMode: storeMode,
                 ),
                 childCount: checked.length,
               ),
@@ -178,20 +215,25 @@ class ListPane extends StatelessWidget {
   }
 }
 
-/// One aisle reorderable unit: a parent row and its indented children.
-class _AisleItem extends StatelessWidget {
+/// One reorderable unit: a parent row and its indented children.
+class _ItemUnit extends StatelessWidget {
   final ShoppingController controller;
   final ShoppingList list;
   final ShoppingItem parent;
   final List<ShoppingItem> children;
-  final int reorderIndex;
+  final int? reorderIndex;
+  final bool storeMode;
+  final bool showAisleCaption;
 
-  const _AisleItem({
+  const _ItemUnit({
+    super.key,
     required this.controller,
     required this.list,
     required this.parent,
     required this.children,
     required this.reorderIndex,
+    required this.storeMode,
+    required this.showAisleCaption,
   });
 
   @override
@@ -206,6 +248,8 @@ class _AisleItem extends StatelessWidget {
           list: list,
           item: parent,
           reorderIndex: reorderIndex,
+          storeMode: storeMode,
+          showAisle: showAisleCaption,
         ),
         for (final ShoppingItem child in children)
           _ItemRow(
@@ -214,6 +258,8 @@ class _AisleItem extends StatelessWidget {
             list: list,
             item: child,
             indented: true,
+            storeMode: storeMode,
+            showAisle: showAisleCaption,
           ),
       ],
     );
@@ -326,9 +372,16 @@ class _ItemRow extends StatelessWidget {
   /// Whether this row is an indented child of the row above it.
   final bool indented;
 
-  /// The reorderable index within the aisle, or null for non-reorderable rows
-  /// such as the Done section.
+  /// The reorderable index within the flat list, or null when the row is not
+  /// draggable (by-aisle mode, the Done section, or store mode).
   final int? reorderIndex;
+
+  /// Whether the larger, gesture-free store presentation is active.
+  final bool storeMode;
+
+  /// Whether to caption the row with its aisle. Used by "My order", where the
+  /// sticky aisle headers are gone.
+  final bool showAisle;
 
   const _ItemRow({
     super.key,
@@ -337,6 +390,8 @@ class _ItemRow extends StatelessWidget {
     required this.item,
     this.indented = false,
     this.reorderIndex,
+    this.storeMode = false,
+    this.showAisle = false,
   });
 
   String get _quantityText => item.quantity?.formatAsEntered() ?? '';
@@ -398,6 +453,15 @@ class _ItemRow extends StatelessWidget {
     final Duration duration = reduceMotion
         ? Duration.zero
         : LuminousHomeTheme.motionShort;
+    final double minHeight = storeMode
+        ? _storeRowMinHeight
+        : LuminousHomeTheme.minimumTouchTarget;
+    final double checkboxSize = storeMode ? _storeCheckbox : 24;
+    final TextStyle titleStyle = storeMode
+        ? LuminousHomeTheme.title.copyWith(
+            fontSize: (LuminousHomeTheme.title.fontSize ?? 16) * 1.2,
+          )
+        : LuminousHomeTheme.title;
 
     final Widget content = AnimatedOpacity(
       opacity: item.checked ? 0.55 : 1.0,
@@ -405,9 +469,7 @@ class _ItemRow extends StatelessWidget {
       curve: LuminousHomeTheme.easeStandard,
       child: Container(
         key: ValueKey<String>('row_content_${item.id}'),
-        constraints: const BoxConstraints(
-          minHeight: LuminousHomeTheme.minimumTouchTarget,
-        ),
+        constraints: BoxConstraints(minHeight: minHeight),
         padding: EdgeInsets.only(
           left: LuminousHomeTheme.screenGutter + (indented ? _childIndent : 0),
           right: LuminousHomeTheme.screenGutter,
@@ -425,7 +487,7 @@ class _ItemRow extends StatelessWidget {
                       item.checked
                           ? Icons.check_box_rounded
                           : Icons.check_box_outline_blank_rounded,
-                      size: 24,
+                      size: checkboxSize,
                       color: item.checked
                           ? LuminousHomeTheme.groceryAccent
                           : LuminousHomeTheme.textMuted,
@@ -439,7 +501,7 @@ class _ItemRow extends StatelessWidget {
                           AnimatedDefaultTextStyle(
                             duration: duration,
                             curve: LuminousHomeTheme.easeStandard,
-                            style: LuminousHomeTheme.title.copyWith(
+                            style: titleStyle.copyWith(
                               color: item.checked
                                   ? LuminousHomeTheme.textMuted
                                   : LuminousHomeTheme.textPrimary,
@@ -459,6 +521,18 @@ class _ItemRow extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                                 style: LuminousHomeTheme.caption.copyWith(
                                   color: LuminousHomeTheme.textMuted,
+                                ),
+                              ),
+                            ),
+                          if (showAisle)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                item.aisle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: LuminousHomeTheme.caption.copyWith(
+                                  color: LuminousHomeTheme.groceryAccent,
                                 ),
                               ),
                             ),
@@ -528,6 +602,28 @@ class _ItemRow extends StatelessWidget {
       ),
     );
 
+    final Widget tappable = Semantics(
+      container: true,
+      button: true,
+      checked: item.checked,
+      label: _semanticLabel,
+      onTap: _toggle,
+      onLongPress: () => _edit(context),
+      customSemanticsActions: _customActions(),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _toggle,
+          onLongPress: () => _edit(context),
+          child: content,
+        ),
+      ),
+    );
+
+    // Store mode removes swipe-to-delete so a row cannot be lost by brushing
+    // against it while walking.
+    if (storeMode) return tappable;
+
     return Dismissible(
       key: ValueKey<String>('dismiss_${item.id}'),
       direction: DismissDirection.endToStart,
@@ -541,23 +637,7 @@ class _ItemRow extends StatelessWidget {
         ),
       ),
       onDismissed: (_) => _delete(context),
-      child: Semantics(
-        container: true,
-        button: true,
-        checked: item.checked,
-        label: _semanticLabel,
-        onTap: _toggle,
-        onLongPress: () => _edit(context),
-        customSemanticsActions: _customActions(),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: _toggle,
-            onLongPress: () => _edit(context),
-            child: content,
-          ),
-        ),
-      ),
+      child: tappable,
     );
   }
 }
