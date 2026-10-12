@@ -9,13 +9,15 @@ import '../models/unit.dart';
 import '../shopping_controller.dart';
 import 'grocery_chrome.dart';
 import 'unit_chip_row.dart';
+import 'unit_converter_sheet.dart';
 
 /// The inline editor Keep shows for a list row, as a bottom sheet.
 ///
-/// It reuses [UnitChipRow] so the unit picker and Frozen toggle behave exactly
-/// as they do on the quick-add capsule. Nothing is written directly: saving
-/// calls [ShoppingController.updateItem], which keeps the debounced store save
-/// the single source of truth.
+/// It reuses [UnitChipRow] so the unit picker behaves the same as the quick-add
+/// capsule. Aisle, including Frozen, is the single source of truth through the
+/// Aisle dropdown; there is no separate frozen flag. Nothing is written
+/// directly: saving calls [ShoppingController.updateItem], which keeps the
+/// debounced store save the single source of truth.
 class ItemEditSheet extends StatefulWidget {
   final ShoppingController controller;
   final ShoppingList list;
@@ -46,7 +48,6 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
   );
 
   late Unit? _unit = widget.item.quantity?.unit;
-  late bool _frozen = widget.item.aisle == 'Frozen';
   late String _aisle = widget.item.aisle;
   late String? _parentId = widget.item.parentId;
 
@@ -62,6 +63,18 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
     final double? amount = MeasurementConverter.parseAmount(_amount.text);
     if (amount == null && _unit == null) return null;
     return Quantity(amount ?? 1, _unit ?? Unit.piece);
+  }
+
+  /// Whether the unit converter can meaningfully preload this quantity.
+  bool get _isConvertible {
+    final Dimension? dimension = _quantity?.unit.dimension;
+    return dimension == Dimension.mass || dimension == Dimension.volume;
+  }
+
+  void _openConverter() {
+    final Quantity? quantity = _quantity;
+    if (quantity == null) return;
+    showUnitConverterSheet(context, initial: quantity);
   }
 
   void _indent() {
@@ -86,7 +99,7 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
         id: widget.item.id,
         name: name,
         quantity: _quantity,
-        aisle: _frozen ? 'Frozen' : _aisle,
+        aisle: _aisle,
         checked: widget.item.checked,
         note: note.isEmpty ? null : note,
         sourceRecipeId: widget.item.sourceRecipeId,
@@ -177,11 +190,9 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
                         ),
                         const SizedBox(height: LuminousHomeTheme.space4),
                         _AisleDropdown(
-                          value: _frozen ? 'Frozen' : _aisle,
-                          onChanged: (String value) => setState(() {
-                            _aisle = value;
-                            _frozen = value == 'Frozen';
-                          }),
+                          value: _aisle,
+                          onChanged: (String value) =>
+                              setState(() => _aisle = value),
                         ),
                       ],
                     ),
@@ -199,11 +210,18 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
               const SizedBox(height: LuminousHomeTheme.space4),
               UnitChipRow(
                 selected: _unit,
-                frozen: _frozen,
+                units: groceryPickerUnits,
                 onUnitSelected: (Unit? unit) => setState(() => _unit = unit),
-                onFrozenChanged: (bool value) =>
-                    setState(() => _frozen = value),
               ),
+              if (_isConvertible) ...<Widget>[
+                const SizedBox(height: LuminousHomeTheme.space12),
+                GroceryActionButton(
+                  key: const ValueKey<String>('item_convert'),
+                  icon: Icons.straighten_rounded,
+                  label: 'Convert',
+                  onTap: _openConverter,
+                ),
+              ],
               const SizedBox(height: LuminousHomeTheme.space12),
               _Field(
                 key: const ValueKey<String>('edit_item_note'),

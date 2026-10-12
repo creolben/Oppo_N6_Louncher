@@ -415,10 +415,17 @@ void main() {
       await tester.pump();
       expect(find.text('2 pieces chicken · Meat & Fish'), findsOneWidget);
 
-      final Finder grams = find.byKey(const ValueKey<String>('unit_chip_kg'));
-      await tester.ensureVisible(grams);
+      // A count amount shows the count chips; kg is behind "More".
+      final Finder more = find.byKey(const ValueKey<String>('unit_chip_more'));
+      await tester.ensureVisible(more);
       await tester.pumpAndSettle();
-      await tester.tap(grams);
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+
+      final Finder kilograms = find.byKey(const ValueKey<String>('unit_chip_kg'));
+      await tester.ensureVisible(kilograms);
+      await tester.pumpAndSettle();
+      await tester.tap(kilograms);
       await tester.pump();
       expect(find.text('2 kg chicken · Meat & Fish'), findsOneWidget);
 
@@ -426,7 +433,50 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('the Frozen chip forces the Frozen aisle and then resets',
+    testWidgets('the unit chip row is context aware and needs an amount',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      controller.createList('Groceries');
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+
+      final Finder field = find.byType(TextField).first;
+      // Focus alone does not open the row.
+      await tester.tap(field);
+      await tester.pump();
+      expect(find.byKey(const ValueKey<String>('unit_chip_pc')), findsNothing);
+
+      await tester.enterText(field, 'milk');
+      await tester.pump();
+      expect(find.byKey(const ValueKey<String>('unit_chip_pc')), findsNothing);
+
+      // A bare number shows the count/packaging family.
+      await tester.enterText(field, '2 milk');
+      await tester.pump();
+      expect(find.byKey(const ValueKey<String>('unit_chip_pc')), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('unit_chip_more')), findsOneWidget);
+
+      // A mass parse shows the mass family.
+      await tester.enterText(field, '2 kg flour');
+      await tester.pump();
+      expect(find.byKey(const ValueKey<String>('unit_chip_g')), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('unit_chip_kg')), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('unit_chip_pc')), findsNothing);
+
+      // A volume parse shows the volume family.
+      await tester.enterText(field, '2 cups water');
+      await tester.pump();
+      expect(find.byKey(const ValueKey<String>('unit_chip_ml')), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('unit_chip_cup')), findsOneWidget);
+      expect(find.byKey(const ValueKey<String>('unit_chip_g')), findsNothing);
+
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the frozen toggle forces the Frozen aisle and then resets',
         (WidgetTester tester) async {
       size(tester, const Size(360, 800));
       controller.createList('Groceries');
@@ -439,9 +489,9 @@ void main() {
       await tester.pump();
       expect(find.text('2 pieces chicken · Meat & Fish'), findsOneWidget);
 
-      final Finder frozen = find.byKey(const ValueKey<String>('frozen_chip'));
-      await tester.ensureVisible(frozen);
-      await tester.pumpAndSettle();
+      final Finder frozen =
+          find.byKey(const ValueKey<String>('frozen_toggle'));
+      expect(frozen, findsOneWidget);
       await tester.tap(frozen);
       await tester.pump();
       expect(find.text('2 pieces chicken · Frozen'), findsOneWidget);
@@ -454,6 +504,90 @@ void main() {
       await tester.enterText(find.byType(TextField).first, 'banana');
       await tester.pump();
       expect(find.text('banana · Produce'), findsOneWidget);
+
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the preview chip shows a remembered aisle',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      final ShoppingList list = controller.createList('Groceries');
+      controller.quickAdd('quinoa');
+      controller.updateItem(
+        list.id,
+        controller.activeList!.items.single.copyWith(aisle: 'Pantry'),
+      );
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+
+      await tester.enterText(find.byType(TextField).first, 'quinoa');
+      await tester.pump();
+      expect(find.text('quinoa · Pantry'), findsOneWidget);
+
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('tapping the quantity text toggles the row instead of opening '
+        'the converter', (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      controller.createList('Groceries');
+      controller.quickAdd('16 oz butter');
+      await flushController(tester);
+
+      final SemanticsHandle semantics = tester.ensureSemantics();
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+      expect(controller.activeList!.items.single.checked, isFalse);
+
+      // The entered unit stays primary; the preferred system is the caption,
+      // and both join the row's semantic label.
+      expect(find.text('16 ounces'), findsOneWidget);
+      expect(find.text('≈ 450 g'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('16 ounces ≈ 450 g butter, unchecked'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('16 ounces').first);
+      await tester.pump();
+
+      expect(controller.activeList!.items.single.checked, isTrue);
+      expect(find.byType(UnitConverterSheet), findsNothing);
+
+      semantics.dispose();
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the edit sheet Convert button opens the unit converter',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      controller.createList('Groceries');
+      controller.quickAdd('2 kg chicken');
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+
+      await tester.longPress(find.text('chicken'));
+      await tester.pumpAndSettle();
+
+      final Finder convert =
+          find.byKey(const ValueKey<String>('item_convert'));
+      await tester.ensureVisible(convert);
+      await tester.pumpAndSettle();
+      await tester.tap(convert);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(UnitConverterSheet), findsOneWidget);
+      final TextField field = tester.widget<TextField>(
+        find.byKey(const ValueKey<String>('unit_converter_input')),
+      );
+      expect(field.controller!.text, '2');
 
       await flushController(tester);
       expect(tester.takeException(), isNull);

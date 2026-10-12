@@ -2,18 +2,42 @@ import 'package:flutter/material.dart';
 
 import '../../../ui/theme/luminous_home_theme.dart';
 import '../models/quantity.dart';
+import '../models/shopping_item.dart';
 import '../models/unit.dart';
 import '../parsing/ingredient_parser.dart';
 import '../shopping_controller.dart';
 import 'grocery_chrome.dart';
 import 'unit_chip_row.dart';
 
+/// Context chip families for the quick-add unit picker.
+const List<Unit> _massUnits = <Unit>[
+  Unit.gram,
+  Unit.kilogram,
+  Unit.ounce,
+  Unit.pound,
+];
+const List<Unit> _volumeUnits = <Unit>[
+  Unit.milliliter,
+  Unit.liter,
+  Unit.fluidOunce,
+  Unit.cup,
+];
+const List<Unit> _countUnits = <Unit>[
+  Unit.piece,
+  Unit.pack,
+  Unit.box,
+  Unit.can,
+  Unit.bag,
+  Unit.bottle,
+];
+
 /// The bottom capsule that turns a typed line into a list item.
 ///
 /// It parses as you type so the quantity, unit and aisle are visible before the
 /// commit, and it keeps focus after submit so a whole list can be dictated
-/// without reaching for the field again. A chip row lets the unit be picked
-/// explicitly and an item be marked Frozen; both override the parser.
+/// without reaching for the field again. A context-aware chip row lets the unit
+/// be picked explicitly once a line has an amount, and a compact toggle beside
+/// the send button marks the next item Frozen; both override the parser.
 class QuickAddCapsule extends StatefulWidget {
   final ShoppingController controller;
 
@@ -29,6 +53,7 @@ class _QuickAddCapsuleState extends State<QuickAddCapsule> {
 
   Unit? _unit;
   bool _frozen = false;
+  bool _unitsExpanded = false;
 
   @override
   void initState() {
@@ -58,15 +83,45 @@ class _QuickAddCapsuleState extends State<QuickAddCapsule> {
   String get _aisle {
     final ParsedIngredient? parsed = _parsed;
     if (_frozen) return 'Frozen';
-    return parsed?.aisle ?? 'Other';
+    if (parsed == null) return 'Other';
+    return widget.controller.aisleFor(parsed.name, parsed.aisle);
   }
 
-  bool get _showPicker => _focus.hasFocus || _text.text.trim().isNotEmpty;
+  /// The unit row appears only once a line has an amount or the user picked a
+  /// unit; focus alone no longer opens it.
+  bool get _showUnitRow => _unit != null || _parsed?.quantity != null;
 
   List<String> get _suggestions {
     final ParsedIngredient? parsed = _parsed;
     if (parsed == null) return const <String>[];
-    return widget.controller.suggestionsFor(parsed.name);
+    final String target = ShoppingItem.normalizeName(parsed.name);
+    return widget.controller
+        .suggestionsFor(parsed.name)
+        .where(
+          (String suggestion) =>
+              ShoppingItem.normalizeName(suggestion) != target,
+        )
+        .toList();
+  }
+
+  /// The units most relevant to the parsed amount.
+  List<Unit> get _contextUnits {
+    final Unit? unit = _unit ?? _parsed?.quantity?.unit;
+    if (unit != null && unit.dimension == Dimension.mass) return _massUnits;
+    if (unit != null && unit.dimension == Dimension.volume) return _volumeUnits;
+    return _countUnits;
+  }
+
+  /// The chips to show right now: at most six context units, always including a
+  /// selected one, or the full picker once "More" expanded it.
+  List<Unit> get _visibleUnits {
+    if (_unitsExpanded) return groceryPickerUnits;
+    final List<Unit> base = _contextUnits;
+    final List<Unit> visible = <Unit>[
+      if (_unit != null && !base.contains(_unit)) _unit!,
+      ...base,
+    ];
+    return visible.take(6).toList();
   }
 
   void _applySuggestion(String suggestion) {
@@ -98,6 +153,7 @@ class _QuickAddCapsuleState extends State<QuickAddCapsule> {
     setState(() {
       _unit = null;
       _frozen = false;
+      _unitsExpanded = false;
     });
     _focus.requestFocus();
   }
@@ -135,18 +191,22 @@ class _QuickAddCapsuleState extends State<QuickAddCapsule> {
           if (parsed != null) ...<Widget>[
             _PreviewChip(
               quantity: _effectiveQuantity,
+              approx: _effectiveQuantity?.approxIn(
+                preferImperial: widget.controller.preferImperial,
+              ),
               name: parsed.name,
               aisle: _aisle,
-              preferImperial: widget.controller.preferImperial,
             ),
             const SizedBox(height: LuminousHomeTheme.space8),
           ],
-          if (_showPicker) ...<Widget>[
+          if (_showUnitRow) ...<Widget>[
             UnitChipRow(
               selected: _unit,
-              frozen: _frozen,
+              units: _visibleUnits,
               onUnitSelected: (Unit? unit) => setState(() => _unit = unit),
-              onFrozenChanged: (bool value) => setState(() => _frozen = value),
+              onMore: _unitsExpanded
+                  ? null
+                  : () => setState(() => _unitsExpanded = true),
             ),
             const SizedBox(height: LuminousHomeTheme.space8),
           ],
@@ -202,6 +262,17 @@ class _QuickAddCapsuleState extends State<QuickAddCapsule> {
                       ),
                     ),
                   ),
+                  if (_text.text.trim().isNotEmpty)
+                    GroceryIconButton(
+                      key: const ValueKey<String>('frozen_toggle'),
+                      icon: Icons.ac_unit_rounded,
+                      label: _frozen ? 'Frozen on' : 'Mark frozen',
+                      color: _frozen
+                          ? LuminousHomeTheme.groceryAccent
+                          : LuminousHomeTheme.textSecondary,
+                      emphasized: _frozen,
+                      onTap: () => setState(() => _frozen = !_frozen),
+                    ),
                   GroceryIconButton(
                     icon: Icons.arrow_upward_rounded,
                     label: 'Add item',
@@ -296,22 +367,20 @@ class _SuggestionRow extends StatelessWidget {
 
 class _PreviewChip extends StatelessWidget {
   final Quantity? quantity;
+  final String? approx;
   final String name;
   final String aisle;
-  final bool preferImperial;
 
   const _PreviewChip({
     required this.quantity,
+    required this.approx,
     required this.name,
     required this.aisle,
-    required this.preferImperial,
   });
 
   @override
   Widget build(BuildContext context) {
-    final String? quantityText = quantity?.format(
-      preferImperial: preferImperial,
-    );
+    final String? quantityText = quantity?.formatAsEntered();
     final double maxWidth =
         MediaQuery.sizeOf(context).width - LuminousHomeTheme.screenGutter * 2;
     return Align(
@@ -338,7 +407,7 @@ class _PreviewChip extends StatelessWidget {
             const SizedBox(width: LuminousHomeTheme.space8),
             Flexible(
               child: Text(
-                <String>[?quantityText, name, '· $aisle'].join(' '),
+                <String>[?quantityText, ?approx, name, '· $aisle'].join(' '),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: LuminousHomeTheme.caption.copyWith(

@@ -170,4 +170,64 @@ void main() {
       expect(Quantity(1, Unit.kilogram).format(preferImperial: true), '2 1/4 pounds');
     });
   });
+
+  group('formatAsEntered', () {
+    test('keeps metric mass and volume in the entered unit', () {
+      expect(Quantity(250, Unit.gram).formatAsEntered(), '250 g');
+      expect(Quantity(1.5, Unit.kilogram).formatAsEntered(), '1.5 kg');
+      expect(Quantity(236.588, Unit.milliliter).formatAsEntered(), '236.59 ml');
+      // No friendly-unit upgrade: 1000 g stays in grams.
+      expect(Quantity(1000, Unit.gram).formatAsEntered(), '1000 g');
+    });
+
+    test('imperial and count units use fractions and names', () {
+      expect(Quantity(16, Unit.ounce).formatAsEntered(), '16 ounces');
+      expect(Quantity(1.5, Unit.cup).formatAsEntered(), '1 1/2 cups');
+      expect(Quantity(2, Unit.box).formatAsEntered(), '2 boxes');
+      expect(Quantity(1, Unit.piece).formatAsEntered(), '1 piece');
+    });
+  });
+
+  group('approxIn', () {
+    test('is null in the preferred system and for counts', () {
+      expect(Quantity(250, Unit.gram).approxIn(preferImperial: false), isNull);
+      expect(Quantity(16, Unit.ounce).approxIn(preferImperial: true), isNull);
+      expect(Quantity(2, Unit.box).approxIn(preferImperial: false), isNull);
+      expect(Quantity(2, Unit.box).approxIn(preferImperial: true), isNull);
+    });
+
+    test('rounds imperial mass and volume to friendly metric values', () {
+      expect(
+        Quantity(16, Unit.ounce).approxIn(preferImperial: false),
+        '≈ 450 g',
+      );
+      expect(
+        Quantity(1, Unit.ounce).approxIn(preferImperial: false),
+        '≈ 30 g',
+      );
+      expect(
+        Quantity(1, Unit.cup).approxIn(preferImperial: false),
+        '≈ 240 ml',
+      );
+      expect(
+        Quantity(1, Unit.tablespoon).approxIn(preferImperial: false),
+        '≈ 15 ml',
+      );
+    });
+
+    test('uses imperial fractions for metric amounts', () {
+      expect(
+        Quantity(500, Unit.gram).approxIn(preferImperial: true),
+        '≈ 1 1/8 pounds',
+      );
+      expect(
+        Quantity(453.59237, Unit.gram).approxIn(preferImperial: true),
+        '≈ 1 pound',
+      );
+      expect(
+        Quantity(236.588, Unit.milliliter).approxIn(preferImperial: true),
+        '≈ 1 cup',
+      );
+    });
+  });
 }

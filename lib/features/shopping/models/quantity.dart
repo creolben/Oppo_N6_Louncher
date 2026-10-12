@@ -145,6 +145,58 @@ class Quantity {
     return '$amountText $suffix';
   }
 
+  /// The amount exactly as it is stored, with no cross-system conversion and no
+  /// friendly-unit upgrade.
+  ///
+  /// Metric mass and volume use trimmed decimals plus the symbol (`250 g`,
+  /// `1.5 kg`). Imperial and count units use the nearest common recipe fraction
+  /// plus the singular/plural name (`16 ounces`, `1 1/2 cups`, `2 boxes`). This
+  /// is what the user typed (or a merged amount in the same unit), so a list row
+  /// can always show the entered unit and offer the preferred system as a
+  /// secondary approximation via [approxIn].
+  String formatAsEntered() {
+    final bool isSymbolUnit = unit.isMetric && dimension != Dimension.count;
+    final String amountText =
+        isSymbolUnit ? _trimDecimal(amount) : _formatFraction(amount);
+    final String suffix =
+        isSymbolUnit ? unit.symbol : unit.displayName(amount);
+    return '$amountText $suffix';
+  }
+
+  /// A rounded amount in the preferred measurement system, or null when the
+  /// quantity's own system already matches [preferImperial].
+  ///
+  /// Only [Dimension.mass] and [Dimension.volume] have a cross-system twin, so
+  /// count and packaging units always return null. The text is prefixed with
+  /// `≈`. Metric targets round grams and millilitres to the nearest 5 (or 10 at
+  /// and above 100), while imperial targets reuse the existing conversion,
+  /// unit normalization and fraction formatting.
+  String? approxIn({required bool preferImperial}) {
+    if (dimension == Dimension.count) return null;
+    final bool wantMetric = !preferImperial;
+    if (unit.isMetric == wantMetric) return null;
+
+    final double base = amount * unit.toBase;
+    if (wantMetric) {
+      final Unit target = Unit.baseFor(dimension);
+      return '≈ ${_trimDecimal(_roundApprox(base))} ${target.symbol}';
+    }
+
+    final Unit imperialBase =
+        dimension == Dimension.mass ? Unit.ounce : Unit.teaspoon;
+    final Quantity converted =
+        Quantity(base / imperialBase.toBase, imperialBase).normalized();
+    return '≈ ${converted.format(preferImperial: true)}';
+  }
+
+  /// Rounds a base-unit approximation to a friendly value: nearest 10 at and
+  /// above 100, nearest 5 between 10 and 100, and a whole number below that.
+  static double _roundApprox(double value) {
+    if (value >= 100) return (value / 10).round() * 10.0;
+    if (value >= 10) return (value / 5).round() * 5.0;
+    return value.roundToDouble();
+  }
+
   /// The quantity as it should be shown under the metric/imperial preference.
   Quantity _displayFor(bool preferImperial) {
     if (dimension == Dimension.count) return normalized();

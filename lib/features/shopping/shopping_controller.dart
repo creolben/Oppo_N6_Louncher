@@ -9,6 +9,24 @@ import 'models/unit.dart';
 import 'parsing/document_parser.dart';
 import 'parsing/ingredient_parser.dart';
 
+/// A removed list item together with everything needed to restore it exactly.
+///
+/// [index] is the item's position in `ShoppingList.items` *before* removal, so
+/// an undo can put it back among its neighbours instead of appending it.
+/// [promotedChildIds] holds the children that were promoted to top level when a
+/// parent was removed, so their `parentId` can be reapplied on restore.
+class RemovedItem {
+  final ShoppingItem item;
+  final int index;
+  final List<String> promotedChildIds;
+
+  const RemovedItem({
+    required this.item,
+    required this.index,
+    this.promotedChildIds = const <String>[],
+  });
+}
+
 /// Owns the shopping lists, recipes, and display preferences.
 ///
 /// Every mutation schedules a debounced save through [ShoppingStore]. Tests can
@@ -23,6 +41,7 @@ class ShoppingController extends ChangeNotifier {
 
   final List<ShoppingList> _lists = [];
   final List<Recipe> _recipes = [];
+  final Map<String, String> _aisleMemory = <String, String>{};
   String? _activeListId;
   bool _preferImperial = false;
   bool _loaded = false;
@@ -38,6 +57,14 @@ class ShoppingController extends ChangeNotifier {
   bool get preferImperial => _preferImperial;
 
   bool get isLoaded => _loaded;
+
+  /// Remembered `normalizedName -> aisle` choices, persisted with the store.
+  Map<String, String> get aisleMemory => Map.unmodifiable(_aisleMemory);
+
+  /// The remembered aisle for [name], falling back to [fallback] when the user
+  /// has never moved an item with that name to a different aisle.
+  String aisleFor(String name, String fallback) =>
+      _aisleMemory[ShoppingItem.normalizeName(name)] ?? fallback;
 
   /// The active list, falling back to the first list when the stored id is
   /// stale. Null only when no list exists.
@@ -72,6 +99,9 @@ class ShoppingController extends ChangeNotifier {
       ..addAll(data.recipes);
     _activeListId = data.activeListId;
     _preferImperial = data.preferImperial;
+    _aisleMemory
+      ..clear()
+      ..addAll(data.aisleMemory);
     if (_activeListId == null && _lists.isNotEmpty) {
       _activeListId = _lists.first.id;
     }
@@ -152,7 +182,7 @@ class ShoppingController extends ChangeNotifier {
       id: _newId('item'),
       name: parsed.name,
       quantity: quantity,
-      aisle: frozen ? 'Frozen' : parsed.aisle,
+      aisle: frozen ? 'Frozen' : aisleFor(parsed.name, parsed.aisle),
       note: parsed.note,
     );
     final index = _lists.indexWhere((candidate) => candidate.id == list.id);
@@ -399,6 +429,16 @@ class ShoppingController extends ChangeNotifier {
     if (itemIndex < 0) return;
     final items = List<ShoppingItem>.of(list.items);
     items[itemIndex] = item;
+    // Remember a deliberate aisle choice so the next add of the same name skips
+    // the parser's guess. Setting the aisle back to the guessed value forgets
+    // the override. Frozen is never recorded here from the quick-add toggle
+    // because that path does not go through updateItem.
+    final String key = item.normalizedName;
+    if (item.aisle == IngredientParser.guessAisle(item.name)) {
+      _aisleMemory.remove(key);
+    } else {
+      _aisleMemory[key] = item.aisle;
+    }
     _lists[index] = list.copyWith(items: items, updatedAt: _clock());
     _afterMutation();
   }
@@ -460,12 +500,24 @@ class ShoppingController extends ChangeNotifier {
     return <String>[...prefix, ...contains].take(4).toList();
   }
 
-  void removeItem(String listId, String itemId) {
+  /// Removes [itemId] from [listId] and returns a token that can undo the
+  /// removal through [restoreItems].
+  ///
+  /// Deleting a parent promotes its children rather than deleting them; the
+  /// token records their ids so they can be re-indented on restore. Returns null
+  /// when the list or the item does not exist.
+  RemovedItem? removeItem(String listId, String itemId) {
     final index = _lists.indexWhere((list) => list.id == listId);
-    if (index < 0) return;
+    if (index < 0) return null;
     final list = _lists[index];
-    if (list.itemById(itemId) == null) return;
-    // Deleting a parent promotes its children rather than deleting them.
+    final int originalIndex =
+        list.items.indexWhere((item) => item.id == itemId);
+    if (originalIndex < 0) return null;
+    final ShoppingItem removed = list.items[originalIndex];
+    final List<String> promoted = <String>[
+      for (final item in list.items)
+        if (item.parentId == itemId) item.id,
+    ];
     final items = <ShoppingItem>[
       for (final item in list.items)
         if (item.id != itemId)
@@ -473,20 +525,41 @@ class ShoppingController extends ChangeNotifier {
     ];
     _lists[index] = list.copyWith(items: items, updatedAt: _clock());
     _afterMutation();
+    return RemovedItem(
+      item: removed,
+      index: originalIndex,
+      promotedChildIds: promoted,
+    );
   }
 
-  /// Removes the checked items from [listId] and returns them.
+  /// Removes the checked items from [listId] and returns their restore tokens.
   ///
-  /// The returned items let a caller offer an undo; an empty list means nothing
-  /// was checked.
-  List<ShoppingItem> clearChecked(String listId) {
+  /// Each token captures the removed item's original position and any children
+  /// that were promoted, so an undo can restore the list exactly. An empty list
+  /// means nothing was checked.
+  List<RemovedItem> clearChecked(String listId) {
     final index = _lists.indexWhere((list) => list.id == listId);
-    if (index < 0) return const <ShoppingItem>[];
+    if (index < 0) return const <RemovedItem>[];
     final list = _lists[index];
-    final removed =
-        list.items.where((item) => item.checked).toList(growable: false);
-    if (removed.isEmpty) return const <ShoppingItem>[];
-    final Set<String> removedIds = removed.map((item) => item.id).toSet();
+    final Set<String> removedIds = <String>{
+      for (final item in list.items)
+        if (item.checked) item.id,
+    };
+    if (removedIds.isEmpty) return const <RemovedItem>[];
+    final List<RemovedItem> removed = <RemovedItem>[
+      for (var i = 0; i < list.items.length; i++)
+        if (list.items[i].checked)
+          RemovedItem(
+            item: list.items[i],
+            index: i,
+            promotedChildIds: <String>[
+              for (final child in list.items)
+                if (child.parentId == list.items[i].id &&
+                    !removedIds.contains(child.id))
+                  child.id,
+            ],
+          ),
+    ];
     final items = <ShoppingItem>[
       for (final item in list.items)
         if (!item.checked)
@@ -499,16 +572,36 @@ class ShoppingController extends ChangeNotifier {
     return removed;
   }
 
-  /// Re-inserts [items] on [listId] without merging, for an undo.
-  void restoreItems(String listId, List<ShoppingItem> items) {
-    if (items.isEmpty) return;
+  /// Re-inserts removed [items] on [listId] without merging, for an undo.
+  ///
+  /// Each record goes back at its original index, clamped to the current
+  /// length, and promoted children that still exist and are still top-level are
+  /// re-indented under their restored parent.
+  void restoreItems(String listId, List<RemovedItem> records) {
+    if (records.isEmpty) return;
     final index = _lists.indexWhere((list) => list.id == listId);
     if (index < 0) return;
     final list = _lists[index];
-    _lists[index] = list.copyWith(
-      items: <ShoppingItem>[...list.items, ...items],
-      updatedAt: _clock(),
-    );
+    final List<RemovedItem> ordered = List<RemovedItem>.of(records)
+      ..sort((a, b) => a.index.compareTo(b.index));
+    final items = List<ShoppingItem>.of(list.items);
+    final Set<String> presentIds = items.map((item) => item.id).toSet();
+    for (final record in ordered) {
+      if (!presentIds.add(record.item.id)) continue;
+      final int position = record.index.clamp(0, items.length);
+      items.insert(position, record.item);
+    }
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].parentId != null) continue;
+      for (final record in ordered) {
+        if (presentIds.contains(record.item.id) &&
+            record.promotedChildIds.contains(items[i].id)) {
+          items[i] = items[i].copyWith(parentId: record.item.id);
+          break;
+        }
+      }
+    }
+    _lists[index] = list.copyWith(items: items, updatedAt: _clock());
     _afterMutation();
   }
 
@@ -542,7 +635,10 @@ class ShoppingController extends ChangeNotifier {
         id: _newId('item'),
         name: ingredient.name,
         quantity: ingredient.quantity,
-        aisle: IngredientParser.guessAisle(ingredient.name),
+        aisle: aisleFor(
+          ingredient.name,
+          IngredientParser.guessAisle(ingredient.name),
+        ),
         note: ingredient.note,
         sourceRecipeId: recipe.id,
       );
@@ -596,7 +692,7 @@ class ShoppingController extends ChangeNotifier {
           id: _newId('item'),
           name: parsed.name,
           quantity: parsed.quantity,
-          aisle: parsed.aisle,
+          aisle: aisleFor(parsed.name, parsed.aisle),
           note: parsed.note,
         ),
         now: _clock(),
@@ -650,6 +746,7 @@ class ShoppingController extends ChangeNotifier {
         recipes: _recipes,
         activeListId: _activeListId,
         preferImperial: _preferImperial,
+        aisleMemory: _aisleMemory,
       ),
     );
   }

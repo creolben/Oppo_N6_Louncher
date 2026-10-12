@@ -2,14 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
 import '../../../ui/theme/luminous_home_theme.dart';
-import '../models/quantity.dart';
 import '../models/shopping_item.dart';
 import '../models/shopping_list.dart';
-import '../models/unit.dart';
 import '../shopping_controller.dart';
 import 'grocery_chrome.dart';
 import 'item_edit_sheet.dart';
-import 'unit_converter_sheet.dart';
 
 /// Left inset applied to an indented child row, matching Keep's sub-items.
 const double _childIndent = 32;
@@ -23,7 +20,7 @@ void clearCheckedWithUndo(
   ShoppingController controller,
   ShoppingList list,
 ) {
-  final List<ShoppingItem> removed = controller.clearChecked(list.id);
+  final List<RemovedItem> removed = controller.clearChecked(list.id);
   if (removed.isEmpty) return;
   showGrocerySnackBar(
     context,
@@ -342,19 +339,20 @@ class _ItemRow extends StatelessWidget {
     this.reorderIndex,
   });
 
-  String get _quantityText =>
-      item.quantity?.format(preferImperial: controller.preferImperial) ?? '';
+  String get _quantityText => item.quantity?.formatAsEntered() ?? '';
 
-  bool get _convertible {
-    final Dimension? dimension = item.quantity?.unit.dimension;
-    return dimension == Dimension.mass || dimension == Dimension.volume;
-  }
+  /// The preferred-system approximation of the quantity, or null when the
+  /// amount is already shown in the preferred system (or is a count).
+  String? get _approxText =>
+      item.quantity?.approxIn(preferImperial: controller.preferImperial);
 
   String get _semanticLabel {
-    final String name = _quantityText.isEmpty
-        ? item.name
-        : '$_quantityText ${item.name}';
-    return '$name, ${item.checked ? 'checked' : 'unchecked'}';
+    final List<String> parts = <String>[
+      if (_quantityText.isNotEmpty) _quantityText,
+      ?_approxText,
+      item.name,
+    ];
+    return '${parts.join(' ')}, ${item.checked ? 'checked' : 'unchecked'}';
   }
 
   void _toggle() {
@@ -365,19 +363,14 @@ class _ItemRow extends StatelessWidget {
     showItemEditSheet(context, controller: controller, list: list, item: item);
   }
 
-  void _openConverter(BuildContext context) {
-    final Quantity? quantity = item.quantity;
-    if (quantity == null) return;
-    showUnitConverterSheet(context, initial: quantity);
-  }
-
   void _delete(BuildContext context) {
-    controller.removeItem(list.id, item.id);
+    final RemovedItem? removed = controller.removeItem(list.id, item.id);
+    if (removed == null) return;
     showGrocerySnackBar(
       context,
       'Removed ${item.name}',
       actionLabel: 'Undo',
-      onAction: () => controller.addItem(list.id, item),
+      onAction: () => controller.restoreItems(list.id, <RemovedItem>[removed]),
     );
   }
 
@@ -478,20 +471,36 @@ class _ItemRow extends StatelessWidget {
             ),
             if (_quantityText.isNotEmpty) ...<Widget>[
               const SizedBox(width: LuminousHomeTheme.space12),
-              if (_convertible)
-                _QuantityButton(
-                  text: _quantityText,
-                  onTap: () => _openConverter(context),
-                )
-              else
-                Text(
-                  _quantityText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: LuminousHomeTheme.body.copyWith(
-                    color: LuminousHomeTheme.groceryAccent,
+              Flexible(
+                child: ExcludeSemantics(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        _quantityText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: LuminousHomeTheme.body.copyWith(
+                          color: LuminousHomeTheme.groceryAccent,
+                        ),
+                      ),
+                      if (_approxText != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            _approxText!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: LuminousHomeTheme.caption.copyWith(
+                              color: LuminousHomeTheme.textMuted,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
+              ),
             ],
             if (reorderIndex != null) ...<Widget>[
               const SizedBox(width: LuminousHomeTheme.space4),
@@ -546,53 +555,6 @@ class _ItemRow extends StatelessWidget {
             onTap: _toggle,
             onLongPress: () => _edit(context),
             child: content,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The tappable quantity on a row; opens the unit converter preloaded.
-class _QuantityButton extends StatelessWidget {
-  final String text;
-  final VoidCallback onTap;
-
-  const _QuantityButton({required this.text, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final BorderRadius radius = BorderRadius.circular(
-      LuminousHomeTheme.controlRadius,
-    );
-    return Semantics(
-      button: true,
-      label: 'Convert $text',
-      child: ExcludeSemantics(
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: radius,
-            child: Container(
-              constraints: const BoxConstraints(
-                minHeight: LuminousHomeTheme.minimumTouchTarget,
-              ),
-              alignment: Alignment.center,
-              padding: const EdgeInsets.symmetric(
-                horizontal: LuminousHomeTheme.space8,
-              ),
-              child: Text(
-                text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: LuminousHomeTheme.body.copyWith(
-                  color: LuminousHomeTheme.groceryAccent,
-                  decoration: TextDecoration.underline,
-                  decorationColor: LuminousHomeTheme.groceryMid,
-                ),
-              ),
-            ),
           ),
         ),
       ),

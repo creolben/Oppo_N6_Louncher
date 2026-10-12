@@ -27,23 +27,27 @@ const List<Unit> groceryPickerUnits = <Unit>[
   Unit.jar,
 ];
 
-/// A compact horizontally scrollable row of unit chips plus a Frozen toggle.
+/// A compact horizontally scrollable row of unit chips.
 ///
-/// Shared by the quick-add capsule and the item edit sheet so picking a unit or
-/// marking an item frozen works the same way everywhere. [selected] is null when
-/// the amount's unit should come from the parser.
+/// Shared by the quick-add capsule and the item edit sheet. [selected] is null
+/// when the amount's unit should come from the parser. [units] is the caller's
+/// visible list, so a context-aware picker can show only the relevant family;
+/// when [onMore] is set a trailing "More" chip expands the full
+/// [groceryPickerUnits] list in place.
 class UnitChipRow extends StatelessWidget {
   final Unit? selected;
-  final bool frozen;
+  final List<Unit> units;
   final ValueChanged<Unit?> onUnitSelected;
-  final ValueChanged<bool> onFrozenChanged;
+
+  /// When non-null, a "More" chip is shown and expands the picker.
+  final VoidCallback? onMore;
 
   const UnitChipRow({
     super.key,
     required this.selected,
-    required this.frozen,
+    required this.units,
     required this.onUnitSelected,
-    required this.onFrozenChanged,
+    this.onMore,
   });
 
   @override
@@ -58,7 +62,7 @@ class UnitChipRow extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            for (final Unit unit in groceryPickerUnits)
+            for (final Unit unit in units)
               Padding(
                 padding: const EdgeInsets.only(right: LuminousHomeTheme.space8),
                 child: _PickerChip(
@@ -69,14 +73,15 @@ class UnitChipRow extends StatelessWidget {
                   onTap: () => onUnitSelected(selected == unit ? null : unit),
                 ),
               ),
-            _PickerChip(
-              key: const ValueKey<String>('frozen_chip'),
-              label: 'Frozen',
-              semanticLabel: 'Frozen',
-              icon: Icons.ac_unit_rounded,
-              selected: frozen,
-              onTap: () => onFrozenChanged(!frozen),
-            ),
+            if (onMore != null)
+              _PickerChip(
+                key: const ValueKey<String>('unit_chip_more'),
+                label: 'More',
+                semanticLabel: 'More units',
+                icon: Icons.more_horiz_rounded,
+                selected: false,
+                onTap: onMore!,
+              ),
           ],
         ),
       ),

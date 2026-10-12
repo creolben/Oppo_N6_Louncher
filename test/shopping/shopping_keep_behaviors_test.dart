@@ -118,9 +118,9 @@ void main() {
             .id;
         controller.toggleChecked(list.id, milkId);
 
-        final List<ShoppingItem> removed = controller.clearChecked(list.id);
+        final List<RemovedItem> removed = controller.clearChecked(list.id);
         expect(removed, hasLength(1));
-        expect(removed.single.name, 'milk');
+        expect(removed.single.item.name, 'milk');
         expect(controller.activeList!.items, hasLength(1));
 
         controller.restoreItems(list.id, removed);
@@ -485,6 +485,174 @@ void main() {
 
       controller.moveItemUp(list.id, 'b');
       expect(ids(), <String>['a', 'b', 'c', 'e']);
+    });
+  });
+
+  group('remove and undo', () {
+    test('delete then undo keeps the original position', () {
+      final ShoppingList list = controller.createList('Groceries');
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'a', name: 'apple', aisle: 'Produce'),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'b', name: 'banana', aisle: 'Produce'),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'c', name: 'carrot', aisle: 'Produce'),
+      );
+
+      final RemovedItem? removed = controller.removeItem(list.id, 'b');
+      expect(removed, isNotNull);
+      expect(removed!.index, 1);
+      expect(
+        controller.activeList!.items.map((ShoppingItem item) => item.id),
+        <String>['a', 'c'],
+      );
+
+      controller.restoreItems(list.id, <RemovedItem>[removed]);
+      expect(
+        controller.activeList!.items.map((ShoppingItem item) => item.id),
+        <String>['a', 'b', 'c'],
+      );
+    });
+
+    test('undo does not merge with a same-name item', () {
+      final ShoppingList list = controller.createList('Groceries');
+      controller.addItem(
+        list.id,
+        const ShoppingItem(
+          id: 'a',
+          name: 'pasta',
+          quantity: Quantity(2, Unit.box),
+        ),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(
+          id: 'b',
+          name: 'pasta',
+          quantity: Quantity(200, Unit.gram),
+        ),
+      );
+      expect(controller.activeList!.items, hasLength(2));
+
+      final RemovedItem removed = controller.removeItem(list.id, 'a')!;
+      controller.restoreItems(list.id, <RemovedItem>[removed]);
+
+      expect(controller.activeList!.items, hasLength(2));
+      expect(controller.activeList!.items.first.id, 'a');
+      expect(
+        controller.activeList!.items.first.quantity,
+        const Quantity(2, Unit.box),
+      );
+    });
+
+    test('undo reapplies the parentId of promoted children', () {
+      final ShoppingList list = controller.createList('Groceries');
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'a', name: 'apple', aisle: 'Produce'),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'b', name: 'banana', aisle: 'Produce'),
+      );
+      controller.indentItem(list.id, 'b');
+
+      final RemovedItem removed = controller.removeItem(list.id, 'a')!;
+      expect(controller.activeList!.itemById('b')!.parentId, isNull);
+
+      controller.restoreItems(list.id, <RemovedItem>[removed]);
+      expect(controller.activeList!.itemById('b')!.parentId, 'a');
+      expect(
+        controller.activeList!.items.map((ShoppingItem item) => item.id),
+        <String>['a', 'b'],
+      );
+    });
+
+    test('clearChecked undo restores positions and re-indents children', () {
+      final ShoppingList list = controller.createList('Groceries');
+      controller.addItem(
+        list.id,
+        const ShoppingItem(
+          id: 'a',
+          name: 'apple',
+          aisle: 'Produce',
+          checked: true,
+        ),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'b', name: 'banana', aisle: 'Produce'),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(
+          id: 'c',
+          name: 'carrot',
+          aisle: 'Produce',
+          parentId: 'a',
+        ),
+      );
+
+      final List<RemovedItem> removed = controller.clearChecked(list.id);
+      expect(removed, hasLength(1));
+      expect(controller.activeList!.itemById('c')!.parentId, isNull);
+      expect(
+        controller.activeList!.items.map((ShoppingItem item) => item.id),
+        <String>['b', 'c'],
+      );
+
+      controller.restoreItems(list.id, removed);
+      expect(
+        controller.activeList!.items.map((ShoppingItem item) => item.id),
+        <String>['a', 'b', 'c'],
+      );
+      expect(controller.activeList!.itemById('c')!.parentId, 'a');
+    });
+  });
+
+  group('aisle memory', () {
+    test('a remembered aisle is applied on the next add', () {
+      final ShoppingList first = controller.createList('Groceries');
+      controller.quickAdd('quinoa');
+      final ShoppingItem item = controller.activeList!.items.single;
+      expect(item.aisle, 'Other');
+
+      controller.updateItem(first.id, item.copyWith(aisle: 'Pantry'));
+      expect(controller.aisleFor('quinoa', 'Other'), 'Pantry');
+
+      final ShoppingList second = controller.createList('Second');
+      controller.setActiveList(second.id);
+      controller.quickAdd('quinoa');
+      expect(controller.activeList!.items.single.aisle, 'Pantry');
+    });
+
+    test('the Frozen quick-add toggle never records an aisle', () {
+      final ShoppingList list = controller.createList('Groceries');
+      controller.addParsed(line: 'quinoa', frozen: true);
+
+      expect(controller.activeList!.items.single.aisle, 'Frozen');
+      expect(list.id, controller.activeList!.id);
+      expect(controller.aisleMemory, isEmpty);
+    });
+
+    test('a remembered aisle survives a store round trip', () async {
+      final ShoppingList list = controller.createList('Groceries');
+      controller.quickAdd('quinoa');
+      controller.updateItem(
+        list.id,
+        controller.activeList!.items.single.copyWith(aisle: 'Pantry'),
+      );
+      await controller.flush();
+
+      final ShoppingController reloaded = ShoppingController(store: store);
+      await reloaded.load();
+      expect(reloaded.aisleFor('quinoa', 'Other'), 'Pantry');
+      reloaded.dispose();
     });
   });
 }
