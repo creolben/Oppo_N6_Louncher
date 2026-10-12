@@ -362,6 +362,94 @@ void main() {
         ['com.test.b', 'com.test.c'],
       );
     });
+
+    test('ownerOf reports the constellation that resolves an app', () {
+      final engine = GalaxyLayoutEngine();
+      final phone = AppEntry(packageName: 'com.test.phone', label: 'Phone', category: AppCategory.core);
+      final chat = AppEntry(packageName: 'com.test.chat', label: 'Chat', category: AppCategory.social);
+      engine.assignApps([phone, chat]);
+      engine.setCorePackageNames([phone.packageName]);
+
+      expect(engine.ownerOf(phone.packageName)?.id, 'core');
+      expect(engine.ownerOf(chat.packageName)?.id, 'social');
+      expect(engine.ownerOf('com.test.absent'), isNull);
+    });
+
+    test('moveAppToConstellation moves an Essentials app into a standard group', () {
+      final engine = GalaxyLayoutEngine();
+      // A Connect app pinned into Essentials, as the reported bug describes.
+      final photo = AppEntry(packageName: 'com.test.photo', label: 'Photo', category: AppCategory.social);
+      final chat = AppEntry(packageName: 'com.test.chat', label: 'Chat', category: AppCategory.social);
+      engine.assignApps([photo, chat]);
+      engine.setCorePackageNames([photo.packageName]);
+
+      final core = engine.constellations.firstWhere((c) => c.id == 'core');
+      final social = engine.constellations.firstWhere((c) => c.id == 'social');
+      expect(engine.ownerOf(photo.packageName)?.id, 'core');
+      expect(social.apps.map((a) => a.packageName), isNot(contains(photo.packageName)));
+
+      final moved = engine.moveAppToConstellation('social', photo);
+
+      expect(moved, true);
+      expect(engine.ownerOf(photo.packageName)?.id, 'social');
+      expect(social.apps.map((a) => a.packageName), contains(photo.packageName));
+      expect(core.apps.map((a) => a.packageName), isNot(contains(photo.packageName)));
+      expect(engine.corePackageNames, isNot(contains(photo.packageName)));
+    });
+
+    test('moveAppToConstellation refuses a full target without changing anything', () {
+      final engine = GalaxyLayoutEngine();
+      final socialApps = List.generate(
+        8,
+        (i) => AppEntry(packageName: 'com.test.s$i', label: 'S$i', category: AppCategory.social),
+      );
+      final phone = AppEntry(packageName: 'com.test.phone', label: 'Phone', category: AppCategory.core);
+      engine.assignApps([...socialApps, phone]);
+      engine.setCorePackageNames([phone.packageName]);
+
+      final core = engine.constellations.firstWhere((c) => c.id == 'core');
+      final social = engine.constellations.firstWhere((c) => c.id == 'social');
+      expect(social.apps.length, 8);
+
+      final overridesBefore = engine.constellationAppOverrides
+          .map((key, value) => MapEntry(key, List<String>.from(value)));
+
+      final moved = engine.moveAppToConstellation('social', phone);
+
+      expect(moved, false);
+      expect(social.apps.length, 8);
+      expect(core.apps.map((a) => a.packageName), contains(phone.packageName));
+      expect(engine.corePackageNames, contains(phone.packageName));
+      expect(engine.constellationAppOverrides, overridesBefore);
+    });
+
+    test('moveAppToConstellation scrubs stale override and custom memberships', () {
+      final engine = GalaxyLayoutEngine();
+      final photo = AppEntry(packageName: 'com.test.photo', label: 'Photo', category: AppCategory.social);
+      final chat = AppEntry(packageName: 'com.test.chat', label: 'Chat', category: AppCategory.social);
+      engine.assignApps([photo, chat]);
+      engine.setCorePackageNames([photo.packageName]);
+
+      // Essentials wins over these stored entries, so they never paint.
+      engine.constellationAppOverrides['media'] = [photo.packageName];
+      final custom = engine.createCustomConstellation(
+        id: 'custom_archive',
+        name: 'Archive',
+        primaryColor: const Color(0xFF00E5FF),
+        emblemIcon: Icons.menu_book_rounded,
+        packageNames: [photo.packageName, chat.packageName],
+      );
+
+      final moved = engine.moveAppToConstellation('social', photo);
+
+      expect(moved, true);
+      expect(engine.ownerOf(photo.packageName)?.id, 'social');
+      expect(
+        engine.constellationAppOverrides['media'] ?? const <String>[],
+        isNot(contains(photo.packageName)),
+      );
+      expect(custom.customPackageNames, isNot(contains(photo.packageName)));
+    });
   });
 
   group('CameraController Coordinate Transformations', () {
