@@ -10,6 +10,11 @@ class ShoppingItem {
   final String? note;
   final String? sourceRecipeId;
 
+  /// The id of the top-level item this line is indented under, or null.
+  ///
+  /// Indentation is one level deep, so a child never has children of its own.
+  final String? parentId;
+
   const ShoppingItem({
     required this.id,
     required this.name,
@@ -18,6 +23,7 @@ class ShoppingItem {
     this.checked = false,
     this.note,
     this.sourceRecipeId,
+    this.parentId,
   });
 
   /// Name used for duplicate detection: lower-cased, trimmed, whitespace
@@ -50,6 +56,8 @@ class ShoppingItem {
     bool? checked,
     String? note,
     String? sourceRecipeId,
+    String? parentId,
+    bool clearParent = false,
   }) {
     return ShoppingItem(
       id: id ?? this.id,
@@ -59,6 +67,7 @@ class ShoppingItem {
       checked: checked ?? this.checked,
       note: note ?? this.note,
       sourceRecipeId: sourceRecipeId ?? this.sourceRecipeId,
+      parentId: clearParent ? null : (parentId ?? this.parentId),
     );
   }
 
@@ -70,6 +79,7 @@ class ShoppingItem {
         'checked': checked,
         if (note != null) 'note': note,
         if (sourceRecipeId != null) 'sourceRecipeId': sourceRecipeId,
+        if (parentId != null) 'parentId': parentId,
       };
 
   factory ShoppingItem.fromJson(Map<String, dynamic> json) {
@@ -84,6 +94,7 @@ class ShoppingItem {
       checked: json['checked'] as bool? ?? false,
       note: json['note'] as String?,
       sourceRecipeId: json['sourceRecipeId'] as String?,
+      parentId: json['parentId'] as String?,
     );
   }
 
@@ -96,11 +107,20 @@ class ShoppingItem {
       other.aisle == aisle &&
       other.checked == checked &&
       other.note == note &&
-      other.sourceRecipeId == sourceRecipeId;
+      other.sourceRecipeId == sourceRecipeId &&
+      other.parentId == parentId;
 
   @override
-  int get hashCode =>
-      Object.hash(id, name, quantity, aisle, checked, note, sourceRecipeId);
+  int get hashCode => Object.hash(
+        id,
+        name,
+        quantity,
+        aisle,
+        checked,
+        note,
+        sourceRecipeId,
+        parentId,
+      );
 
   @override
   String toString() => 'ShoppingItem($id, $name, $quantity)';

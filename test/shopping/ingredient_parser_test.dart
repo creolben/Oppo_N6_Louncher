@@ -97,5 +97,11 @@ void main() {
       expect(parser.parseLine('500 g chicken').aisle, 'Meat & Fish');
       expect(parser.parseLine('2 cups flour').aisle, 'Pantry');
     });
+
+    test('a leading or trailing "frozen" word is the Frozen aisle', () {
+      expect(parser.parseLine('frozen peas').aisle, 'Frozen');
+      expect(parser.parseLine('2 cups peas frozen').aisle, 'Frozen');
+      expect(parser.parseLine('Frozen pizza').aisle, 'Frozen');
+    });
   });
 }

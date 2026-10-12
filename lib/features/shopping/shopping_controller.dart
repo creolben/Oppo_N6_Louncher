@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'data/shopping_store.dart';
+import 'models/quantity.dart';
 import 'models/recipe.dart';
 import 'models/shopping_item.dart';
 import 'models/shopping_list.dart';
+import 'models/unit.dart';
 import 'parsing/document_parser.dart';
 import 'parsing/ingredient_parser.dart';
 
@@ -128,15 +130,29 @@ class ShoppingController extends ChangeNotifier {
   }
 
   /// Parses [line] and merges it into the active list.
-  ShoppingItem? quickAdd(String line) {
+  ShoppingItem? quickAdd(String line) => addParsed(line: line);
+
+  /// Parses [line] into an item and merges it into the active list.
+  ///
+  /// [unitOverride] replaces the unit the parser found — or supplies one when
+  /// none was typed, in which case the amount defaults to one. [frozen] forces
+  /// the item into the Frozen aisle regardless of the parser's guess.
+  ShoppingItem? addParsed({
+    required String line,
+    Unit? unitOverride,
+    bool frozen = false,
+  }) {
     final parsed = const IngredientParser().parseLine(line);
     if (parsed.name.isEmpty) return null;
     final list = _activeOrCreate();
+    final Quantity? quantity = unitOverride == null
+        ? parsed.quantity
+        : Quantity(parsed.quantity?.amount ?? 1, unitOverride);
     final item = ShoppingItem(
       id: _newId('item'),
       name: parsed.name,
-      quantity: parsed.quantity,
-      aisle: parsed.aisle,
+      quantity: quantity,
+      aisle: frozen ? 'Frozen' : parsed.aisle,
       note: parsed.note,
     );
     final index = _lists.indexWhere((candidate) => candidate.id == list.id);
@@ -146,30 +162,353 @@ class ShoppingController extends ChangeNotifier {
   }
 
   void toggleChecked(String listId, String itemId) {
-    _mutateItem(
-      listId,
-      itemId,
-      (item) => item.copyWith(checked: !item.checked),
+    final index = _lists.indexWhere((list) => list.id == listId);
+    if (index < 0) return;
+    final list = _lists[index];
+    final itemIndex = list.items.indexWhere((item) => item.id == itemId);
+    if (itemIndex < 0) return;
+    final item = list.items[itemIndex];
+    final bool next = !item.checked;
+    final items = List<ShoppingItem>.of(list.items);
+    items[itemIndex] = item.copyWith(checked: next);
+
+    if (next) {
+      // Keep semantics: checking a parent checks its children.
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].parentId == itemId && !items[i].checked) {
+          items[i] = items[i].copyWith(checked: true);
+        }
+      }
+    } else {
+      // A parent and its children stay in sync when the parent is unchecked.
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].parentId == itemId && items[i].checked) {
+          items[i] = items[i].copyWith(checked: false);
+        }
+      }
+      // Keep semantics: unchecking a child unchecks its checked parent.
+      final String? parentId = item.parentId;
+      if (parentId != null) {
+        final int parentIndex = items.indexWhere((entry) => entry.id == parentId);
+        if (parentIndex >= 0 && items[parentIndex].checked) {
+          items[parentIndex] = items[parentIndex].copyWith(checked: false);
+        }
+      }
+    }
+
+    _lists[index] = list.copyWith(items: items, updatedAt: _clock());
+    _afterMutation();
+  }
+
+  /// Indents [itemId] under the nearest preceding top-level unchecked item in
+  /// the same aisle group.
+  ///
+  /// A no-op when there is no such item, when the item is already a child, or
+  /// when the item has children itself (indentation is one level deep).
+  void indentItem(String listId, String itemId) {
+    final index = _lists.indexWhere((list) => list.id == listId);
+    if (index < 0) return;
+    final list = _lists[index];
+    final itemIndex = list.items.indexWhere((item) => item.id == itemId);
+    if (itemIndex < 0) return;
+    final item = list.items[itemIndex];
+    if (item.checked || item.parentId != null) return;
+    if (_hasChildren(list, itemId)) return;
+
+    for (var i = itemIndex - 1; i >= 0; i--) {
+      final candidate = list.items[i];
+      if (candidate.checked || candidate.parentId != null) continue;
+      if (candidate.aisle != item.aisle) continue;
+      final items = List<ShoppingItem>.of(list.items);
+      items[itemIndex] = item.copyWith(parentId: candidate.id);
+      _lists[index] = list.copyWith(items: items, updatedAt: _clock());
+      _afterMutation();
+      return;
+    }
+  }
+
+  /// Clears the indentation of [itemId], making it a top-level row again.
+  void outdentItem(String listId, String itemId) {
+    final index = _lists.indexWhere((list) => list.id == listId);
+    if (index < 0) return;
+    final list = _lists[index];
+    final itemIndex = list.items.indexWhere((item) => item.id == itemId);
+    if (itemIndex < 0) return;
+    final item = list.items[itemIndex];
+    if (item.parentId == null) return;
+    final items = List<ShoppingItem>.of(list.items);
+    items[itemIndex] = item.copyWith(clearParent: true);
+    _lists[index] = list.copyWith(items: items, updatedAt: _clock());
+    _afterMutation();
+  }
+
+  /// Whether [indentItem] would change anything for [itemId].
+  bool canIndent(String listId, String itemId) {
+    final list = listById(listId);
+    if (list == null) return false;
+    final item = list.itemById(itemId);
+    if (item == null || item.checked || item.parentId != null) return false;
+    final itemIndex = list.items.indexWhere((entry) => entry.id == itemId);
+    if (itemIndex < 0 || _hasChildren(list, itemId)) return false;
+    return _precedingTopLevel(list, itemIndex, item.aisle) != null;
+  }
+
+  /// Whether [outdentItem] would change anything for [itemId].
+  bool canOutdent(String listId, String itemId) =>
+      listById(listId)?.itemById(itemId)?.parentId != null;
+
+  ShoppingItem? _precedingTopLevel(ShoppingList list, int before, String aisle) {
+    for (var i = before - 1; i >= 0; i--) {
+      final candidate = list.items[i];
+      if (candidate.checked || candidate.parentId != null) continue;
+      if (candidate.aisle != aisle) continue;
+      return candidate;
+    }
+    return null;
+  }
+
+  bool _hasChildren(ShoppingList list, String itemId) =>
+      list.items.any((item) => item.parentId == itemId);
+
+  /// Moves [itemId] and its children to [newIndexWithinAisle] among the
+  /// unchecked top-level items of its aisle.
+  ///
+  /// The index is clamped to the aisle, so a reorder never crosses into another
+  /// aisle. Items that are checked or already indented are left alone.
+  void moveItem(String listId, String itemId, int newIndexWithinAisle) {
+    final index = _lists.indexWhere((list) => list.id == listId);
+    if (index < 0) return;
+    final list = _lists[index];
+    final item = list.itemById(itemId);
+    if (item == null || item.checked || item.parentId != null) return;
+    final String aisle = item.aisle;
+
+    // Each unit is a top-level unchecked item followed by its children.
+    final units = <List<ShoppingItem>>[];
+    for (final candidate in list.items) {
+      if (candidate.checked || candidate.parentId != null) continue;
+      if (candidate.aisle != aisle) continue;
+      units.add(<ShoppingItem>[
+        candidate,
+        ...list.items.where((child) => child.parentId == candidate.id),
+      ]);
+    }
+    final int current = units.indexWhere((unit) => unit.first.id == itemId);
+    if (current < 0) return;
+    final int target = newIndexWithinAisle.clamp(0, units.length - 1);
+    if (target == current) return;
+
+    final List<ShoppingItem> moved = units.removeAt(current);
+    units.insert(target, moved);
+    final reordered = <ShoppingItem>[for (final unit in units) ...unit];
+    final Set<String> unitIds = reordered.map((entry) => entry.id).toSet();
+
+    // Write the reordered units back into the same slots so items from other
+    // aisles and the checked ("Done") section keep their positions.
+    final items = List<ShoppingItem>.of(list.items);
+    var cursor = 0;
+    for (var i = 0; i < items.length; i++) {
+      if (unitIds.contains(items[i].id)) {
+        items[i] = reordered[cursor++];
+      }
+    }
+    _lists[index] = list.copyWith(items: items, updatedAt: _clock());
+    _afterMutation();
+  }
+
+  /// Moves [itemId] one position up within its aisle (or among its siblings).
+  void moveItemUp(String listId, String itemId) =>
+      _moveItemRelative(listId, itemId, -1);
+
+  /// Moves [itemId] one position down within its aisle (or among its siblings).
+  void moveItemDown(String listId, String itemId) =>
+      _moveItemRelative(listId, itemId, 1);
+
+  bool canMoveUp(String listId, String itemId) =>
+      _moveTarget(listId, itemId, -1) != null;
+
+  bool canMoveDown(String listId, String itemId) =>
+      _moveTarget(listId, itemId, 1) != null;
+
+  void _moveItemRelative(String listId, String itemId, int delta) {
+    final index = _lists.indexWhere((list) => list.id == listId);
+    final int? target = _moveTarget(listId, itemId, delta);
+    if (index < 0 || target == null) return;
+    final list = _lists[index];
+    final item = list.itemById(itemId);
+    if (item == null) return;
+
+    if (item.parentId == null) {
+      moveItem(listId, itemId, target);
+      return;
+    }
+
+    // A child moves among its siblings; swap the two slots.
+    final siblings = <ShoppingItem>[
+      for (final entry in list.items)
+        if (entry.parentId == item.parentId) entry,
+    ];
+    final int current = siblings.indexWhere((entry) => entry.id == itemId);
+    if (current < 0 || target < 0 || target >= siblings.length) return;
+    final int movingIndex = list.items.indexWhere((entry) => entry.id == itemId);
+    final int targetIndex =
+        list.items.indexWhere((entry) => entry.id == siblings[target].id);
+    if (movingIndex < 0 || targetIndex < 0) return;
+    final items = List<ShoppingItem>.of(list.items);
+    final ShoppingItem other = items[targetIndex];
+    items[targetIndex] = items[movingIndex];
+    items[movingIndex] = other;
+    _lists[index] = list.copyWith(items: items, updatedAt: _clock());
+    _afterMutation();
+  }
+
+  /// The index [delta] would move [itemId] to, or null when out of range.
+  int? _moveTarget(String listId, String itemId, int delta) {
+    final list = listById(listId);
+    if (list == null) return null;
+    final item = list.itemById(itemId);
+    if (item == null || item.checked) return null;
+    if (item.parentId == null) {
+      final units = <ShoppingItem>[
+        for (final entry in list.items)
+          if (!entry.checked && entry.parentId == null && entry.aisle == item.aisle)
+            entry,
+      ];
+      final int current = units.indexWhere((entry) => entry.id == itemId);
+      if (current < 0) return null;
+      final int target = current + delta;
+      return target < 0 || target >= units.length ? null : target;
+    }
+    final siblings = <ShoppingItem>[
+      for (final entry in list.items)
+        if (entry.parentId == item.parentId) entry,
+    ];
+    final int current = siblings.indexWhere((entry) => entry.id == itemId);
+    if (current < 0) return null;
+    final int target = current + delta;
+    return target < 0 || target >= siblings.length ? null : target;
+  }
+
+  /// Replaces the item with the same id on [listId].
+  void updateItem(String listId, ShoppingItem item) {
+    final index = _lists.indexWhere((list) => list.id == listId);
+    if (index < 0) return;
+    final list = _lists[index];
+    final itemIndex =
+        list.items.indexWhere((candidate) => candidate.id == item.id);
+    if (itemIndex < 0) return;
+    final items = List<ShoppingItem>.of(list.items);
+    items[itemIndex] = item;
+    _lists[index] = list.copyWith(items: items, updatedAt: _clock());
+    _afterMutation();
+  }
+
+  /// Unchecks every checked item on [listId].
+  void uncheckAll(String listId) {
+    final index = _lists.indexWhere((list) => list.id == listId);
+    if (index < 0) return;
+    final list = _lists[index];
+    if (list.checkedCount == 0) return;
+    final items = list.items
+        .map((item) => item.checked ? item.copyWith(checked: false) : item)
+        .toList();
+    _lists[index] = list.copyWith(items: items, updatedAt: _clock());
+    _afterMutation();
+  }
+
+  /// Sets whether the checked ("Done") section of [listId] is collapsed.
+  void setCheckedCollapsed(String listId, bool collapsed) {
+    final index = _lists.indexWhere((list) => list.id == listId);
+    if (index < 0) return;
+    if (_lists[index].checkedCollapsed == collapsed) return;
+    _lists[index] = _lists[index].copyWith(
+      checkedCollapsed: collapsed,
+      updatedAt: _clock(),
     );
+    _afterMutation();
+  }
+
+  /// Up to four name suggestions for [query], drawn from every list's history.
+  ///
+  /// Matching is case-insensitive on [ShoppingItem.normalizedName], prefix
+  /// matches before contains matches. Names already unchecked on the active
+  /// list are skipped because they are on the list already, duplicates are
+  /// collapsed, and the result never exceeds four entries.
+  List<String> suggestionsFor(String query) {
+    final String normalized = ShoppingItem.normalizeName(query);
+    if (normalized.isEmpty) return const <String>[];
+    final ShoppingList? active = activeList;
+    final Set<String> excluded = <String>{
+      if (active != null)
+        for (final ShoppingItem item in active.items)
+          if (!item.checked) item.normalizedName,
+    };
+    final List<String> prefix = <String>[];
+    final List<String> contains = <String>[];
+    final Set<String> seen = <String>{};
+    for (final ShoppingList list in _lists) {
+      for (final ShoppingItem item in list.items) {
+        final String key = item.normalizedName;
+        if (key.isEmpty || excluded.contains(key) || !seen.add(key)) continue;
+        if (key.startsWith(normalized)) {
+          prefix.add(item.name);
+        } else if (key.contains(normalized)) {
+          contains.add(item.name);
+        }
+      }
+    }
+    return <String>[...prefix, ...contains].take(4).toList();
   }
 
   void removeItem(String listId, String itemId) {
     final index = _lists.indexWhere((list) => list.id == listId);
     if (index < 0) return;
     final list = _lists[index];
-    final items = list.items.where((item) => item.id != itemId).toList();
-    if (items.length == list.items.length) return;
+    if (list.itemById(itemId) == null) return;
+    // Deleting a parent promotes its children rather than deleting them.
+    final items = <ShoppingItem>[
+      for (final item in list.items)
+        if (item.id != itemId)
+          item.parentId == itemId ? item.copyWith(clearParent: true) : item,
+    ];
     _lists[index] = list.copyWith(items: items, updatedAt: _clock());
     _afterMutation();
   }
 
-  void clearChecked(String listId) {
+  /// Removes the checked items from [listId] and returns them.
+  ///
+  /// The returned items let a caller offer an undo; an empty list means nothing
+  /// was checked.
+  List<ShoppingItem> clearChecked(String listId) {
+    final index = _lists.indexWhere((list) => list.id == listId);
+    if (index < 0) return const <ShoppingItem>[];
+    final list = _lists[index];
+    final removed =
+        list.items.where((item) => item.checked).toList(growable: false);
+    if (removed.isEmpty) return const <ShoppingItem>[];
+    final Set<String> removedIds = removed.map((item) => item.id).toSet();
+    final items = <ShoppingItem>[
+      for (final item in list.items)
+        if (!item.checked)
+          removedIds.contains(item.parentId)
+              ? item.copyWith(clearParent: true)
+              : item,
+    ];
+    _lists[index] = list.copyWith(items: items, updatedAt: _clock());
+    _afterMutation();
+    return removed;
+  }
+
+  /// Re-inserts [items] on [listId] without merging, for an undo.
+  void restoreItems(String listId, List<ShoppingItem> items) {
+    if (items.isEmpty) return;
     final index = _lists.indexWhere((list) => list.id == listId);
     if (index < 0) return;
     final list = _lists[index];
-    final items = list.items.where((item) => !item.checked).toList();
-    if (items.length == list.items.length) return;
-    _lists[index] = list.copyWith(items: items, updatedAt: _clock());
+    _lists[index] = list.copyWith(
+      items: <ShoppingItem>[...list.items, ...items],
+      updatedAt: _clock(),
+    );
     _afterMutation();
   }
 
@@ -278,22 +617,6 @@ class ShoppingController extends ChangeNotifier {
     _saveTimer?.cancel();
     _saveTimer = null;
     await _saveNow();
-  }
-
-  void _mutateItem(
-    String listId,
-    String itemId,
-    ShoppingItem Function(ShoppingItem item) transform,
-  ) {
-    final index = _lists.indexWhere((list) => list.id == listId);
-    if (index < 0) return;
-    final list = _lists[index];
-    final itemIndex = list.items.indexWhere((item) => item.id == itemId);
-    if (itemIndex < 0) return;
-    final items = List<ShoppingItem>.of(list.items);
-    items[itemIndex] = transform(items[itemIndex]);
-    _lists[index] = list.copyWith(items: items, updatedAt: _clock());
-    _afterMutation();
   }
 
   ShoppingList _activeOrCreate() {

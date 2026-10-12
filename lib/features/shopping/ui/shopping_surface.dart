@@ -17,6 +17,7 @@ import 'list_pane.dart';
 import 'lists_pane.dart';
 import 'quick_add_capsule.dart';
 import 'recipe_pane.dart';
+import 'unit_converter_sheet.dart';
 
 /// The full-screen shopping surface.
 ///
@@ -442,6 +443,19 @@ class _ShoppingCapsule extends StatelessWidget {
                   onPasteText();
                 } else if (value == 'importPdf') {
                   onImportPdf();
+                } else if (value == 'uncheckAll') {
+                  final ShoppingList? list = controller.activeList;
+                  if (list != null && list.checkedCount > 0) {
+                    controller.uncheckAll(list.id);
+                    showGrocerySnackBar(context, 'All items unchecked');
+                  }
+                } else if (value == 'deleteChecked') {
+                  final ShoppingList? list = controller.activeList;
+                  if (list != null) {
+                    clearCheckedWithUndo(context, controller, list);
+                  }
+                } else if (value == 'unitConverter') {
+                  showUnitConverterSheet(context);
                 }
               },
               itemBuilder: (BuildContext context) =>
@@ -471,6 +485,33 @@ class _ShoppingCapsule extends StatelessWidget {
                     contentPadding: EdgeInsets.zero,
                     leading: Icon(Icons.picture_as_pdf_rounded),
                     title: Text('Import PDF'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'uncheckAll',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.check_box_outline_blank_rounded),
+                    title: Text('Uncheck all items'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'deleteChecked',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.delete_sweep_rounded),
+                    title: Text('Delete checked items'),
+                  ),
+                ),
+                PopupMenuItem<String>(
+                  value: 'unitConverter',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.straighten_rounded),
+                    title: Text('Unit converter'),
                   ),
                 ),
               ],

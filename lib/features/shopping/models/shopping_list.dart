@@ -9,12 +9,18 @@ class ShoppingList {
   final DateTime createdAt;
   final DateTime updatedAt;
 
+  /// Whether the checked ("Done") section of this list is collapsed.
+  ///
+  /// Persisted per list; older stores without the field load as `false`.
+  final bool checkedCollapsed;
+
   const ShoppingList({
     required this.id,
     required this.name,
     this.items = const [],
     required this.createdAt,
     required this.updatedAt,
+    this.checkedCollapsed = false,
   });
 
   int get checkedCount => items.where((item) => item.checked).length;
@@ -70,6 +76,7 @@ class ShoppingList {
     List<ShoppingItem>? items,
     DateTime? createdAt,
     DateTime? updatedAt,
+    bool? checkedCollapsed,
   }) {
     return ShoppingList(
       id: id ?? this.id,
@@ -77,6 +84,7 @@ class ShoppingList {
       items: items ?? this.items,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      checkedCollapsed: checkedCollapsed ?? this.checkedCollapsed,
     );
   }
 
@@ -86,6 +94,7 @@ class ShoppingList {
         'items': items.map((item) => item.toJson()).toList(),
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
+        'checkedCollapsed': checkedCollapsed,
       };
 
   factory ShoppingList.fromJson(Map<String, dynamic> json) {
@@ -99,6 +108,7 @@ class ShoppingList {
           .toList(),
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
+      checkedCollapsed: json['checkedCollapsed'] as bool? ?? false,
     );
   }
 
@@ -109,10 +119,18 @@ class ShoppingList {
       other.name == name &&
       _listEquals(other.items, items) &&
       other.createdAt == createdAt &&
-      other.updatedAt == updatedAt;
+      other.updatedAt == updatedAt &&
+      other.checkedCollapsed == checkedCollapsed;
 
   @override
-  int get hashCode => Object.hash(id, name, Object.hashAll(items), createdAt, updatedAt);
+  int get hashCode => Object.hash(
+        id,
+        name,
+        Object.hashAll(items),
+        createdAt,
+        updatedAt,
+        checkedCollapsed,
+      );
 
   static bool _listEquals(List<ShoppingItem> a, List<ShoppingItem> b) {
     if (identical(a, b)) return true;
