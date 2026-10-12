@@ -35,16 +35,19 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
     _coreApps = List.from(core.apps);
   }
 
+  void _persist() {
+    GalaxyStorageService.saveConfig(
+      coreAppPackageNames: widget.layoutEngine.corePackageNames,
+      customConstellations: widget.layoutEngine.customConstellations,
+      constellationAppOverrides: widget.layoutEngine.constellationAppOverrides,
+      hiddenPackageNames: widget.layoutEngine.hiddenPackageNames,
+    );
+  }
+
   void _saveChanges() {
     widget.layoutEngine.setCorePackageNames(_coreApps.map((a) => a.packageName).toList());
     widget.onUpdated();
-
-    final customConfigs = widget.layoutEngine.customConstellations;
-
-    GalaxyStorageService.saveConfig(
-      coreAppPackageNames: _coreApps.map((a) => a.packageName).toList(),
-      customGalaxies: customConfigs,
-    );
+    _persist();
   }
 
   void _removeApp(int index) {
@@ -115,7 +118,7 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                           ),
                           const Spacer(),
                           Text(
-                            '${_coreApps.length}/6 Stars',
+                            '${_coreApps.length}/${GalaxyLayoutEngine.maxCoreApps} Stars',
                             style: const TextStyle(
                               color: LuminousHomeTheme.accentCore,
                               fontSize: 13,
@@ -154,6 +157,8 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                         itemCount: availableApps.length,
                         itemBuilder: (context, index) {
                           final app = availableApps[index];
+                          final owner = widget.layoutEngine.ownerOf(app.packageName);
+                          final ownerName = (owner != null && owner.id != 'core') ? owner.name : null;
                           return Container(
                             margin: const EdgeInsets.only(bottom: 6),
                             decoration: BoxDecoration(
@@ -161,44 +166,75 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                               borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                               border: Border.all(color: app.accentColor.withValues(alpha: 0.2)),
                             ),
-                            child: ListTile(
-                              dense: true,
-                              leading: Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(10),
-                                  color: app.accentColor.withValues(alpha: 0.15),
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: ListTile(
+                                dense: true,
+                                leading: Container(
+                                  width: 38,
+                                  height: 38,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(10),
+                                    color: app.accentColor.withValues(alpha: 0.15),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: app.iconBytes != null
+                                        ? Image.memory(app.iconBytes!, fit: BoxFit.cover)
+                                        : Icon(app.fallbackIcon, color: app.accentColor, size: 20),
+                                  ),
                                 ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: app.iconBytes != null
-                                      ? Image.memory(app.iconBytes!, fit: BoxFit.cover)
-                                      : Icon(app.fallbackIcon, color: app.accentColor, size: 20),
+                                title: Text(
+                                  app.label,
+                                  style: const TextStyle(color: LuminousHomeTheme.white, fontWeight: FontWeight.w600),
                                 ),
-                              ),
-                              title: Text(
-                                app.label,
-                                style: const TextStyle(color: LuminousHomeTheme.white, fontWeight: FontWeight.w600),
-                              ),
-                              subtitle: Text(
-                                app.packageName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 11),
-                              ),
-                              trailing: Icon(Icons.add_circle_outline_rounded, color: LuminousHomeTheme.accent),
-                              onTap: () {
-                                Navigator.of(context).pop();
-                                setState(() {
-                                  if (replaceIndex != null && replaceIndex < _coreApps.length) {
-                                    _coreApps[replaceIndex] = app;
-                                  } else if (_coreApps.length < GalaxyLayoutEngine.maxCoreApps) {
-                                    _coreApps.add(app);
+                                subtitle: Text(
+                                  ownerName != null ? 'In $ownerName' : app.packageName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 11),
+                                ),
+                                trailing: Icon(
+                                  ownerName != null
+                                      ? Icons.swap_horiz_rounded
+                                      : Icons.add_circle_outline_rounded,
+                                  color: LuminousHomeTheme.accent,
+                                ),
+                                onTap: () {
+                                  if (ownerName != null) {
+                                    final moved = widget.layoutEngine.moveAppToConstellation('core', app);
+                                    if (!moved) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Essentials holds up to ${GalaxyLayoutEngine.maxCoreApps} apps. Remove an app first.',
+                                          ),
+                                          backgroundColor: LuminousHomeTheme.panelRaised,
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    Navigator.of(context).pop();
+                                    setState(() {
+                                      final core = widget.layoutEngine.constellations
+                                          .firstWhere((c) => c.id == 'core');
+                                      _coreApps = List.from(core.apps);
+                                    });
+                                    widget.onUpdated();
+                                    _persist();
+                                    return;
                                   }
-                                });
-                                _saveChanges();
-                              },
+                                  Navigator.of(context).pop();
+                                  setState(() {
+                                    if (replaceIndex != null && replaceIndex < _coreApps.length) {
+                                      _coreApps[replaceIndex] = app;
+                                    } else if (_coreApps.length < GalaxyLayoutEngine.maxCoreApps) {
+                                      _coreApps.add(app);
+                                    }
+                                  });
+                                  _saveChanges();
+                                },
+                              ),
                             ),
                           );
                         },
@@ -322,9 +358,10 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                         child: const Icon(Icons.auto_awesome, color: LuminousHomeTheme.panel, size: 24),
                       ),
 
-                      // 6 Slots around the ring
-                      ...List.generate(6, (index) {
-                        final angle = (index * 2 * math.pi / 6) - (math.pi / 2);
+                      // Core slots around the ring
+                      ...List.generate(GalaxyLayoutEngine.maxCoreApps, (index) {
+                        final angle =
+                            (index * 2 * math.pi / GalaxyLayoutEngine.maxCoreApps) - (math.pi / 2);
                         const radius = 85.0;
                         final offset = Offset(math.cos(angle) * radius, math.sin(angle) * radius);
 
@@ -396,7 +433,7 @@ class _CenterConstellationEditorModalState extends State<CenterConstellationEdit
                 const SizedBox(height: 16),
 
                 Text(
-                  '${_coreApps.length} of 6 slots active. Tap slot to swap or add.',
+                  '${_coreApps.length} of ${GalaxyLayoutEngine.maxCoreApps} slots active. Tap slot to swap or add.',
                   style: const TextStyle(
                     color: LuminousHomeTheme.white54,
                     fontSize: 12,

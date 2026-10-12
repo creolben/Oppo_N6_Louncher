@@ -302,6 +302,80 @@ class GalaxyLayoutEngine {
     assignApps(List.from(allApps));
   }
 
+  /// The constellation whose resolved apps list currently contains
+  /// [packageName], or null when no sector shows it.
+  ///
+  /// Only painted membership counts: a package stored in a losing override
+  /// list (for example an app that Essentials already owns) is not owned by it.
+  Constellation? ownerOf(String packageName) {
+    for (final c in constellations) {
+      if (c.apps.any((a) => a.packageName == packageName)) return c;
+    }
+    return null;
+  }
+
+  /// Moves [app] into the constellation with id [targetId].
+  ///
+  /// The package is detached from its current owner and scrubbed from every
+  /// other stored membership list, so an entry that no longer shows on the home
+  /// screen cannot keep it hidden. Returns false without changing anything when
+  /// the target already holds its maximum number of apps.
+  bool moveAppToConstellation(String targetId, AppEntry app) {
+    final target = constellations.where((c) => c.id == targetId).firstOrNull;
+    if (target == null) return false;
+
+    final String packageName = app.packageName;
+    if (target.apps.any((a) => a.packageName == packageName)) {
+      return true; // Already visible in the target.
+    }
+
+    final int limit = targetId == 'core' ? maxCoreApps : maxConstellationApps;
+    if (target.apps.length >= limit) return false;
+
+    // Detach from the current owner exactly as the removal editors do.
+    final owner = ownerOf(packageName);
+    if (owner != null) {
+      if (owner.id == 'core') {
+        removeAppFromCore(packageName);
+      } else {
+        removeAppFromConstellation(owner.id, packageName);
+      }
+    }
+
+    // Scrub any other stored list still holding the package: a stale override
+    // would otherwise be resolved back onto the home screen later.
+    corePackageNames.remove(packageName);
+    for (final c in constellations) {
+      if (c.isCustom) {
+        c.customPackageNames.remove(packageName);
+      } else if (c.id != 'core') {
+        final list = constellationAppOverrides[c.id];
+        if (list != null) {
+          list.remove(packageName);
+          if (list.isEmpty) constellationAppOverrides.remove(c.id);
+        }
+      }
+    }
+
+    if (targetId == 'core') {
+      if (!corePackageNames.contains(packageName)) {
+        corePackageNames.add(packageName);
+      }
+    } else if (target.isCustom) {
+      if (!target.customPackageNames.contains(packageName)) {
+        target.customPackageNames.add(packageName);
+      }
+    } else {
+      final currentList = constellationAppOverrides[targetId] ??
+          target.apps.map((a) => a.packageName).toList();
+      if (!currentList.contains(packageName)) currentList.add(packageName);
+      constellationAppOverrides[targetId] = currentList;
+    }
+
+    assignApps(List.from(allApps));
+    return true;
+  }
+
   /// Creates a brand new custom constellation (strictly max 8 apps).
   ///
   /// Idempotent by [id]: if a custom constellation with that id already exists

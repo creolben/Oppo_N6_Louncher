@@ -29,24 +29,30 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
   late List<AppEntry> _constellationApps;
   bool get _isCore => widget.constellation.id == 'core';
 
+  int get _limit => _isCore
+      ? GalaxyLayoutEngine.maxCoreApps
+      : GalaxyLayoutEngine.maxConstellationApps;
+
   @override
   void initState() {
     super.initState();
     _constellationApps = List.from(widget.constellation.apps);
   }
 
+  void _persist() {
+    GalaxyStorageService.saveConfig(
+      coreAppPackageNames: widget.layoutEngine.corePackageNames,
+      customConstellations: widget.layoutEngine.customConstellations,
+      constellationAppOverrides: widget.layoutEngine.constellationAppOverrides,
+      hiddenPackageNames: widget.layoutEngine.hiddenPackageNames,
+    );
+  }
+
   void _saveChanges() {
     final pkgNames = _constellationApps.map((a) => a.packageName).toList();
     widget.layoutEngine.setConstellationAppPackages(widget.constellation.id, pkgNames);
     widget.onUpdated();
-
-    final customConfigs = widget.layoutEngine.customConstellations;
-
-    GalaxyStorageService.saveConfig(
-      coreAppPackageNames: widget.layoutEngine.corePackageNames,
-      customGalaxies: customConfigs,
-      constellationAppOverrides: widget.layoutEngine.constellationAppOverrides,
-    );
+    _persist();
   }
 
   void _removeApp(int index) {
@@ -125,9 +131,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                           ),
                           const Spacer(),
                           Text(
-                            _isCore
-                                ? '${_constellationApps.length}/6 Stars'
-                                : '${_constellationApps.length}/8 Stars',
+                            '${_constellationApps.length}/$_limit Stars',
                             style: TextStyle(
                               color: widget.constellation.primaryColor,
                               fontSize: 13,
@@ -167,6 +171,9 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                         itemCount: availableApps.length,
                         itemBuilder: (context, index) {
                           final app = availableApps[index];
+                          final owner = widget.layoutEngine.ownerOf(app.packageName);
+                          final ownerName =
+                              (owner != null && owner.id != widget.constellation.id) ? owner.name : null;
                           return Container(
                             margin: const EdgeInsets.only(bottom: 6),
                             decoration: BoxDecoration(
@@ -174,47 +181,76 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                               borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
                               border: Border.all(color: app.accentColor.withValues(alpha: 0.2)),
                             ),
-                            child: ListTile(
-                              dense: true,
-                              leading: Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(10),
-                                  color: app.accentColor.withValues(alpha: 0.15),
+                            child: Material(
+                              type: MaterialType.transparency,
+                              child: ListTile(
+                                dense: true,
+                                leading: Container(
+                                  width: 38,
+                                  height: 38,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(10),
+                                    color: app.accentColor.withValues(alpha: 0.15),
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: app.iconBytes != null
+                                        ? Image.memory(app.iconBytes!, fit: BoxFit.cover)
+                                        : Icon(app.fallbackIcon, color: app.accentColor, size: 20),
+                                  ),
                                 ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: app.iconBytes != null
-                                      ? Image.memory(app.iconBytes!, fit: BoxFit.cover)
-                                      : Icon(app.fallbackIcon, color: app.accentColor, size: 20),
+                                title: Text(
+                                  app.label,
+                                  style: const TextStyle(color: LuminousHomeTheme.white, fontWeight: FontWeight.w600),
                                 ),
-                              ),
-                              title: Text(
-                                app.label,
-                                style: const TextStyle(color: LuminousHomeTheme.white, fontWeight: FontWeight.w600),
-                              ),
-                              subtitle: Text(
-                                app.packageName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 11),
-                              ),
-                              trailing: Icon(
-                                Icons.add_circle_outline_rounded,
-                                color: widget.constellation.primaryColor,
-                              ),
-                              onTap: () {
-                                Navigator.of(context).pop();
-                                setState(() {
-                                  if (replaceIndex != null && replaceIndex < _constellationApps.length) {
-                                    _constellationApps[replaceIndex] = app;
-                                  } else if (_isCore ? _constellationApps.length < 6 : _constellationApps.length < 8) {
-                                    _constellationApps.add(app);
+                                subtitle: Text(
+                                  ownerName != null ? 'In $ownerName' : app.packageName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 11),
+                                ),
+                                trailing: Icon(
+                                  ownerName != null
+                                      ? Icons.swap_horiz_rounded
+                                      : Icons.add_circle_outline_rounded,
+                                  color: widget.constellation.primaryColor,
+                                ),
+                                onTap: () {
+                                  if (ownerName != null) {
+                                    final moved = widget.layoutEngine.moveAppToConstellation(
+                                      widget.constellation.id,
+                                      app,
+                                    );
+                                    if (!moved) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            '${widget.constellation.name} holds up to $_limit apps. Remove an app first.',
+                                          ),
+                                          backgroundColor: LuminousHomeTheme.panelRaised,
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    Navigator.of(context).pop();
+                                    setState(() {
+                                      _constellationApps = List.from(widget.constellation.apps);
+                                    });
+                                    widget.onUpdated();
+                                    _persist();
+                                    return;
                                   }
-                                });
-                                _saveChanges();
-                              },
+                                  Navigator.of(context).pop();
+                                  setState(() {
+                                    if (replaceIndex != null && replaceIndex < _constellationApps.length) {
+                                      _constellationApps[replaceIndex] = app;
+                                    } else if (_constellationApps.length < _limit) {
+                                      _constellationApps.add(app);
+                                    }
+                                  });
+                                  _saveChanges();
+                                },
+                              ),
                             ),
                           );
                         },
@@ -293,9 +329,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                             overflow: TextOverflow.ellipsis,
                           ),
                           Text(
-                            _isCore
-                                ? '${_constellationApps.length}/6 Stars Active'
-                                : '${_constellationApps.length}/8 Stars Active',
+                            '${_constellationApps.length}/$_limit Stars Active',
                             style: const TextStyle(
                               color: LuminousHomeTheme.white54,
                               fontSize: 12,
@@ -350,8 +384,8 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                           ),
                           child: const Icon(Icons.auto_awesome, color: LuminousHomeTheme.panel, size: 22),
                         ),
-                        ...List.generate(6, (index) {
-                          final angle = (index * 2 * math.pi / 6) - (math.pi / 2);
+                        ...List.generate(GalaxyLayoutEngine.maxCoreApps, (index) {
+                          final angle = (index * 2 * math.pi / GalaxyLayoutEngine.maxCoreApps) - (math.pi / 2);
                           const radius = 82.0;
                           final offset = Offset(math.cos(angle) * radius, math.sin(angle) * radius);
                           final bool isFilled = index < _constellationApps.length;
@@ -502,8 +536,8 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                   );
                                 }),
 
-                                // Add App Button tile (only shown if under 8-star limit)
-                                if (_constellationApps.length < 8)
+                                // Add App Button tile (only shown if under the star limit)
+                                if (_constellationApps.length < GalaxyLayoutEngine.maxConstellationApps)
                                   GestureDetector(
                                     onTap: () => _openAppPicker(),
                                     child: SizedBox(
@@ -551,8 +585,8 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
 
                 Text(
                   _isCore
-                      ? '${_constellationApps.length} of 6 slots active. Tap slot to swap or add.'
-                      : '${_constellationApps.length} of 8 slots active. Tap (✕) to remove or (+) to add.',
+                      ? '${_constellationApps.length} of $_limit slots active. Tap slot to swap or add.'
+                      : '${_constellationApps.length} of $_limit slots active. Tap (✕) to remove or (+) to add.',
                   style: const TextStyle(
                     color: LuminousHomeTheme.white54,
                     fontSize: 12,
