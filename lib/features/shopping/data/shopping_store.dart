@@ -12,11 +12,16 @@ class ShoppingStoreData {
   final String? activeListId;
   final bool preferImperial;
 
+  /// Remembered `normalizedName -> aisle` choices. Stores written before this
+  /// field existed load as an empty map.
+  final Map<String, String> aisleMemory;
+
   const ShoppingStoreData({
     this.lists = const [],
     this.recipes = const [],
     this.activeListId,
     this.preferImperial = false,
+    this.aisleMemory = const <String, String>{},
   });
 
   Map<String, dynamic> toJson() => {
@@ -24,9 +29,11 @@ class ShoppingStoreData {
         'recipes': recipes.map((recipe) => recipe.toJson()).toList(),
         'activeListId': activeListId,
         'preferImperial': preferImperial,
+        'aisleMemory': aisleMemory,
       };
 
   factory ShoppingStoreData.fromJson(Map<String, dynamic> json) {
+    final Object? rawMemory = json['aisleMemory'];
     return ShoppingStoreData(
       lists: (json['lists'] as List? ?? const [])
           .map((list) => ShoppingList.fromJson(
@@ -40,6 +47,12 @@ class ShoppingStoreData {
           .toList(),
       activeListId: json['activeListId'] as String?,
       preferImperial: json['preferImperial'] as bool? ?? false,
+      aisleMemory: rawMemory is Map
+          ? <String, String>{
+              for (final entry in rawMemory.entries)
+                entry.key.toString(): entry.value.toString(),
+            }
+          : const <String, String>{},
     );
   }
 }
