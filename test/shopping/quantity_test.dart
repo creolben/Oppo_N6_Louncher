@@ -230,4 +230,17 @@ void main() {
       );
     });
   });
+
+  group('plural agreement follows the rendered amount', () {
+    test('a value rendered as 1 uses the singular name', () {
+      expect(Quantity(1.0567, Unit.quart).format(preferImperial: true), '1 quart');
+      expect(Quantity(1.02, Unit.cup).formatAsEntered(), '1 cup');
+      expect(Quantity(1, Unit.liter).approxIn(preferImperial: true), '≈ 1 quart');
+    });
+
+    test('other amounts keep the plural name', () {
+      expect(Quantity(2, Unit.quart).formatAsEntered(), '2 quarts');
+      expect(Quantity(1.5, Unit.cup).formatAsEntered(), '1 1/2 cups');
+    });
+  });
 }

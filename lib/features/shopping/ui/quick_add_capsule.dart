@@ -115,8 +115,17 @@ class _QuickAddCapsuleState extends State<QuickAddCapsule> {
   /// The chips to show right now: at most six context units, always including a
   /// selected one, or the full picker once "More" expanded it.
   List<Unit> get _visibleUnits {
-    if (_unitsExpanded) return groceryPickerUnits;
     final List<Unit> base = _contextUnits;
+    if (_unitsExpanded) {
+      // Selected unit, then the family matching the typed amount, then the
+      // rest of the picker, so More extends the row instead of reshuffling it.
+      return <Unit>[
+        if (_unit != null && !base.contains(_unit)) _unit!,
+        ...base,
+        for (final Unit unit in groceryPickerUnits)
+          if (!base.contains(unit) && unit != _unit) unit,
+      ];
+    }
     final List<Unit> visible = <Unit>[
       if (_unit != null && !base.contains(_unit)) _unit!,
       ...base,

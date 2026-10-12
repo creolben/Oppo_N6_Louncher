@@ -141,7 +141,9 @@ class Quantity {
     final isSymbolUnit = rendered.isMetric && rendered.dimension != Dimension.count;
     final amountText =
         isSymbolUnit ? _trimDecimal(display.amount) : _formatFraction(display.amount);
-    final suffix = isSymbolUnit ? rendered.symbol : rendered.displayName(display.amount);
+    final suffix = isSymbolUnit
+        ? rendered.symbol
+        : rendered.displayName(_pluralAmount(amountText, display.amount));
     return '$amountText $suffix';
   }
 
@@ -159,9 +161,15 @@ class Quantity {
     final String amountText =
         isSymbolUnit ? _trimDecimal(amount) : _formatFraction(amount);
     final String suffix =
-        isSymbolUnit ? unit.symbol : unit.displayName(amount);
+        isSymbolUnit ? unit.symbol : unit.displayName(_pluralAmount(amountText, amount));
     return '$amountText $suffix';
   }
+
+  /// Amount used for singular/plural agreement: a value that renders as
+  /// exactly `1` (1.06 quarts shown as `1`) takes the singular name, so a
+  /// label never reads `1 quarts`.
+  static double _pluralAmount(String amountText, double amount) =>
+      amountText == '1' ? 1 : amount;
 
   /// A rounded amount in the preferred measurement system, or null when the
   /// quantity's own system already matches [preferImperial].
