@@ -58,6 +58,7 @@ void main() {
       activeListId: 'l1',
       preferImperial: true,
       aisleMemory: const <String, String>{'quinoa': 'Pantry'},
+      storeMode: true,
     );
   }
 
@@ -76,6 +77,7 @@ void main() {
     expect(loaded.activeListId, 'l1');
     expect(loaded.preferImperial, isTrue);
     expect(loaded.aisleMemory, const <String, String>{'quinoa': 'Pantry'});
+    expect(loaded.storeMode, isTrue);
   });
 
   test('old JSON without aisleMemory loads as an empty map', () async {
@@ -87,6 +89,7 @@ void main() {
     };
     final loaded = ShoppingStoreData.fromJson(legacy);
     expect(loaded.aisleMemory, isEmpty);
+    expect(loaded.storeMode, isFalse);
   });
 
   test('loading a missing file yields empty state', () async {

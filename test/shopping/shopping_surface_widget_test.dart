@@ -64,6 +64,7 @@ void main() {
     FoldableController foldable, {
     VoidCallback? onClose,
     double textScale = 1.0,
+    ValueChanged<bool>? onKeepScreenOn,
   }) {
     return MaterialApp(
       theme: LuminousHomeTheme.buildTheme(),
@@ -80,6 +81,7 @@ void main() {
           controller: controller,
           foldable: foldable,
           onClose: onClose ?? () {},
+          onKeepScreenOn: onKeepScreenOn,
         ),
       ),
     );
@@ -662,7 +664,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('dragging the handle reorders rows within the aisle',
+    testWidgets('dragging the handle reorders rows in My order',
         (WidgetTester tester) async {
       size(tester, const Size(360, 800));
       final ShoppingList list = controller.createList('Groceries');
@@ -678,6 +680,7 @@ void main() {
         list.id,
         const ShoppingItem(id: 'c', name: 'carrot', aisle: 'Produce'),
       );
+      controller.setSortMode(list.id, ShoppingSortMode.manual);
       await flushController(tester);
 
       await tester.pumpWidget(host(posture(DevicePosture.folded)));
@@ -727,7 +730,7 @@ void main() {
       await tester.pump();
 
       final SemanticsNode node = tester.getSemantics(
-        find.byKey(const ValueKey<String>('row_a')),
+        find.bySemanticsLabel('apple, unchecked'),
       );
       final SemanticsData data = node.getSemanticsData();
       final int actionId = data.customSemanticsActionIds!.firstWhere(
@@ -746,6 +749,223 @@ void main() {
       expect(ids, <String>['b', 'a', 'c']);
 
       semantics.dispose();
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('Header switcher, sort mode and store mode', () {
+    testWidgets(
+        'the header shows the active list name, progress and opens the switcher',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      final ShoppingList list = controller.createList('Hardware run');
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'i1', name: 'screws', aisle: 'Other'),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'i2', name: 'nails', aisle: 'Other'),
+      );
+      controller.toggleChecked(list.id, 'i1');
+      await flushController(tester);
+
+      final SemanticsHandle semantics = tester.ensureSemantics();
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+
+      expect(find.text('Hardware run'), findsOneWidget);
+      expect(find.text('1 of 2'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel('Switch list, current Hardware run, 1 of 2 done'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Hardware run'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ListsPane), findsOneWidget);
+
+      semantics.dispose();
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the header ellipsizes a long name at 360dp without overflow',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      final ShoppingList list = controller.createList(
+        'A very long shopping list name that cannot fit in the capsule',
+      );
+      for (var i = 0; i < 12; i++) {
+        controller.addItem(
+          list.id,
+          ShoppingItem(id: 'i$i', name: 'item $i', aisle: 'Other'),
+        );
+      }
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+
+      expect(find.text('0 of 12'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await flushController(tester);
+    });
+
+    testWidgets('the overflow switches to My order and reveals drag handles',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      controller.createList('Groceries');
+      controller.quickAdd('2 kg chicken');
+      controller.quickAdd('milk');
+      await flushController(tester);
+
+      final String firstId = controller.activeList!.items.first.id;
+
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+
+      // By aisle: sticky headers, no drag handles.
+      expect(find.byType(SliverPersistentHeader), findsWidgets);
+      expect(
+        find.byKey(ValueKey<String>('drag_handle_$firstId')),
+        findsNothing,
+      );
+
+      await tester.tap(find.byTooltip('Shopping options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sort: My order'));
+      await tester.pumpAndSettle();
+
+      expect(controller.activeList!.sortMode, ShoppingSortMode.manual);
+      expect(find.byType(SliverPersistentHeader), findsNothing);
+      expect(
+        find.byKey(ValueKey<String>('drag_handle_$firstId')),
+        findsOneWidget,
+      );
+
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'store mode pins the screen awake, collapses quick add and removes swipe delete',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      controller.createList('Groceries');
+      controller.quickAdd('milk');
+      await flushController(tester);
+
+      final List<bool> keepScreenOn = <bool>[];
+      await tester.pumpWidget(
+        host(posture(DevicePosture.folded), onKeepScreenOn: keepScreenOn.add),
+      );
+      await tester.pump();
+
+      expect(find.byType(QuickAddCapsule), findsOneWidget);
+      expect(keepScreenOn, isEmpty);
+      expect(find.byType(Dismissible), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Shopping options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ListTile, 'Store mode'));
+      await tester.pumpAndSettle();
+
+      expect(controller.storeMode, isTrue);
+      expect(keepScreenOn, <bool>[true]);
+      // The capsule collapses to a single Add item button.
+      expect(find.byType(QuickAddCapsule), findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('store_add_item')),
+        findsOneWidget,
+      );
+      // A clear exit control is in the header, and swipe-delete is gone.
+      expect(find.byTooltip('Exit store mode'), findsOneWidget);
+      expect(find.byType(Dismissible), findsNothing);
+
+      // Expanding brings the full capsule back.
+      await tester.tap(find.byKey(const ValueKey<String>('store_add_item')));
+      await tester.pump();
+      expect(find.byType(QuickAddCapsule), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Exit store mode'));
+      await tester.pumpAndSettle();
+      expect(controller.storeMode, isFalse);
+      expect(keepScreenOn, <bool>[true, false]);
+      expect(find.byType(Dismissible), findsOneWidget);
+
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('closing the surface releases keep-screen-on',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      controller.createList('Groceries');
+      controller.quickAdd('milk');
+      await flushController(tester);
+
+      final List<bool> keepScreenOn = <bool>[];
+      await tester.pumpWidget(
+        host(posture(DevicePosture.folded), onKeepScreenOn: keepScreenOn.add),
+      );
+      await tester.pump();
+
+      controller.setStoreMode(true);
+      await tester.pump();
+      expect(keepScreenOn, <bool>[true]);
+
+      await tester.pumpWidget(
+        const MaterialApp(home: Scaffold(body: SizedBox.shrink())),
+      );
+      await tester.pump();
+      expect(keepScreenOn, <bool>[true, false]);
+
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the cover-display hint turns store mode on',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      controller.createList('Groceries');
+      controller.quickAdd('milk');
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+      expect(find.text('Store mode'), findsOneWidget);
+
+      await tester.tap(find.text('Store mode'));
+      await tester.pump();
+
+      expect(controller.storeMode, isTrue);
+      expect(find.text('Store mode'), findsNothing);
+
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the hint can be dismissed without turning store mode on',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      controller.createList('Groceries');
+      controller.quickAdd('milk');
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+      expect(find.text('Store mode'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('dismiss_store_hint')),
+      );
+      await tester.pump();
+
+      expect(find.text('Store mode'), findsNothing);
+      expect(controller.storeMode, isFalse);
+
       await flushController(tester);
       expect(tester.takeException(), isNull);
     });

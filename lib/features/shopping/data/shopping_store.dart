@@ -16,12 +16,17 @@ class ShoppingStoreData {
   /// field existed load as an empty map.
   final Map<String, String> aisleMemory;
 
+  /// Whether the surface should open in the larger, touch-friendly store mode.
+  /// Stores written before this field existed load as `false`.
+  final bool storeMode;
+
   const ShoppingStoreData({
     this.lists = const [],
     this.recipes = const [],
     this.activeListId,
     this.preferImperial = false,
     this.aisleMemory = const <String, String>{},
+    this.storeMode = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -30,6 +35,7 @@ class ShoppingStoreData {
         'activeListId': activeListId,
         'preferImperial': preferImperial,
         'aisleMemory': aisleMemory,
+        'storeMode': storeMode,
       };
 
   factory ShoppingStoreData.fromJson(Map<String, dynamic> json) {
@@ -53,6 +59,7 @@ class ShoppingStoreData {
                 entry.key.toString(): entry.value.toString(),
             }
           : const <String, String>{},
+      storeMode: json['storeMode'] as bool? ?? false,
     );
   }
 }

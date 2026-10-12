@@ -1,6 +1,38 @@
 import 'quantity.dart';
 import 'shopping_item.dart';
 
+/// How a list orders its unchecked rows.
+enum ShoppingSortMode {
+  /// Grouped into sticky aisle sections in the canonical store order. This is
+  /// the default and is what older stores without a `sortMode` load as.
+  byAisle,
+
+  /// A single flat section in the user's own order, shown in "My order".
+  manual;
+
+  /// Parses the persisted `sortMode` value, defaulting to [byAisle] for legacy
+  /// JSON and for anything unrecognised.
+  static ShoppingSortMode fromJson(Object? value) {
+    switch (value) {
+      case 'manual':
+        return ShoppingSortMode.manual;
+      case 'byAisle':
+      default:
+        return ShoppingSortMode.byAisle;
+    }
+  }
+
+  /// The value written under the `sortMode` JSON key.
+  String get jsonValue {
+    switch (this) {
+      case ShoppingSortMode.byAisle:
+        return 'byAisle';
+      case ShoppingSortMode.manual:
+        return 'manual';
+    }
+  }
+}
+
 /// A named shopping list.
 class ShoppingList {
   final String id;
@@ -14,6 +46,12 @@ class ShoppingList {
   /// Persisted per list; older stores without the field load as `false`.
   final bool checkedCollapsed;
 
+  /// How the unchecked rows of this list are ordered.
+  ///
+  /// Persisted per list; older stores without the field load as
+  /// [ShoppingSortMode.byAisle].
+  final ShoppingSortMode sortMode;
+
   const ShoppingList({
     required this.id,
     required this.name,
@@ -21,6 +59,7 @@ class ShoppingList {
     required this.createdAt,
     required this.updatedAt,
     this.checkedCollapsed = false,
+    this.sortMode = ShoppingSortMode.byAisle,
   });
 
   int get checkedCount => items.where((item) => item.checked).length;
@@ -77,6 +116,7 @@ class ShoppingList {
     DateTime? createdAt,
     DateTime? updatedAt,
     bool? checkedCollapsed,
+    ShoppingSortMode? sortMode,
   }) {
     return ShoppingList(
       id: id ?? this.id,
@@ -85,6 +125,7 @@ class ShoppingList {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       checkedCollapsed: checkedCollapsed ?? this.checkedCollapsed,
+      sortMode: sortMode ?? this.sortMode,
     );
   }
 
@@ -95,6 +136,7 @@ class ShoppingList {
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'checkedCollapsed': checkedCollapsed,
+        'sortMode': sortMode.jsonValue,
       };
 
   factory ShoppingList.fromJson(Map<String, dynamic> json) {
@@ -109,6 +151,7 @@ class ShoppingList {
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
       checkedCollapsed: json['checkedCollapsed'] as bool? ?? false,
+      sortMode: ShoppingSortMode.fromJson(json['sortMode']),
     );
   }
 
@@ -120,7 +163,8 @@ class ShoppingList {
       _listEquals(other.items, items) &&
       other.createdAt == createdAt &&
       other.updatedAt == updatedAt &&
-      other.checkedCollapsed == checkedCollapsed;
+      other.checkedCollapsed == checkedCollapsed &&
+      other.sortMode == sortMode;
 
   @override
   int get hashCode => Object.hash(
@@ -130,6 +174,7 @@ class ShoppingList {
         createdAt,
         updatedAt,
         checkedCollapsed,
+        sortMode,
       );
 
   static bool _listEquals(List<ShoppingItem> a, List<ShoppingItem> b) {

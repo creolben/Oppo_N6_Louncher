@@ -655,4 +655,148 @@ void main() {
       reloaded.dispose();
     });
   });
+
+  group('sort mode', () {
+    test('setSortMode updates the list and ignores the same value', () {
+      final ShoppingList list = controller.createList('Groceries');
+      expect(controller.activeList!.sortMode, ShoppingSortMode.byAisle);
+
+      controller.setSortMode(list.id, ShoppingSortMode.manual);
+      expect(controller.activeList!.sortMode, ShoppingSortMode.manual);
+
+      controller.setSortMode(list.id, ShoppingSortMode.manual);
+      expect(controller.activeList!.sortMode, ShoppingSortMode.manual);
+    });
+
+    test('round trips through JSON', () {
+      final ShoppingList list = controller.createList('Groceries');
+      controller.setSortMode(list.id, ShoppingSortMode.manual);
+
+      final Map<String, dynamic> json = controller.activeList!.toJson();
+      final ShoppingList decoded = ShoppingList.fromJson(
+        jsonDecode(jsonEncode(json)) as Map<String, dynamic>,
+      );
+      expect(decoded.sortMode, ShoppingSortMode.manual);
+      expect(decoded, controller.activeList);
+    });
+
+    test('old JSON without the field loads as byAisle', () {
+      final Map<String, dynamic> oldJson = <String, dynamic>{
+        'id': 'l1',
+        'name': 'Old list',
+        'items': const <dynamic>[],
+        'createdAt': DateTime(2026, 1, 1).toIso8601String(),
+        'updatedAt': DateTime(2026, 1, 1).toIso8601String(),
+      };
+      expect(ShoppingList.fromJson(oldJson).sortMode, ShoppingSortMode.byAisle);
+    });
+
+    test('an unknown value loads as byAisle', () {
+      final ShoppingList list = controller.createList('Groceries');
+      final Map<String, dynamic> json = list.toJson()..['sortMode'] = 'sideways';
+      expect(ShoppingList.fromJson(json).sortMode, ShoppingSortMode.byAisle);
+    });
+
+    test('survives a controller store round trip', () async {
+      final ShoppingList list = controller.createList('Groceries');
+      controller.setSortMode(list.id, ShoppingSortMode.manual);
+      await controller.flush();
+
+      final ShoppingController reloaded = ShoppingController(store: store);
+      await reloaded.load();
+      expect(reloaded.activeList!.sortMode, ShoppingSortMode.manual);
+      reloaded.dispose();
+    });
+  });
+
+  group('store mode', () {
+    test('defaults off and toggles through the controller', () {
+      expect(controller.storeMode, isFalse);
+
+      controller.setStoreMode(true);
+      expect(controller.storeMode, isTrue);
+
+      controller.setStoreMode(true);
+      expect(controller.storeMode, isTrue);
+
+      controller.setStoreMode(false);
+      expect(controller.storeMode, isFalse);
+    });
+
+    test('survives a controller store round trip', () async {
+      controller.setStoreMode(true);
+      await controller.flush();
+
+      final ShoppingController reloaded = ShoppingController(store: store);
+      await reloaded.load();
+      expect(reloaded.storeMode, isTrue);
+      reloaded.dispose();
+    });
+  });
+
+  group('moveItemAcrossList', () {
+    ShoppingList seedMixed() {
+      final ShoppingList list = controller.createList('Groceries');
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'a', name: 'apple', aisle: 'Produce'),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'b', name: 'bread', aisle: 'Bakery'),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'c', name: 'carrot', aisle: 'Produce'),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'd', name: 'detergent', aisle: 'Household'),
+      );
+      return controller.activeList!;
+    }
+
+    List<String> ids() =>
+        controller.activeList!.items.map((ShoppingItem item) => item.id).toList();
+
+    test('reorders across aisles', () {
+      final ShoppingList list = seedMixed();
+      controller.moveItemAcrossList(list.id, 'd', 0);
+      expect(ids(), <String>['d', 'a', 'b', 'c']);
+    });
+
+    test('an item and its children move together', () {
+      final ShoppingList list = seedMixed();
+      controller.indentItem(list.id, 'c');
+      controller.moveItemAcrossList(list.id, 'a', 3);
+
+      expect(ids(), <String>['b', 'd', 'a', 'c']);
+      expect(controller.activeList!.itemById('c')!.parentId, 'a');
+    });
+
+    test('checked items keep their slots and are not reordered', () {
+      final ShoppingList list = seedMixed();
+      controller.toggleChecked(list.id, 'b');
+      controller.moveItemAcrossList(list.id, 'd', 0);
+
+      expect(ids(), <String>['d', 'b', 'a', 'c']);
+      expect(controller.activeList!.itemById('b')!.checked, isTrue);
+    });
+
+    test('the index clamps at both ends', () {
+      final ShoppingList list = seedMixed();
+      controller.moveItemAcrossList(list.id, 'a', -5);
+      expect(ids(), <String>['a', 'b', 'c', 'd']);
+
+      controller.moveItemAcrossList(list.id, 'a', 99);
+      expect(ids(), <String>['b', 'c', 'd', 'a']);
+    });
+
+    test('a child cannot be moved on its own', () {
+      final ShoppingList list = seedMixed();
+      controller.indentItem(list.id, 'c');
+      controller.moveItemAcrossList(list.id, 'c', 0);
+      expect(ids(), <String>['a', 'b', 'c', 'd']);
+    });
+  });
 }
