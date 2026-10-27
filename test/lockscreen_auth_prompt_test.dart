@@ -98,6 +98,8 @@ Future<void> _pumpLockScreen(
   Future<bool> Function({String? appName})? authenticate,
   Future<bool> Function({String? appName})? authenticateWithCredential,
   VoidCallback? onUnlock,
+  bool reconcileOnMount = false,
+  Future<bool> Function()? isKeyguardLocked,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -111,6 +113,9 @@ Future<void> _pumpLockScreen(
           fingerprintEvents: reader.events,
           startFingerprintScan: startFingerprintScan,
           authenticateWithCredential: authenticateWithCredential,
+          reconcileOnMount: reconcileOnMount,
+          isKeyguardLocked: isKeyguardLocked,
+          isDeviceSecure: () async => true,
         ),
       ),
     ),
@@ -599,6 +604,72 @@ void main() {
         expect(find.byType(FingerprintAuthPrompt), findsNothing);
 
         semantics.dispose();
+      },
+    );
+  });
+
+  // Measured on the CPH2765 (ColorOS 16): the keyguard matched the finger,
+  // and 50-260 ms later the launcher's own reader session appeared as a
+  // system BiometricPrompt over the device the user had just unlocked. A
+  // panel that stands for the keyguard must never arm the reader: locked, the
+  // keyguard owns it; unlocked, the panel is about to reconcile away.
+  group('Keyguard-backed panel never holds the reader', () {
+    testWidgets(
+      'no scan on mount, nor on regaining the screen after a platform unlock',
+      (tester) async {
+        var scans = 0;
+        var keyguardLocked = true;
+        var unlocked = false;
+        await _pumpLockScreen(
+          tester,
+          reader: reader,
+          startFingerprintScan: () async {
+            scans++;
+            return true;
+          },
+          reconcileOnMount: true,
+          isKeyguardLocked: () async => keyguardLocked,
+          onUnlock: () => unlocked = true,
+        );
+        await _settle(tester);
+        expect(scans, 0);
+
+        // The keyguard authenticates while the launcher is behind it, then
+        // the launcher regains the screen — the exact moment the stray
+        // prompt used to appear.
+        keyguardLocked = false;
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await _settle(tester);
+
+        expect(scans, 0);
+        expect(unlocked, isTrue);
+      },
+    );
+
+    testWidgets(
+      'a tapped app defers to the platform prompt without arming or drawing a card',
+      (tester) async {
+        var scans = 0;
+        await _pumpLockScreen(
+          tester,
+          reader: reader,
+          startFingerprintScan: () async {
+            scans++;
+            return true;
+          },
+          reconcileOnMount: true,
+          isKeyguardLocked: () async => true,
+        );
+
+        await spy.capture(() async {
+          await _tapCameraShortcut(tester);
+          expect(find.byType(FingerprintAuthPrompt), findsNothing);
+          await _settleLaunch(tester);
+        });
+
+        expect(scans, 0);
+        expect(spy.launchedPackages, equals(['com.test.camera']));
       },
     );
   });

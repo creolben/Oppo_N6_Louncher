@@ -372,6 +372,12 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   bool get _sensorSessionAllowed =>
       mounted && !_disposed && !_handedOff && !_handingOffLaunch;
 
+  /// Whether this panel may hold the fingerprint reader at all.
+  ///
+  /// Only a panel that does not stand for a keyguard (the privacy lock) can:
+  /// see [_armFingerprintSensor] for why a keyguard-backed panel never arms.
+  bool get _ownsReader => !widget.reconcileOnMount;
+
   Future<AuthOutcome> _authenticate(String? appName) async {
     final override = widget.authenticate;
     if (override != null) {
@@ -431,6 +437,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
           _authPhase = FingerprintPromptPhase.scanning;
         });
       }
+    } else if (!_ownsReader) {
+      // A keyguard-backed panel never arms the reader (see
+      // [_armFingerprintSensor]), so a card here could never be answered.
+      // The launch runs through the platform's single keyguard prompt.
+      _useCredentialFallback();
     } else if (_deviceSecure == false) {
       // No credential protects this device, so no fingerprint can ever be
       // enrolled to answer the panel's reader — asking for one would be the
@@ -936,6 +947,18 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                   debugPrint('Fingerprint stream error: $error');
                 },
               );
+
+      // A panel that stands for the keyguard never holds the reader. While
+      // the keyguard is locked it owns the sensor and the native side refuses
+      // every arm; once it has unlocked, this panel is about to reconcile
+      // away. An arm can therefore only succeed in the window between the
+      // platform's unlock and that reconcile — and on ColorOS 16 the
+      // "silent" FingerprintManager session is drawn as a system
+      // BiometricPrompt, so that arm was a second fingerprint dialog over a
+      // device the user had just unlocked (measured on the CPH2765: keyguard
+      // match, then our prompt ~50-260 ms later). The power key still
+      // unlocks through the keyguard, so the hint above stays honest.
+      if (!_ownsReader) return;
 
       // Only the native side knows whether the panel is really on, and whether
       // this activity is the one in front. It refuses to arm in either case
