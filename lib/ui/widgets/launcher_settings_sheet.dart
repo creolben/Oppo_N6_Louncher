@@ -23,6 +23,7 @@ Future<void> showLauncherSettingsSheet(
   VoidCallback? onOpenGestures,
   Future<bool> Function()? hasMediaAccess,
   Future<void> Function()? onRequestMediaAccess,
+  Future<bool> Function()? isGalaxyWallpaperActive,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -38,6 +39,7 @@ Future<void> showLauncherSettingsSheet(
       onOpenGestures: onOpenGestures,
       hasMediaAccess: hasMediaAccess,
       onRequestMediaAccess: onRequestMediaAccess,
+      isGalaxyWallpaperActive: isGalaxyWallpaperActive,
     ),
   );
 }
@@ -54,6 +56,7 @@ class LauncherSettingsSheet extends StatefulWidget {
     this.onOpenGestures,
     this.hasMediaAccess,
     this.onRequestMediaAccess,
+    this.isGalaxyWallpaperActive,
   });
 
   /// Live default-home status. A listenable rather than a bool because the
@@ -84,6 +87,12 @@ class LauncherSettingsSheet extends StatefulWidget {
   /// Opens Android's notification-access page; only the user can grant it.
   final Future<void> Function()? onRequestMediaAccess;
 
+  /// Whether ChronoFold's galaxy is the system wallpaper. ColorOS runs the
+  /// close-app animation itself and shows the system wallpaper behind it
+  /// until the launcher is up, so this is what decides whether that moment
+  /// looks like ChronoFold. Null leaves the wallpaper row without a status.
+  final Future<bool> Function()? isGalaxyWallpaperActive;
+
   /// Width cap on the unfolded inner screen: a sheet stretched to 900dp reads
   /// as a banner, not a panel.
   static const double maxWidth = 560;
@@ -99,12 +108,13 @@ class _LauncherSettingsSheetState extends State<LauncherSettingsSheet>
 
   /// Null until the platform answers.
   bool? _mediaAccess;
+  bool? _galaxyWallpaper;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _refreshMediaAccess();
+    _refreshPlatformState();
   }
 
   @override
@@ -117,14 +127,20 @@ class _LauncherSettingsSheetState extends State<LauncherSettingsSheet>
   /// coming back is the moment the answer can have changed.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refreshMediaAccess();
+    if (state == AppLifecycleState.resumed) _refreshPlatformState();
   }
 
-  Future<void> _refreshMediaAccess() async {
-    final query = widget.hasMediaAccess;
-    if (query == null) return;
-    final bool granted = await query();
-    if (mounted) setState(() => _mediaAccess = granted);
+  /// Both grants happen on Android's own pages with this sheet still open.
+  Future<void> _refreshPlatformState() async {
+    final media = widget.hasMediaAccess;
+    final wallpaper = widget.isGalaxyWallpaperActive;
+    final bool? granted = media == null ? null : await media();
+    final bool? galaxy = wallpaper == null ? null : await wallpaper();
+    if (!mounted) return;
+    setState(() {
+      _mediaAccess = granted;
+      _galaxyWallpaper = galaxy;
+    });
   }
 
   Future<void> _requestLockMode(bool native) async {
@@ -277,13 +293,7 @@ class _LauncherSettingsSheetState extends State<LauncherSettingsSheet>
                           _section('Home', [_defaultHomeRow()]),
                           if (widget.onOpenAmbientWallpaper != null)
                             _section('Appearance', [
-                              _SettingsRow(
-                                icon: Icons.wallpaper_rounded,
-                                title: 'Ambient wallpaper',
-                                subtitle: 'Preview the live galaxy wallpaper',
-                                trailing: const _Chevron(),
-                                onTap: widget.onOpenAmbientWallpaper,
-                              ),
+                              _wallpaperRow(),
                             ]),
                           _section('Lock screen', [
                             ..._lockModeRows(),
@@ -340,6 +350,24 @@ class _LauncherSettingsSheetState extends State<LauncherSettingsSheet>
           onTap: widget.onDefaultHomeTap,
         );
       },
+    );
+  }
+
+  Widget _wallpaperRow() {
+    final bool? active = _galaxyWallpaper;
+    return _SettingsRow(
+      icon: Icons.wallpaper_rounded,
+      title: 'Galaxy wallpaper',
+      subtitle: switch (active) {
+        true => 'On: closing an app shows the galaxy',
+        false => 'Off: ColorOS shows its own wallpaper when apps close',
+        null => 'Preview the live galaxy wallpaper',
+      },
+      semanticsHint: 'Opens the galaxy wallpaper preview',
+      trailing: active == false
+          ? const _ActionPill(label: 'Use galaxy')
+          : const _Chevron(),
+      onTap: widget.onOpenAmbientWallpaper,
     );
   }
 

@@ -983,6 +983,21 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     }
   }
 
+  /// Whether ChronoFold's galaxy is the system live wallpaper — the surface
+  /// ColorOS shows behind a closing app before the launcher can draw. False
+  /// off Android or when the platform cannot say.
+  static Future<bool> isCosmicWallpaperActive() async {
+    if (kIsWeb || !Platform.isAndroid) return false;
+    try {
+      final bool? active =
+          await _appsChannel.invokeMethod<bool>('isCosmicWallpaperActive');
+      return active ?? false;
+    } catch (e) {
+      debugPrint('Reading the live wallpaper failed: $e');
+      return false;
+    }
+  }
+
   /// Opens Android's live-wallpaper chooser for ChronoFold's optional ambient
   /// layer. The system—not the launcher—owns selection, preview, and apply.
   static Future<bool> openCosmicLiveWallpaperPreview() async {

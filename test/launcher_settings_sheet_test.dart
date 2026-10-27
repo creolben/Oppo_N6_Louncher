@@ -14,6 +14,7 @@ Widget _host({
   VoidCallback? onOpenGestures,
   Future<bool> Function()? hasMediaAccess,
   Future<void> Function()? onRequestMediaAccess,
+  Future<bool> Function()? isGalaxyWallpaperActive,
   double textScale = 1.0,
 }) {
   return MaterialApp(
@@ -32,6 +33,7 @@ Widget _host({
             onOpenGestures: onOpenGestures ?? () {},
             hasMediaAccess: hasMediaAccess,
             onRequestMediaAccess: onRequestMediaAccess,
+            isGalaxyWallpaperActive: isGalaxyWallpaperActive,
           ),
         ),
       ),
@@ -62,7 +64,7 @@ void main() {
     // "Gestures" is both the section overline and the row title.
     expect(find.text('Gestures'), findsNWidgets(2));
     expect(find.text('Default home app'), findsOneWidget);
-    expect(find.text('Ambient wallpaper'), findsOneWidget);
+    expect(find.text('Galaxy wallpaper'), findsOneWidget);
     expect(find.text('Cosmic'), findsOneWidget);
     expect(find.text('ColorOS'), findsOneWidget);
     expect(find.text('ChronoFold'), findsOneWidget);
@@ -157,7 +159,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('Ambient wallpaper'));
+    await tester.tap(find.text('Galaxy wallpaper'));
     await tester.tap(find.text('Swipe down, double-tap to sleep'));
     await tester.pump();
     expect(wallpaper, 1);
@@ -267,5 +269,36 @@ void main() {
         findsOneWidget,
       );
     });
+  });
+
+  testWidgets('galaxy wallpaper row reports ColorOS vs galaxy and re-checks',
+      (tester) async {
+    _setSize(tester, const Size(400, 1400));
+    final isDefault = ValueNotifier<bool>(true);
+    addTearDown(isDefault.dispose);
+    var active = false;
+    var opened = 0;
+    await tester.pumpWidget(_host(
+      isDefault: isDefault,
+      isGalaxyWallpaperActive: () async => active,
+      onOpenAmbientWallpaper: () => opened++,
+    ));
+    await tester.pump();
+
+    expect(find.text('Use galaxy'), findsOneWidget);
+    expect(
+      find.text('Off: ColorOS shows its own wallpaper when apps close'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Galaxy wallpaper'));
+    expect(opened, 1);
+
+    // Applied in Android's chooser; the sheet re-checks on return.
+    active = true;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(find.text('Use galaxy'), findsNothing);
+    expect(find.text('On: closing an app shows the galaxy'), findsOneWidget);
   });
 }

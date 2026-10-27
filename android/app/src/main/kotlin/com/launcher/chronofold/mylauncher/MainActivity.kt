@@ -523,6 +523,9 @@ class MainActivity : FlutterActivity() {
                 }
                 result.success(opened)
             }
+            "isCosmicWallpaperActive" -> {
+                result.success(isCosmicWallpaperActive())
+            }
             "openCosmicLiveWallpaperPreview" -> {
                 result.success(openCosmicLiveWallpaperPreview())
             }
@@ -1245,6 +1248,24 @@ class MainActivity : FlutterActivity() {
      * keeps the OEM step explicit: the user selects "ChronoFold Ambient
      * Galaxy" there, then confirms its normal system preview/apply flow.
      */
+    /**
+     * Whether ChronoFold's galaxy is the system live wallpaper.
+     *
+     * With gesture navigation, ColorOS's own recents runs the close-app
+     * animation and starts HOME only when it ends, so until then the system
+     * wallpaper is the only thing behind the shrinking app. The launcher
+     * cannot draw there; being that wallpaper is the only way the transition
+     * shows the galaxy rather than the ColorOS background. Public API, no
+     * permission: `getWallpaperInfo` describes a live wallpaper or is null.
+     */
+    private fun isCosmicWallpaperActive(): Boolean = try {
+        android.app.WallpaperManager.getInstance(this).wallpaperInfo?.component ==
+            android.content.ComponentName(this, CosmicLiveWallpaperService::class.java)
+    } catch (exception: Exception) {
+        android.util.Log.w("ChronoFold", "Unable to read the live wallpaper", exception)
+        false
+    }
+
     private fun openCosmicLiveWallpaperPreview(): Boolean {
         val chooserIntent = Intent(android.app.WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER)
 
