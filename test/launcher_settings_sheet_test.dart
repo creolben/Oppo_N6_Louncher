@@ -12,6 +12,8 @@ Widget _host({
   VoidCallback? onDefaultHomeTap,
   VoidCallback? onOpenAmbientWallpaper,
   VoidCallback? onOpenGestures,
+  Future<bool> Function()? hasMediaAccess,
+  Future<void> Function()? onRequestMediaAccess,
   double textScale = 1.0,
 }) {
   return MaterialApp(
@@ -28,6 +30,8 @@ Widget _host({
             onLockModeChanged: onLockModeChanged ?? (_) async {},
             onOpenAmbientWallpaper: onOpenAmbientWallpaper ?? () {},
             onOpenGestures: onOpenGestures ?? () {},
+            hasMediaAccess: hasMediaAccess,
+            onRequestMediaAccess: onRequestMediaAccess,
           ),
         ),
       ),
@@ -217,5 +221,51 @@ void main() {
     expect(find.byType(LauncherSettingsSheet), findsOneWidget);
     expect(find.text('Default home app'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  group('Now playing & badges', () {
+    testWidgets('hidden when the host cannot report notification access',
+        (tester) async {
+      _setSize(tester, const Size(400, 1400));
+      final isDefault = ValueNotifier<bool>(true);
+      addTearDown(isDefault.dispose);
+      await tester.pumpWidget(_host(isDefault: isDefault));
+      await tester.pump();
+      expect(find.text('Now playing & badges'), findsNothing);
+    });
+
+    testWidgets('off: offers Allow, opens the grant, and updates on return',
+        (tester) async {
+      _setSize(tester, const Size(400, 1400));
+      final isDefault = ValueNotifier<bool>(true);
+      addTearDown(isDefault.dispose);
+      var granted = false;
+      var opened = 0;
+      await tester.pumpWidget(_host(
+        isDefault: isDefault,
+        hasMediaAccess: () async => granted,
+        onRequestMediaAccess: () async => opened++,
+      ));
+      await tester.pump();
+
+      expect(find.text('Now playing & badges'), findsOneWidget);
+      expect(find.text('Allow'), findsOneWidget);
+
+      await tester.tap(find.text('Now playing & badges'));
+      await tester.pump();
+      expect(opened, 1);
+
+      // The user grants access on Android's page and comes back.
+      granted = true;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+
+      expect(find.text('Allow'), findsNothing);
+      expect(
+        find.textContaining('On: media controls on the lock screen'),
+        findsOneWidget,
+      );
+    });
   });
 }

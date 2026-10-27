@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -19,6 +21,8 @@ Future<void> showLauncherSettingsSheet(
   required Future<void> Function(bool nativeMode) onLockModeChanged,
   VoidCallback? onOpenAmbientWallpaper,
   VoidCallback? onOpenGestures,
+  Future<bool> Function()? hasMediaAccess,
+  Future<void> Function()? onRequestMediaAccess,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -32,6 +36,8 @@ Future<void> showLauncherSettingsSheet(
       onLockModeChanged: onLockModeChanged,
       onOpenAmbientWallpaper: onOpenAmbientWallpaper,
       onOpenGestures: onOpenGestures,
+      hasMediaAccess: hasMediaAccess,
+      onRequestMediaAccess: onRequestMediaAccess,
     ),
   );
 }
@@ -46,6 +52,8 @@ class LauncherSettingsSheet extends StatefulWidget {
     required this.onLockModeChanged,
     this.onOpenAmbientWallpaper,
     this.onOpenGestures,
+    this.hasMediaAccess,
+    this.onRequestMediaAccess,
   });
 
   /// Live default-home status. A listenable rather than a bool because the
@@ -67,6 +75,15 @@ class LauncherSettingsSheet extends StatefulWidget {
   final VoidCallback? onOpenAmbientWallpaper;
   final VoidCallback? onOpenGestures;
 
+  /// Whether ChronoFold holds notification access, which Android requires
+  /// before it shares media sessions or notification counts. Without it the
+  /// lock screen can never show what is playing, and nothing else in the
+  /// launcher asks for it. Null hides the row.
+  final Future<bool> Function()? hasMediaAccess;
+
+  /// Opens Android's notification-access page; only the user can grant it.
+  final Future<void> Function()? onRequestMediaAccess;
+
   /// Width cap on the unfolded inner screen: a sheet stretched to 900dp reads
   /// as a banner, not a panel.
   static const double maxWidth = 560;
@@ -75,9 +92,40 @@ class LauncherSettingsSheet extends StatefulWidget {
   State<LauncherSettingsSheet> createState() => _LauncherSettingsSheetState();
 }
 
-class _LauncherSettingsSheetState extends State<LauncherSettingsSheet> {
+class _LauncherSettingsSheetState extends State<LauncherSettingsSheet>
+    with WidgetsBindingObserver {
   late bool _nativeMode = widget.nativeLockMode;
   bool _switching = false;
+
+  /// Null until the platform answers.
+  bool? _mediaAccess;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshMediaAccess();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// The grant happens on Android's own page with this sheet still open, so
+  /// coming back is the moment the answer can have changed.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshMediaAccess();
+  }
+
+  Future<void> _refreshMediaAccess() async {
+    final query = widget.hasMediaAccess;
+    if (query == null) return;
+    final bool granted = await query();
+    if (mounted) setState(() => _mediaAccess = granted);
+  }
 
   Future<void> _requestLockMode(bool native) async {
     if (native == _nativeMode || _switching) return;
@@ -237,7 +285,12 @@ class _LauncherSettingsSheetState extends State<LauncherSettingsSheet> {
                                 onTap: widget.onOpenAmbientWallpaper,
                               ),
                             ]),
-                          _section('Lock screen', _lockModeRows()),
+                          _section('Lock screen', [
+                            ..._lockModeRows(),
+                            if (widget.hasMediaAccess != null &&
+                                _mediaAccess != null)
+                              _mediaAccessRow(_mediaAccess!),
+                          ]),
                           if (widget.onOpenGestures != null)
                             _section('Gestures', [
                               _SettingsRow(
@@ -283,30 +336,25 @@ class _LauncherSettingsSheetState extends State<LauncherSettingsSheet> {
               : 'Asks Android to make ChronoFold your home app',
           trailing: isDefault
               ? const _Chevron()
-              : ExcludeSemantics(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: LuminousHomeTheme.space12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: LuminousHomeTheme.accentSoft,
-                      borderRadius: BorderRadius.circular(
-                        LuminousHomeTheme.radiusFull,
-                      ),
-                    ),
-                    child: Text(
-                      'Set as default',
-                      style: LuminousHomeTheme.chipLabel.copyWith(
-                        color: LuminousHomeTheme.accent,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
+              : const _ActionPill(label: 'Set as default'),
           onTap: widget.onDefaultHomeTap,
         );
       },
+    );
+  }
+
+  Widget _mediaAccessRow(bool granted) {
+    return _SettingsRow(
+      icon: Icons.music_note_rounded,
+      title: 'Now playing & badges',
+      subtitle: granted
+          ? 'On: media controls on the lock screen and app badges'
+          : 'Off: allow notification access to show what is playing',
+      semanticsHint: 'Opens Android\'s notification access setting',
+      trailing: granted ? const _Chevron() : const _ActionPill(label: 'Allow'),
+      onTap: widget.onRequestMediaAccess == null
+          ? null
+          : () => unawaited(widget.onRequestMediaAccess!()),
     );
   }
 
@@ -551,6 +599,37 @@ class _Chevron extends StatelessWidget {
       Icons.chevron_right_rounded,
       size: 22,
       color: LuminousHomeTheme.textMuted,
+    );
+  }
+}
+
+/// A small accent pill naming the action a row takes, for rows whose state is
+/// "not set up yet".
+class _ActionPill extends StatelessWidget {
+  const _ActionPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: LuminousHomeTheme.space12,
+          vertical: 6,
+        ),
+        decoration: BoxDecoration(
+          color: LuminousHomeTheme.accentSoft,
+          borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusFull),
+        ),
+        child: Text(
+          label,
+          style: LuminousHomeTheme.chipLabel.copyWith(
+            color: LuminousHomeTheme.accent,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
     );
   }
 }

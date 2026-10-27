@@ -416,6 +416,10 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
         onOpenAmbientWallpaper: () =>
             unawaited(_openCosmicLiveWallpaperPreview()),
         onOpenGestures: () => unawaited(_openGesturesSheet()),
+        hasMediaAccess: LauncherBridge.hasMediaAccess,
+        onRequestMediaAccess: () async {
+          await LauncherBridge.requestMediaAccess();
+        },
       ),
     );
   }
