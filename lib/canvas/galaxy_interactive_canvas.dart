@@ -68,6 +68,10 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     with TickerProviderStateMixin {
   late Ticker _renderLoopTicker;
   final ChangeNotifier _paintRepaintNotifier = ChangeNotifier();
+
+  /// What the painter reads at paint time; refreshed before every repaint
+  /// (see [GalaxyFrameState] for why the painter must not hold copies).
+  final GalaxyFrameState _frame = GalaxyFrameState();
   double _animationTime = 0.0;
 
   /// The ticker timestamp of the previous frame, or null when the next frame
@@ -170,7 +174,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     if (_reduceMotion) {
       if (_renderLoopTicker.isActive) _renderLoopTicker.stop();
       // Paint the resting arrangement once.
-      _requestRepaint();
+      _settleForReducedMotion();
     } else {
       // Turning reduce motion off, or any other dependency change (text
       // scale, theme), counts as activity.
@@ -202,7 +206,13 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   /// runs. Cheap enough to call on every pointer move and camera change.
   void _markActivity() {
     _idleSeconds = 0.0;
-    if (_reduceMotion || !mounted) return;
+    if (!mounted) return;
+    if (_reduceMotion) {
+      // No loop runs to ease the morph, so land it: a hub tap, a fold or a
+      // layout change shows its final arrangement at once.
+      _settleForReducedMotion();
+      return;
+    }
     if (!_renderLoopTicker.isActive) {
       // A fresh start: the first frame only sets the baseline.
       _lastFrameTime = null;
@@ -211,6 +221,14 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
       _nextMeteorSpawnTime = math.max(_nextMeteorSpawnTime, _animationTime + 1.5);
       _renderLoopTicker.start();
     }
+  }
+
+  void _settleForReducedMotion() {
+    widget.layoutEngine.settleGalaxyMorph(
+      posture: widget.foldable.posture,
+      hingeAngle: widget.foldable.hingeAngle,
+    );
+    _requestRepaint();
   }
 
   /// Whether anything on the canvas is still moving under its own power, in
@@ -246,8 +264,17 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
   /// Asks the canvas to repaint without advancing the simulation.
   void _requestRepaint() {
+    _syncFrame();
     // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
     _paintRepaintNotifier.notifyListeners();
+  }
+
+  void _syncFrame() {
+    _frame
+      ..animationTime = _animationTime
+      ..activeSupernova = _activeSupernova
+      ..activeTouchScreenPoint = _lastFocalPoint
+      ..focusedApp = _focusedApp;
   }
 
   void _onCameraChange() {
@@ -392,6 +419,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
       _activeSupernova = null;
     }
 
+    _syncFrame();
     // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
     _paintRepaintNotifier.notifyListeners();
 
@@ -531,11 +559,15 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     // drifted to by the time the app opens.
     final Rect? sourceBounds = _appScreenRect(app);
     _focusedApp = app;
-    _activeSupernova = SupernovaAnimation(
-      worldPosition: app.worldPosition,
-      color: app.accentColor,
-      startTime: _animationTime,
-    );
+    // Under reduce-motion no loop would ever play or clear the burst, so it
+    // would sit frozen on the canvas; the launch itself is unchanged.
+    if (!_reduceMotion) {
+      _activeSupernova = SupernovaAnimation(
+        worldPosition: app.worldPosition,
+        color: app.accentColor,
+        startTime: _animationTime,
+      );
+    }
 
     widget.onAppSelected?.call(app);
 
@@ -569,6 +601,13 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   void _activateConstellation(Constellation constellation) {
     LauncherHaptics.click();
     _markActivity();
+    _toggleConstellation(constellation);
+    // Under reduce-motion the activity above settled the morph before the
+    // toggle; land the new arrangement too.
+    if (_reduceMotion) _settleForReducedMotion();
+  }
+
+  void _toggleConstellation(Constellation constellation) {
     if (constellation.id == 'core') {
       final anyOuterExpanded = widget.layoutEngine.constellations.any(
         (c) => c.id != 'core' && (c.isExpanded || c.expansionProgress > 0.25),
@@ -752,6 +791,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
   @override
   Widget build(BuildContext context) {
+    _syncFrame();
     return LayoutBuilder(
       builder: (context, constraints) {
         widget.camera.updateViewportSize(constraints.biggest);
@@ -867,12 +907,9 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
             camera: widget.camera,
             constellations: widget.layoutEngine.constellations,
             foldable: widget.foldable,
-            animationTime: _animationTime,
+            frame: _frame,
             starfield: _starfield,
             shootingStars: _shootingStars,
-            activeSupernova: _activeSupernova,
-            activeTouchScreenPoint: _lastFocalPoint,
-            focusedApp: _focusedApp,
             badgeRevision: widget.badgeRevision,
           ),
         ),

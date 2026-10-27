@@ -601,12 +601,33 @@ class GalaxyLayoutEngine {
     }
   }
 
+  /// Snaps every hub, group and node to its resting target in one step.
+  ///
+  /// For reduce-motion, where no render loop runs to ease the morph: without
+  /// this a tapped hub's expansion never advanced, so groups could not open.
+  /// Orbits are not advanced, so nothing appears to spin on each change.
+  void settleGalaxyMorph({
+    required DevicePosture posture,
+    required double hingeAngle,
+  }) {
+    updateGalaxyMorph(
+      posture: posture,
+      hingeAngle: hingeAngle,
+      dt: 1.0,
+      advanceOrbits: false,
+    );
+  }
+
   void updateGalaxyMorph({
     required DevicePosture posture,
     required double hingeAngle,
     required double dt,
     Offset? magneticTouchPoint,
+    bool advanceOrbits = true,
   }) {
+    // Orbital drift and ring rotation advance with real time only; a settle
+    // (dt = 1, every lerp factor clamped to 1) must not spin the rings.
+    final double orbitDt = advanceOrbits ? dt : 0.0;
     // Collect outer constellations (excluding center core)
     final outerConstellations = constellations.where((c) => c.id != 'core').toList();
     final int outerCount = outerConstellations.length;
@@ -648,12 +669,12 @@ class GalaxyLayoutEngine {
       }
 
       c.center = Offset.lerp(c.center, targetCenter, (dt * 6.0).clamp(0.0, 1.0))!;
-      c.rotation += dt * 0.02;
+      c.rotation += orbitDt * 0.02;
 
       final double effectiveExpansion = c.expansionProgress;
 
       for (final app in c.apps) {
-        app.orbitalAngle += app.orbitalSpeed * dt * 60;
+        app.orbitalAngle += app.orbitalSpeed * orbitDt * 60;
         final double cosA = math.cos(app.orbitalAngle + c.rotation * 0.1);
         final double sinA = math.sin(app.orbitalAngle + c.rotation * 0.1);
 
@@ -700,7 +721,7 @@ class GalaxyLayoutEngine {
     for (final app in core.apps) {
       // Smoothly adjust orbitalRadius when posture changes
       app.orbitalRadius = ui.lerpDouble(app.orbitalRadius, targetCoreRadius, (dt * 6.0).clamp(0.0, 1.0)) ?? targetCoreRadius;
-      app.orbitalAngle += app.orbitalSpeed * dt * 60;
+      app.orbitalAngle += app.orbitalSpeed * orbitDt * 60;
       final double cosA = math.cos(app.orbitalAngle + core.rotation * 0.1 + spiralAngle);
       final double sinA = math.sin(app.orbitalAngle + core.rotation * 0.1 + spiralAngle);
 

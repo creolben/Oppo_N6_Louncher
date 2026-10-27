@@ -69,16 +69,33 @@ class SupernovaAnimation {
   }
 }
 
+/// The per-frame values the painter reads at paint time.
+///
+/// The canvas repaints through a listenable without rebuilding, so the same
+/// painter instance paints many frames. Values copied into the painter's
+/// constructor would therefore be frozen at the last rebuild — which is what
+/// left twinkle, nebula drift, core breathing, filament pulses, the focus halo
+/// and the launch supernova still between rebuilds. The canvas owns one of
+/// these, updates it before every repaint, and the painter reads it live.
+class GalaxyFrameState {
+  double animationTime = 0.0;
+  SupernovaAnimation? activeSupernova;
+  Offset? activeTouchScreenPoint;
+  AppEntry? focusedApp;
+}
+
 class GalaxyCustomPainter extends CustomPainter {
   final CameraController camera;
   final List<Constellation> constellations;
   final FoldableController foldable;
-  final double animationTime;
+  final GalaxyFrameState frame;
   final List<CosmicParticle> starfield;
   final List<ShootingStar> shootingStars;
-  final SupernovaAnimation? activeSupernova;
-  final Offset? activeTouchScreenPoint;
-  final AppEntry? focusedApp;
+
+  double get animationTime => frame.animationTime;
+  SupernovaAnimation? get activeSupernova => frame.activeSupernova;
+  Offset? get activeTouchScreenPoint => frame.activeTouchScreenPoint;
+  AppEntry? get focusedApp => frame.focusedApp;
 
   /// Bumps when the badge counts behind the app nodes changed.
   ///
@@ -139,12 +156,9 @@ class GalaxyCustomPainter extends CustomPainter {
     required this.camera,
     required this.constellations,
     required this.foldable,
-    required this.animationTime,
+    required this.frame,
     required this.starfield,
     this.shootingStars = const [],
-    this.activeSupernova,
-    this.activeTouchScreenPoint,
-    this.focusedApp,
     this.badgeRevision = 0,
     this.textScaler = TextScaler.noScaling,
   }) : super(repaint: repaint);
