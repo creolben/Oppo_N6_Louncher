@@ -70,13 +70,12 @@ class LockActivity : FlutterActivity() {
 
     override fun getDartEntrypointFunctionName(): String = "lockMain"
 
-    // Look lockMain up in its own library. Without this the engine searches
-    // the root library (main.dart), which only re-exports lockMain; an AOT
-    // release build cannot resolve an exported name there, so the lock engine
-    // logged "Could not resolve main entrypoint function", never ran Dart,
-    // and the lock window could never draw.
-    override fun getDartEntrypointLibraryUri(): String? =
-        "package:mylauncher/lock_main.dart"
+    // Resolved in the root library (main.dart), where lockMain is a real
+    // `vm:entry-point` function that forwards to lock_main.dart. Release AOT
+    // builds could not resolve it either as a re-export from main.dart or by
+    // URI in lock_main.dart: the engine logged "Could not resolve main
+    // entrypoint function", never ran Dart, and the lock window never drew.
+    override fun getDartEntrypointLibraryUri(): String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

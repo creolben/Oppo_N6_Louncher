@@ -40,10 +40,21 @@ import 'ui/screens/tabletop_cockpit_view.dart';
 import 'ui/theme/luminous_home_theme.dart';
 import 'ui/theme/system_palette.dart';
 
-// The lock activity runs its own engine on the `lockMain` entry point, which
-// lives in its own library. Re-exporting it keeps that entry point in this
-// kernel, so AOT tree-shaking cannot drop the second surface's entry point.
-export 'lock_main.dart' show lockMain;
+import 'lock_main.dart' as lock_surface;
+
+/// The lock activity's engine entry point, declared in the root library.
+///
+/// `LockActivity` names `lockMain` and leaves the library to the engine's
+/// default, the root library — this file. An AOT release build resolves an
+/// entry point only as a real, `vm:entry-point`-annotated function of the
+/// library it is asked to search: a re-export is not one, and looking it up
+/// in `lock_main.dart` by URI was measured to fail too on the CPH2765
+/// ("Could not resolve main entrypoint function"), so the lock engine never
+/// ran Dart, never drew, and the first-frame watchdog handed every
+/// screen-off over another app (YouTube playing, say) to the ColorOS
+/// keyguard. A real function here is the documented custom-entrypoint shape.
+@pragma('vm:entry-point')
+Future<void> lockMain() => lock_surface.lockMain();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
