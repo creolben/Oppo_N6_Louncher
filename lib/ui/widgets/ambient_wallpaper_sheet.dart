@@ -113,9 +113,8 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                         'ChronoFold keeps the interactive constellation launcher. '
                         'The optional live wallpaper carries only the ambient stars, '
                         'nebulae, meteors, and astrolabe core into ColorOS.',
-                        style: TextStyle(
+                        style: LuminousHomeTheme.body.copyWith(
                           color: LuminousHomeTheme.white.withValues(alpha: 0.68),
-                          fontSize: 13.5,
                           height: 1.42,
                         ),
                       ),
@@ -145,9 +144,9 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                                 'ChronoFold Ambient Galaxy; ColorOS then owns its '
                                 'native preview and apply screen. That does not '
                                 'replace your ChronoFold launcher.',
-                                style: TextStyle(
+                                style: LuminousHomeTheme.label.copyWith(
                                   color: LuminousHomeTheme.white.withValues(alpha: 0.77),
-                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w400,
                                   height: 1.38,
                                 ),
                               ),
@@ -176,8 +175,8 @@ class _AmbientWallpaperSheetState extends State<AmbientWallpaperSheet>
                           backgroundColor: LuminousHomeTheme.accentDeep,
                           foregroundColor: LuminousHomeTheme.backgroundDeep,
                           minimumSize: const Size.fromHeight(52),
-                          textStyle: const TextStyle(
-                            fontSize: 12,
+                          // The button's foreground supplies the colour.
+                          textStyle: LuminousHomeTheme.chipLabel.copyWith(
                             fontWeight: FontWeight.w800,
                             letterSpacing: 0.8,
                           ),
@@ -227,9 +226,8 @@ class _Eyebrow extends StatelessWidget {
         Flexible(
           child: Text(
             label,
-            style: TextStyle(
+            style: LuminousHomeTheme.caption.copyWith(
               color: LuminousHomeTheme.accent,
-              fontSize: 10.5,
               fontWeight: FontWeight.w800,
               letterSpacing: 1.45,
             ),
@@ -344,9 +342,8 @@ class _OwnershipCell extends StatelessWidget {
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                  style: LuminousHomeTheme.micro.copyWith(
                     color: LuminousHomeTheme.white.withValues(alpha: 0.48),
-                    fontSize: 9,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 1.1,
                   ),
@@ -356,9 +353,8 @@ class _OwnershipCell extends StatelessWidget {
                   value,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                  style: LuminousHomeTheme.chipLabel.copyWith(
                     color: color,
-                    fontSize: 12,
                     fontWeight: FontWeight.w700,
                   ),
                 ),

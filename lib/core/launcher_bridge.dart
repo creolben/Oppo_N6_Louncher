@@ -13,8 +13,6 @@ import '../ui/theme/system_palette.dart';
 
 class LauncherBridge {  static const MethodChannel _appsChannel =
       MethodChannel('com.launcher.chronofold/apps');
-  static const EventChannel _shakeChannel =
-      EventChannel('com.launcher.chronofold/shake');
   static const EventChannel _fingerprintChannel =
       EventChannel('com.launcher.chronofold/fingerprint');
   static const EventChannel _mediaChannel =
@@ -33,7 +31,6 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   static bool get _usePlatformChannels =>
       !kIsWeb && (Platform.isAndroid || debugUsePlatformChannels);
 
-  static Stream<Map<String, dynamic>>? _shakeStream;
   static Stream<NowPlaying?>? _mediaStream;
   static Stream<Map<String, dynamic>>? _badgesStream;
 
@@ -108,6 +105,14 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     _ensureHandlerInitialized();
   }
 
+  /// Clears the user-present listener only if it is still [owner].
+  ///
+  /// A lock panel that is being disposed must not clear the listener a newer
+  /// panel has already installed, or that panel never hears the unlock.
+  static void clearUserPresentListener(VoidCallback owner) {
+    if (_onUserPresentListener == owner) _onUserPresentListener = null;
+  }
+
   @visibleForTesting
   static void dispatchUserPresentForTesting() {
     _onUserPresentListener?.call();
@@ -137,6 +142,12 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     _ensureHandlerInitialized();
   }
 
+  /// Clears the screen-on listener only if it is still [owner]; see
+  /// [clearUserPresentListener].
+  static void clearScreenOnListener(VoidCallback owner) {
+    if (_onScreenOnListener == owner) _onScreenOnListener = null;
+  }
+
   static void setPackageChangeListener(VoidCallback onPackageChange) {
     _onPackageChangeListener = onPackageChange;
     _ensureHandlerInitialized();
@@ -161,23 +172,15 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   }
 
 
-  static Stream<Map<String, dynamic>> getShakeStream() {
-    if (_shakeStream == null) {
-      if (!kIsWeb && Platform.isAndroid) {
-        _shakeStream = _shakeChannel
-            .receiveBroadcastStream()
-            .map((event) => Map<String, dynamic>.from(event as Map));
-      } else {
-        _shakeStream = const Stream.empty();
-      }
-    }
-    return _shakeStream!;
-  }
 
-  /// Fetches installed apps from Android native PackageManager,
-  /// or returns rich mock apps when running on desktop / emulator without packages.
-  static Future<List<AppEntry>> getInstalledApps({bool includeIcons = true}) async {
-    if (!kIsWeb && Platform.isAndroid) {
+  /// Fetches installed apps from Android native PackageManager, or returns
+  /// rich mock apps on a non-Android host (desktop, tests).
+  ///
+  /// On Android a failed or empty scan returns null rather than the mocks:
+  /// callers keep the inventory they already have instead of showing fake apps
+  /// with fake badges to a real user.
+  static Future<List<AppEntry>?> getInstalledApps({bool includeIcons = true}) async {
+    if (_usePlatformChannels) {
       try {
         final List<dynamic>? rawApps =
             await _appsChannel.invokeMethod('getInstalledApps', {
@@ -228,9 +231,11 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
       } catch (e) {
         debugPrint('Error querying Android PackageManager: $e');
       }
+      // A scan error or an empty answer: never substitute mocks on a device.
+      return null;
     }
 
-    // Fallback to high-fidelity mock apps for simulation / desktop / non-Android
+    // High-fidelity mock apps for simulation / desktop / non-Android hosts.
     return _generateMockApps();
   }
 
@@ -1057,6 +1062,12 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     if (!kIsWeb && Platform.isAndroid) {
       try {
         return await _appsChannel.invokeMethod<String>('pickPdf');
+      } on PlatformException catch (e) {
+        // A file over the native size cap is not a cancel: let the import
+        // service tell the user why nothing happened.
+        if (e.code == 'PDF_TOO_LARGE') rethrow;
+        debugPrint('CF_PDF: pickPdf failed: $e');
+        return null;
       } catch (e) {
         debugPrint('CF_PDF: pickPdf failed: $e');
         return null;

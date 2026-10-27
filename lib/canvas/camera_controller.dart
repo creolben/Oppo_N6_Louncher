@@ -24,16 +24,27 @@ class CameraController extends ChangeNotifier {
 
   // Fly-To animation
   AnimationController? _flyController;
+  CurvedAnimation? _flyCurve;
   Animation<Offset>? _flyOffsetAnim;
   Animation<double>? _flyZoomAnim;
+
+  /// The ticker provider the ticker and fly controller were created from.
+  ///
+  /// During a posture transition two canvases can be mounted at once, and the
+  /// incoming one re-binds the camera before the outgoing one is disposed. The
+  /// outgoing canvas must only tear down a binding that is still its own.
+  TickerProvider? _vsync;
 
   Offset get translation => _translation;
   double get zoom => _zoom;
   Size get viewportSize => _viewportSize;
 
+  /// Whether the camera's ticker and fly controller were created from [vsync].
+  bool isBoundTo(TickerProvider vsync) => identical(_vsync, vsync);
+
   void init(TickerProvider vsync) {
-    _ticker?.dispose();
-    _flyController?.dispose();
+    _releaseTickers();
+    _vsync = vsync;
     _ticker = vsync.createTicker(_onTick);
     _flyController = AnimationController(
       vsync: vsync,
@@ -206,8 +217,19 @@ class CameraController extends ChangeNotifier {
       _viewportSize.height / 2 - (worldTarget.dy * targetZoom),
     ));
 
-    final curve = CurvedAnimation(
-      parent: _flyController!,
+    final flyController = _flyController;
+    if (flyController == null) {
+      // No canvas is bound (folded cover, or between postures): there is no
+      // vsync to animate on, so the camera settles on the target directly.
+      _translation = targetTranslation;
+      _zoom = targetZoom;
+      notifyListeners();
+      return;
+    }
+
+    _flyCurve?.dispose();
+    final curve = _flyCurve = CurvedAnimation(
+      parent: flyController,
       curve: Curves.easeOutCubic,
     );
 
@@ -221,17 +243,40 @@ class CameraController extends ChangeNotifier {
       end: targetZoom,
     ).animate(curve);
 
-    _flyController?.forward(from: 0.0);
+    flyController.forward(from: 0.0);
   }
 
   void resetView() {
     flyTo(Offset.zero, targetZoom: 1.0);
   }
 
+  /// Releases the ticker and fly controller created from [vsync], if the camera
+  /// is still bound to it.
+  ///
+  /// Called by the owning canvas on dispose so a later [flyTo] cannot drive a
+  /// controller whose ticker provider is gone. A no-op when another canvas has
+  /// already re-bound the camera. The next [init] re-creates both.
+  void detach(TickerProvider vsync) {
+    if (!isBoundTo(vsync)) return;
+    _stopPhysics();
+    _releaseTickers();
+  }
+
+  void _releaseTickers() {
+    _ticker?.dispose();
+    _ticker = null;
+    _flyCurve?.dispose();
+    _flyCurve = null;
+    _flyOffsetAnim = null;
+    _flyZoomAnim = null;
+    _flyController?.dispose();
+    _flyController = null;
+    _vsync = null;
+  }
+
   @override
   void dispose() {
-    _ticker?.dispose();
-    _flyController?.dispose();
+    _releaseTickers();
     super.dispose();
   }
 }

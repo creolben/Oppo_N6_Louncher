@@ -15,6 +15,16 @@ void main() {
       expect(ShoppingItem.normalizeName('Glass'), 'glass');
       expect(ShoppingItem.normalizeName('Cheese'), 'cheese');
       expect(ShoppingItem.normalizeName('Berries'), 'berry');
+      // -ie words meet their plural at one key.
+      expect(
+        ShoppingItem.normalizeName('cookie'),
+        ShoppingItem.normalizeName('cookies'),
+      );
+      expect(
+        ShoppingItem.normalizeName('movie'),
+        ShoppingItem.normalizeName('movies'),
+      );
+      expect(ShoppingItem.normalizeName('pies'), 'pie');
     });
 
     test('json round trip', () {
@@ -107,7 +117,7 @@ void main() {
       expect(list.items.single.quantity, const Quantity(1, Unit.teaspoon));
     });
 
-    test('keeps the checked flag when merging', () {
+    test('re-adding a checked item brings it back unchecked (Keep)', () {
       var list = baseList();
       list = list.addOrMerge(
         ShoppingItem(
@@ -120,8 +130,44 @@ void main() {
       list = list.addOrMerge(
         ShoppingItem(id: 'b', name: 'milk', quantity: Quantity(2, Unit.liter)),
       );
-      expect(list.items.single.checked, isTrue);
-      expect(list.items.single.quantity, Quantity(3, Unit.liter));
+      expect(list.items, hasLength(1));
+      expect(list.items.single.id, 'a');
+      expect(list.items.single.checked, isFalse);
+      expect(list.items.single.quantity, Quantity(2, Unit.liter));
+    });
+
+    test('an unchecked match wins over reviving a checked one', () {
+      var list = baseList();
+      list = list.addOrMerge(
+        const ShoppingItem(id: 'a', name: 'eggs', checked: true),
+      );
+      list = list.addOrMerge(
+        const ShoppingItem(
+          id: 'b',
+          name: 'eggs',
+          quantity: Quantity(6, Unit.piece),
+        ),
+      );
+      // The checked row is revived in place rather than duplicated.
+      expect(list.items, hasLength(1));
+      list = list.addOrMerge(
+        const ShoppingItem(
+          id: 'c',
+          name: 'eggs',
+          quantity: Quantity(6, Unit.piece),
+        ),
+      );
+      expect(list.items, hasLength(1));
+      expect(list.items.single.quantity, const Quantity(12, Unit.piece));
+    });
+
+    test('two name-only items dedupe', () {
+      var list = baseList();
+      list = list.addOrMerge(const ShoppingItem(id: 'a', name: 'milk'));
+      list = list.addOrMerge(const ShoppingItem(id: 'b', name: 'Milk'));
+      expect(list.items, hasLength(1));
+      expect(list.items.single.id, 'a');
+      expect(list.items.single.quantity, isNull);
     });
 
     test('different names append', () {

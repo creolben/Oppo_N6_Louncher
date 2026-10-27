@@ -36,8 +36,14 @@ class ShoppingItem {
         .trim()
         .replaceAll(RegExp(r'\s+'), ' ');
     if (text.isEmpty) return text;
-    if (text.length > 3 && text.endsWith('ies')) {
+    // `berries`/`berry` and `cookies`/`cookie` must meet at one key, so both
+    // `-ies` and a bare `-ie` fold to `-y`. Short words keep their `-ie`
+    // (`pie`/`pies` stay `pie`).
+    if (text.length > 4 && text.endsWith('ies')) {
       return '${text.substring(0, text.length - 3)}y';
+    }
+    if (text.length > 3 && text.endsWith('ie')) {
+      return '${text.substring(0, text.length - 2)}y';
     }
     if (text.length > 3 && RegExp(r'(?:s|x|z|ch|sh|o)es$').hasMatch(text)) {
       return text.substring(0, text.length - 2);

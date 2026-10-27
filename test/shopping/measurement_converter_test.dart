@@ -112,6 +112,14 @@ void main() {
       expect(MeasurementConverter.parseAmount(''), isNull);
       expect(MeasurementConverter.parseAmount('nope'), isNull);
     });
+
+    test('mixed numbers and unicode fractions parse', () {
+      expect(MeasurementConverter.parseAmount('1 1/2'), 1.5);
+      expect(MeasurementConverter.parseAmount('½'), 0.5);
+      expect(MeasurementConverter.parseAmount('2¼'), 2.25);
+      expect(MeasurementConverter.parseAmount('-40'), -40);
+      expect(MeasurementConverter.parseAmount('1 1/2 cups'), isNull);
+    });
   });
 
   group('quick pairs', () {

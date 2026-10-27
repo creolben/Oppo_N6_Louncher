@@ -45,8 +45,8 @@ void main() {
     );
 
     // Open the add picker from the Connect editor.
-    expect(find.text('Add Star'), findsOneWidget);
-    await tester.tap(find.text('Add Star'));
+    expect(find.text('Add app'), findsOneWidget);
+    await tester.tap(find.text('Add app'));
     await tester.pumpAndSettle();
 
     // The Essentials app advertises its current group and a move affordance.

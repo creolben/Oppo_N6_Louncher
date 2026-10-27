@@ -27,14 +27,29 @@ class RemovedItem {
   });
 }
 
+/// A removed recipe and its position, so an undo can put it back in place.
+class RemovedRecipe {
+  final Recipe recipe;
+  final int index;
+
+  const RemovedRecipe({required this.recipe, required this.index});
+}
+
 /// Owns the shopping lists, recipes, and display preferences.
 ///
-/// Every mutation schedules a debounced save through [ShoppingStore]. Tests can
-/// await [flush] to force a write immediately.
+/// Every mutation schedules a debounced save through [ShoppingStore]. Saves
+/// never overlap: one write is in flight at a time and a dirty flag queues the
+/// next. Nothing is written until [load] has finished, so an early mutation
+/// can never overwrite the stored file with a near-empty state; such mutations
+/// are merged on top of the loaded data instead. [flush] writes pending
+/// changes immediately, and [dispose] flushes rather than dropping them.
 class ShoppingController extends ChangeNotifier {
   ShoppingController({ShoppingStore? store, DateTime Function()? clock})
       : _store = store ?? ShoppingStore(),
         _clock = clock ?? DateTime.now;
+
+  /// The name a list gets when none is typed or one is created implicitly.
+  static const String defaultListName = 'Shopping list';
 
   final ShoppingStore _store;
   final DateTime Function() _clock;
@@ -45,9 +60,33 @@ class ShoppingController extends ChangeNotifier {
   String? _activeListId;
   bool _preferImperial = false;
   bool _storeMode = false;
+  bool _storeModeHintDismissed = false;
   bool _loaded = false;
+  bool _disposed = false;
   int _idCounter = 0;
   Timer? _saveTimer;
+  Future<void>? _loadFuture;
+
+  /// Whether state changed since the last snapshot handed to the store.
+  bool _dirty = false;
+
+  /// The single background write in flight, if any.
+  Future<void>? _inFlight;
+
+  /// Whether the last write failed; stops the in-flight loop from retrying
+  /// immediately (the next mutation or [flush] tries again).
+  bool _lastSaveFailed = false;
+
+  /// Lists created implicitly (by an add with no list) before [load] finished.
+  /// On load their items fold into the stored active list.
+  final Set<String> _implicitListIds = <String>{};
+
+  /// Preferences explicitly set before [load] finished; these win over the
+  /// stored values.
+  final Set<String> _prefsSetBeforeLoad = <String>{};
+
+  /// A recipe the surface should open next, set when an import saves one.
+  String? _pendingRecipeId;
 
   List<ShoppingList> get lists => List.unmodifiable(_lists);
 
@@ -61,6 +100,20 @@ class ShoppingController extends ChangeNotifier {
   bool get storeMode => _storeMode;
 
   bool get isLoaded => _loaded;
+
+  /// Whether the cover-display store-mode suggestion was dismissed. Persisted.
+  bool get storeModeHintDismissed => _storeModeHintDismissed;
+
+  /// The recipe an import just saved, for the surface to open so the user can
+  /// scale it before adding it to a list. Cleared by [takePendingRecipe].
+  String? get pendingRecipeId => _pendingRecipeId;
+
+  /// Returns and clears [pendingRecipeId] without notifying.
+  String? takePendingRecipe() {
+    final String? id = _pendingRecipeId;
+    _pendingRecipeId = null;
+    return id;
+  }
 
   /// Remembered `normalizedName -> aisle` choices, persisted with the store.
   Map<String, String> get aisleMemory => Map.unmodifiable(_aisleMemory);
@@ -93,8 +146,26 @@ class ShoppingController extends ChangeNotifier {
     return null;
   }
 
-  Future<void> load() async {
-    final data = await _store.load();
+  /// Loads the store once; later calls return the same future.
+  Future<void> load() => _loadFuture ??= _load();
+
+  Future<void> _load() async {
+    ShoppingStoreData data;
+    try {
+      data = await _store.load();
+    } catch (error) {
+      debugPrint('Shopping store could not be loaded: $error');
+      data = const ShoppingStoreData();
+    }
+    if (_disposed) return;
+
+    // Anything the user did before the store finished loading is merged on
+    // top of the stored state rather than wiped by it.
+    final List<ShoppingList> early = List<ShoppingList>.of(_lists);
+    final List<Recipe> earlyRecipes = List<Recipe>.of(_recipes);
+    final Map<String, String> earlyMemory = Map<String, String>.of(_aisleMemory);
+    final String? earlyActive = _activeListId;
+
     _lists
       ..clear()
       ..addAll(data.lists);
@@ -102,16 +173,49 @@ class ShoppingController extends ChangeNotifier {
       ..clear()
       ..addAll(data.recipes);
     _activeListId = data.activeListId;
-    _preferImperial = data.preferImperial;
-    _storeMode = data.storeMode;
+    if (listById(_activeListId ?? '') == null) {
+      _activeListId = _lists.isEmpty ? null : _lists.first.id;
+    }
+    if (!_prefsSetBeforeLoad.contains('preferImperial')) {
+      _preferImperial = data.preferImperial;
+    }
+    if (!_prefsSetBeforeLoad.contains('storeMode')) {
+      _storeMode = data.storeMode;
+    }
+    if (!_prefsSetBeforeLoad.contains('storeModeHintDismissed')) {
+      _storeModeHintDismissed = data.storeModeHintDismissed;
+    }
     _aisleMemory
       ..clear()
-      ..addAll(data.aisleMemory);
-    if (_activeListId == null && _lists.isNotEmpty) {
-      _activeListId = _lists.first.id;
+      ..addAll(data.aisleMemory)
+      ..addAll(earlyMemory);
+
+    for (final ShoppingList list in early) {
+      final int storedActive =
+          _lists.indexWhere((candidate) => candidate.id == _activeListId);
+      if (_implicitListIds.contains(list.id) && storedActive >= 0) {
+        var merged = _lists[storedActive];
+        for (final ShoppingItem item in list.items) {
+          merged = merged.addOrMerge(item, now: _clock());
+        }
+        _lists[storedActive] = merged;
+        continue;
+      }
+      _lists.removeWhere((candidate) => candidate.id == list.id);
+      _lists.add(list);
+      if (list.id == earlyActive) _activeListId = list.id;
     }
+    for (final Recipe recipe in earlyRecipes) {
+      _recipes.removeWhere((candidate) => candidate.id == recipe.id);
+      _recipes.add(recipe);
+    }
+    _activeListId ??= _lists.isEmpty ? null : _lists.first.id;
+    _implicitListIds.clear();
+    _prefsSetBeforeLoad.clear();
+
     _loaded = true;
-    notifyListeners();
+    _notify();
+    if (_dirty) _scheduleSave();
   }
 
   ShoppingList createList(String name, {String? id}) {
@@ -119,7 +223,7 @@ class ShoppingController extends ChangeNotifier {
     final trimmed = name.trim();
     final list = ShoppingList(
       id: id ?? _newId('list'),
-      name: trimmed.isEmpty ? 'Shopping List' : trimmed,
+      name: trimmed.isEmpty ? defaultListName : trimmed,
       items: const [],
       createdAt: now,
       updatedAt: now,
@@ -286,6 +390,16 @@ class ShoppingController extends ChangeNotifier {
     final itemIndex = list.items.indexWhere((entry) => entry.id == itemId);
     if (itemIndex < 0 || _hasChildren(list, itemId)) return false;
     return _precedingTopLevel(list, itemIndex, item.aisle) != null;
+  }
+
+  /// The id of the row [indentItem] would place [itemId] under, or null when
+  /// it cannot be indented. Lets an editor stage the change until Save.
+  String? indentTargetFor(String listId, String itemId) {
+    if (!canIndent(listId, itemId)) return null;
+    final list = listById(listId)!;
+    final item = list.itemById(itemId)!;
+    final itemIndex = list.items.indexWhere((entry) => entry.id == itemId);
+    return _precedingTopLevel(list, itemIndex, item.aisle)?.id;
   }
 
   /// Whether [outdentItem] would change anything for [itemId].
@@ -462,16 +576,20 @@ class ShoppingController extends ChangeNotifier {
         list.items.indexWhere((candidate) => candidate.id == item.id);
     if (itemIndex < 0) return;
     final items = List<ShoppingItem>.of(list.items);
+    final ShoppingItem previous = items[itemIndex];
     items[itemIndex] = item;
-    // Remember a deliberate aisle choice so the next add of the same name skips
-    // the parser's guess. Setting the aisle back to the guessed value forgets
-    // the override. Frozen is never recorded here from the quick-add toggle
-    // because that path does not go through updateItem.
-    final String key = item.normalizedName;
-    if (item.aisle == IngredientParser.guessAisle(item.name)) {
-      _aisleMemory.remove(key);
-    } else {
-      _aisleMemory[key] = item.aisle;
+    // Remember an aisle only when the user actually changed it, so the next
+    // add of the same name skips the parser's guess. An item that merely kept
+    // an aisle it already had — a one-off Frozen from the quick-add toggle,
+    // say — is never learned by editing its name or amount. Setting the aisle
+    // back to the guessed value forgets the override.
+    if (item.aisle != previous.aisle) {
+      final String key = item.normalizedName;
+      if (item.aisle == IngredientParser.guessAisle(item.name)) {
+        _aisleMemory.remove(key);
+      } else {
+        _aisleMemory[key] = item.aisle;
+      }
     }
     _lists[index] = list.copyWith(items: items, updatedAt: _clock());
     _afterMutation();
@@ -662,6 +780,34 @@ class ShoppingController extends ChangeNotifier {
     return recipe;
   }
 
+  /// Renames [recipeId]; an empty name keeps the current title.
+  void renameRecipe(String recipeId, String title) {
+    final index = _recipes.indexWhere((recipe) => recipe.id == recipeId);
+    if (index < 0) return;
+    final trimmed = title.trim();
+    if (trimmed.isEmpty || trimmed == _recipes[index].title) return;
+    _recipes[index] = _recipes[index].copyWith(title: trimmed);
+    _afterMutation();
+  }
+
+  /// Removes [recipeId] and returns a token for [restoreRecipe], or null when
+  /// there is no such recipe.
+  RemovedRecipe? removeRecipe(String recipeId) {
+    final index = _recipes.indexWhere((recipe) => recipe.id == recipeId);
+    if (index < 0) return null;
+    final Recipe removed = _recipes.removeAt(index);
+    if (_pendingRecipeId == recipeId) _pendingRecipeId = null;
+    _afterMutation();
+    return RemovedRecipe(recipe: removed, index: index);
+  }
+
+  /// Puts a removed recipe back at its original position, for an undo.
+  void restoreRecipe(RemovedRecipe removed) {
+    if (recipeById(removed.recipe.id) != null) return;
+    _recipes.insert(removed.index.clamp(0, _recipes.length), removed.recipe);
+    _afterMutation();
+  }
+
   void setRecipeServings(String recipeId, int servings) {
     if (servings < 1) return;
     final index = _recipes.indexWhere((recipe) => recipe.id == recipeId);
@@ -694,39 +840,45 @@ class ShoppingController extends ChangeNotifier {
     _afterMutation();
   }
 
-  /// Adds the selected lines of [document] to the active list.
+  /// Commits the selected lines of [document].
   ///
-  /// A recipe document additionally registers a [Recipe] from the same
-  /// selection, using its detected servings as both the base and current
-  /// serving count.
-  void importParsedDocument(ParsedDocument document, List<int> selectedIndices) {
+  /// A recipe document is saved as a [Recipe] only — its detected servings
+  /// become both the base and current count — and nothing is added to a list
+  /// yet, so the user can scale it in the recipe pane and add it once. The
+  /// saved recipe is returned and offered through [pendingRecipeId]. A plain
+  /// list document adds its lines to the active list and returns null.
+  Recipe? importParsedDocument(
+    ParsedDocument document,
+    List<int> selectedIndices,
+  ) {
     final selected = <ParsedIngredient>[];
     for (final index in selectedIndices) {
       if (index >= 0 && index < document.items.length) {
         selected.add(document.items[index]);
       }
     }
-    if (selected.isEmpty) return;
+    if (selected.isEmpty) return null;
 
-    if (document.isRecipe && document.title != null) {
+    if (document.isRecipe) {
       final servings = document.servings ?? 1;
-      addRecipe(
-        Recipe(
-          id: _newId('recipe'),
-          title: document.title!,
-          baseServings: servings,
-          targetServings: servings,
-          ingredients: selected
-              .map(
-                (parsed) => Ingredient(
-                  name: parsed.name,
-                  quantity: parsed.quantity,
-                  note: parsed.note,
-                ),
-              )
-              .toList(),
-        ),
+      final title = document.title?.trim();
+      final recipe = Recipe(
+        id: _newId('recipe'),
+        title: title == null || title.isEmpty ? 'Recipe' : title,
+        baseServings: servings,
+        targetServings: servings,
+        ingredients: selected
+            .map(
+              (parsed) => Ingredient(
+                name: parsed.name,
+                quantity: parsed.quantity,
+                note: parsed.note,
+              ),
+            )
+            .toList(),
       );
+      _pendingRecipeId = recipe.id;
+      return addRecipe(recipe);
     }
 
     final list = _activeOrCreate();
@@ -746,11 +898,13 @@ class ShoppingController extends ChangeNotifier {
     }
     _lists[index] = updated;
     _afterMutation();
+    return null;
   }
 
   void setPreferImperial(bool value) {
     if (_preferImperial == value) return;
     _preferImperial = value;
+    if (!_loaded) _prefsSetBeforeLoad.add('preferImperial');
     _afterMutation();
   }
 
@@ -759,20 +913,43 @@ class ShoppingController extends ChangeNotifier {
   void setStoreMode(bool value) {
     if (_storeMode == value) return;
     _storeMode = value;
+    if (!_loaded) _prefsSetBeforeLoad.add('storeMode');
     _afterMutation();
   }
 
-  /// Forces any pending debounced save to complete now.
+  /// Records that the store-mode suggestion was dismissed, so it stays gone.
+  void dismissStoreModeHint() {
+    if (_storeModeHintDismissed) return;
+    _storeModeHintDismissed = true;
+    if (!_loaded) _prefsSetBeforeLoad.add('storeModeHintDismissed');
+    _afterMutation();
+  }
+
+  /// Writes any pending changes now, skipping the debounce.
+  ///
+  /// When a background write is already in flight the current state is
+  /// written again rather than waiting on it; the store discards whichever of
+  /// two overlapping writes is older. Waits for [load] first, because nothing
+  /// is written before the stored state has been read. Never throws.
   Future<void> flush() async {
     _saveTimer?.cancel();
     _saveTimer = null;
-    await _saveNow();
+    if (!_loaded) {
+      final Future<void>? loading = _loadFuture;
+      if (loading == null) return;
+      await loading;
+      if (!_loaded) return;
+    }
+    if (!_dirty && _inFlight == null) return;
+    await _write();
   }
 
   ShoppingList _activeOrCreate() {
     final existing = activeList;
     if (existing != null) return existing;
-    return createList('Shopping List');
+    final created = createList(defaultListName);
+    if (!_loaded) _implicitListIds.add(created.id);
+    return created;
   }
 
   String _newId(String prefix) {
@@ -780,36 +957,70 @@ class ShoppingController extends ChangeNotifier {
     return '${prefix}_${_clock().microsecondsSinceEpoch}_$_idCounter';
   }
 
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
   void _afterMutation() {
-    notifyListeners();
+    _notify();
     _scheduleSave();
   }
 
   void _scheduleSave() {
+    _dirty = true;
+    if (_disposed) return;
     _saveTimer?.cancel();
     _saveTimer = Timer(const Duration(milliseconds: 250), () {
       _saveTimer = null;
-      unawaited(_saveNow());
+      _startBackgroundSave();
     });
   }
 
-  Future<void> _saveNow() {
-    return _store.save(
-      ShoppingStoreData(
-        lists: _lists,
-        recipes: _recipes,
-        activeListId: _activeListId,
-        preferImperial: _preferImperial,
-        aisleMemory: _aisleMemory,
-        storeMode: _storeMode,
-      ),
+  /// Starts a write unless one is already running; the running one picks the
+  /// dirty flag up again when it finishes.
+  void _startBackgroundSave() {
+    if (!_loaded || !_dirty || _inFlight != null) return;
+    final Future<void> write = _write();
+    _inFlight = write;
+    write.whenComplete(() {
+      if (!identical(_inFlight, write)) return;
+      _inFlight = null;
+      if (_dirty && !_lastSaveFailed && _saveTimer == null && !_disposed) {
+        _startBackgroundSave();
+      }
+    });
+  }
+
+  /// Hands the current state to the store. Errors are logged, never thrown,
+  /// and leave the state dirty so the next mutation or [flush] retries.
+  Future<void> _write() async {
+    _dirty = false;
+    final ShoppingStoreData snapshot = ShoppingStoreData(
+      lists: List<ShoppingList>.of(_lists),
+      recipes: List<Recipe>.of(_recipes),
+      activeListId: _activeListId,
+      preferImperial: _preferImperial,
+      aisleMemory: Map<String, String>.of(_aisleMemory),
+      storeMode: _storeMode,
+      storeModeHintDismissed: _storeModeHintDismissed,
     );
+    try {
+      await _store.save(snapshot);
+      _lastSaveFailed = false;
+    } catch (error, stack) {
+      _dirty = true;
+      _lastSaveFailed = true;
+      debugPrint('Shopping store save failed: $error\n$stack');
+    }
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _saveTimer?.cancel();
     _saveTimer = null;
+    // Write what the debounce was still holding instead of dropping it.
+    if (_dirty) unawaited(flush());
     super.dispose();
   }
 }

@@ -223,8 +223,15 @@ class GroceryActionButton extends StatelessWidget {
   }
 }
 
+/// Bottom clearance for grocery snack bars: the quick-add capsule (52) plus
+/// its padding (8 + 12) and a gap, so an undo never covers the add field.
+const double _snackBarBottomClearance = 88;
+
 /// Shows a snack bar through the nearest messenger, replacing any current one
 /// so a rapid sequence of grocery actions never queues stale messages.
+///
+/// It floats above the quick-add capsule rather than sitting over it, so the
+/// user can keep typing while an undo is on offer.
 void showGrocerySnackBar(
   BuildContext context,
   String message, {
@@ -238,6 +245,13 @@ void showGrocerySnackBar(
     ..showSnackBar(
       SnackBar(
         content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(
+          LuminousHomeTheme.space16,
+          0,
+          LuminousHomeTheme.space16,
+          _snackBarBottomClearance,
+        ),
         action: actionLabel == null || onAction == null
             ? null
             : SnackBarAction(

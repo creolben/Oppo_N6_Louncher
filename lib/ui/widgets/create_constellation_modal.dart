@@ -133,11 +133,10 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                       child: Icon(_selectedIcon, color: _selectedColor, size: 22),
                     ),
                     const SizedBox(width: 10),
-                    const Text(
-                      'Create New Constellation',
-                      style: TextStyle(
+                    Text(
+                      'New group',
+                      style: LuminousHomeTheme.headline.copyWith(
                         color: LuminousHomeTheme.white,
-                        fontSize: 18,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -162,10 +161,13 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                   child: TextField(
                     controller: _nameController,
                     onChanged: (_) => setState(() {}),
-                    style: const TextStyle(color: LuminousHomeTheme.white, fontSize: 14),
+                    style: LuminousHomeTheme.body.copyWith(color: LuminousHomeTheme.white),
                     decoration: InputDecoration(
-                      hintText: 'Constellation Name (e.g. Crypto, Reading...)',
-                      hintStyle: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 13),
+                      hintText: 'Group name (e.g. Reading, Travel)',
+                      hintStyle: LuminousHomeTheme.label.copyWith(
+                        color: LuminousHomeTheme.white38,
+                        fontWeight: FontWeight.w400,
+                      ),
                       prefixIcon: Icon(Icons.drive_file_rename_outline_rounded, color: _selectedColor, size: 20),
                       border: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(vertical: 12),
@@ -250,10 +252,16 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                   ),
                   child: TextField(
                     onChanged: (q) => setState(() => _searchQuery = q),
-                    style: const TextStyle(color: LuminousHomeTheme.white, fontSize: 13),
+                    style: LuminousHomeTheme.label.copyWith(
+                      color: LuminousHomeTheme.white,
+                      fontWeight: FontWeight.w400,
+                    ),
                     decoration: InputDecoration(
-                      hintText: 'Select stars to assign (${_selectedPackages.length}/8)...',
-                      hintStyle: const TextStyle(color: LuminousHomeTheme.white38, fontSize: 12),
+                      hintText: 'Choose apps (${_selectedPackages.length}/8)',
+                      hintStyle: LuminousHomeTheme.chipLabel.copyWith(
+                        color: LuminousHomeTheme.white38,
+                        fontWeight: FontWeight.w400,
+                      ),
                       prefixIcon: const Icon(Icons.search_rounded, color: LuminousHomeTheme.white54, size: 18),
                       border: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(vertical: 10),
@@ -266,11 +274,13 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                 // Selectable Apps List
                 Expanded(
                   child: ListView.builder(
-                    physics: const BouncingScrollPhysics(),
+                    physics: const ClampingScrollPhysics(),
                     itemCount: filteredApps.length,
                     itemBuilder: (context, index) {
                       final app = filteredApps[index];
                       final isSelected = _selectedPackages.contains(app.packageName);
+                      final iconCacheExtent =
+                          (32 * MediaQuery.devicePixelRatioOf(context)).round();
 
                       return Container(
                         margin: const EdgeInsets.only(bottom: 4),
@@ -296,13 +306,22 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(6),
                               child: app.iconBytes != null
-                                  ? Image.memory(app.iconBytes!, fit: BoxFit.cover)
+                                  ? Image.memory(
+                                      app.iconBytes!,
+                                      fit: BoxFit.cover,
+                                      cacheWidth: iconCacheExtent,
+                                      cacheHeight: iconCacheExtent,
+                                      gaplessPlayback: true,
+                                    )
                                   : Icon(app.fallbackIcon, color: app.accentColor, size: 18),
                             ),
                           ),
                           title: Text(
                             app.label,
-                            style: const TextStyle(color: LuminousHomeTheme.white, fontSize: 13, fontWeight: FontWeight.w500),
+                            style: LuminousHomeTheme.label.copyWith(
+                              color: LuminousHomeTheme.white,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                           trailing: Icon(
                             isSelected ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
@@ -317,7 +336,7 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                                 if (_selectedPackages.length >= 8) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content: Text('Constellations hold up to 8 stars to maintain clean orbital spacing.'),
+                                      content: Text('A group holds up to 8 apps.'),
                                       duration: Duration(seconds: 2),
                                       backgroundColor: LuminousHomeTheme.panelRaised,
                                     ),
@@ -336,7 +355,7 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
 
                 const SizedBox(height: 10),
 
-                // Create Constellation Button
+                // Create group button
                 SizedBox(
                   height: 46,
                   child: ElevatedButton(
@@ -347,8 +366,15 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                     ),
                     onPressed: _nameController.text.trim().isNotEmpty ? _createConstellation : null,
                     child: Text(
-                      'Launch ${_nameController.text.trim().isNotEmpty ? _nameController.text.trim() : "Constellation"} (${_selectedPackages.length}/8 stars)',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      _nameController.text.trim().isNotEmpty
+                          ? 'Create ${_nameController.text.trim()}'
+                          : 'Create group',
+                      // Size from the type scale only: the button's own
+                      // foreground supplies the enabled and disabled colours.
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: LuminousHomeTheme.body.fontSize,
+                      ),
                     ),
                   ),
                 ),
@@ -361,5 +387,3 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
   }
 }
 
-/// Backwards compatibility alias
-typedef CreateGalaxyModal = CreateConstellationModal;

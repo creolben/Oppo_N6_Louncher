@@ -109,9 +109,27 @@ class IngredientParser {
       final unitResult = _matchUnit(rest);
       unit = unitResult.$1;
       rest = unitResult.$2;
+
+      // A pack size followed by its packaging ("2 x 400g cans tomatoes",
+      // "500 g bag rice") counts the packs and keeps the size as a note.
+      if (unit != null && unit.dimension != Dimension.count) {
+        final packResult = _matchUnit(rest);
+        final Unit? pack = packResult.$1;
+        if (pack != null &&
+            pack.dimension == Dimension.count &&
+            !pack.convertible &&
+            packResult.$2.trim().isNotEmpty) {
+          notes.insert(0, Quantity(number.$1, unit).formatAsEntered());
+          amount = multiplier;
+          unit = pack;
+          rest = packResult.$2;
+        }
+      }
     }
 
-    final name = rest.trim().isEmpty ? text : rest.trim();
+    // A bare number or amount ("2", "2 kg") names nothing, so it yields an
+    // empty name that callers reject instead of an item called "2".
+    final name = rest.trim();
     final quantity = amount == null ? null : Quantity(amount, unit ?? Unit.piece);
     final note = notes.isEmpty ? null : notes.join('; ');
 
@@ -121,6 +139,16 @@ class IngredientParser {
       note: note,
       aisle: guessAisle(name.isEmpty ? original : name),
     );
+  }
+
+  /// Parses [text] as a whole amount: an integer or decimal (dot or comma), a
+  /// fraction (`1/2`), a mixed number (`1 1/2`), a unicode fraction (`½`,
+  /// `1½`), a range (upper bound wins) or a count word. Returns null when
+  /// anything but the amount is left over, or when nothing matched.
+  static double? parseAmount(String text) {
+    final match = _matchNumber(text.trim());
+    if (match == null || match.$2.trim().isNotEmpty) return null;
+    return match.$1;
   }
 
   static const Map<String, double> _countWords = {
@@ -171,7 +199,7 @@ class IngredientParser {
   }
 
   /// Returns `(amount, rest)` for a leading number, or null when there is none.
-  (double, String)? _matchNumber(String text) {
+  static (double, String)? _matchNumber(String text) {
     final value = text.trimLeft();
 
     // Ranges take the upper bound.
@@ -215,10 +243,17 @@ class IngredientParser {
       return (numerator / denominator, value.substring(fraction.end).trimLeft());
     }
 
-    // Decimal or integer, with either dot or comma.
+    // Decimal or integer, with either dot or comma. Letters glued to the
+    // number must be a unit ("400g"); otherwise the digits belong to the name
+    // ("7up").
     final decimal = RegExp(r'^(\d+(?:[.,]\d+)?)').firstMatch(value);
     if (decimal != null) {
-      return (_toDouble(decimal.group(1)!), value.substring(decimal.end).trimLeft());
+      final String after = value.substring(decimal.end);
+      final Match? glued = RegExp(r'^[A-Za-z]+').firstMatch(after);
+      if (glued != null && Unit.tryParse(glued.group(0)!) == null) {
+        return null;
+      }
+      return (_toDouble(decimal.group(1)!), after.trimLeft());
     }
 
     // Count words.

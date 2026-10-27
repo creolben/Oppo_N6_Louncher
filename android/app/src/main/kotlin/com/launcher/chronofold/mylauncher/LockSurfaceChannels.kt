@@ -26,7 +26,10 @@ import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.Settings
 import android.view.WindowManager
@@ -91,7 +94,6 @@ class LockSurfaceChannels(
     companion object {
         const val APPS_CHANNEL = "com.launcher.chronofold/apps"
         const val HINGE_CHANNEL = "com.launcher.chronofold/hinge"
-        const val SHAKE_CHANNEL = "com.launcher.chronofold/shake"
         const val FINGERPRINT_CHANNEL = "com.launcher.chronofold/fingerprint"
         const val MEDIA_CHANNEL = "com.launcher.chronofold/media"
         const val BADGES_CHANNEL = "com.launcher.chronofold/badges"
@@ -122,7 +124,22 @@ class LockSurfaceChannels(
     private val backgroundExecutor = Executors.newSingleThreadExecutor()
     private var sensorManager: SensorManager? = null
     private var hingeSensor: Sensor? = null
-    private var accelSensor: Sensor? = null
+
+    /**
+     * The live hinge listener, held here rather than inside the stream handler
+     * so [dispose] can unregister it: an engine destroyed with its activity
+     * never calls `onCancel`, and a listener left registered keeps the sensor
+     * (and this activity) alive.
+     */
+    private var hingeListener: SensorEventListener? = null
+
+    /**
+     * Method-channel replies that wait on an asynchronous outcome (a keyguard
+     * dismissal, a delayed start). [dispose] answers every one still pending
+     * with false so a destroyed activity cannot leave a Dart future hanging.
+     */
+    private val pendingReplies = LinkedHashSet<OnceReply>()
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var fingerprintCancellation: CancellationSignal? = null
     private var fingerprintEvents: EventChannel.EventSink? = null
     private var powerManager: PowerManager? = null
@@ -211,15 +228,18 @@ class LockSurfaceChannels(
                     if (packageName != null) {
                         // Resolved only once the keyguard is dismissed and the
                         // activity is started, reporting success back to Flutter.
-                        launchApplication(packageName, activityName, sourceBounds) { success ->
-                            result.success(success)
-                        }
+                        // Answered exactly once, and with false by [dispose] if
+                        // the activity dies before the outcome arrives.
+                        launchApplication(packageName, activityName, sourceBounds, OnceReply(result))
                     } else {
                         result.error("INVALID_ARGS", "packageName is required", null)
                     }
                 }
                 "openQuickShortcut" -> {
-                    result.success(openQuickShortcut(call.argument<String>("shortcut")))
+                    // Like launchApp, the answer waits for the keyguard
+                    // dismissal and the start, so a refused unlock reports
+                    // false instead of a shortcut that never opened.
+                    openQuickShortcut(call.argument<String>("shortcut"), OnceReply(result))
                 }
                 "isKeyguardLocked" -> {
                     val keyguard = activity.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
@@ -292,8 +312,13 @@ class LockSurfaceChannels(
                 }
                 "authenticate" -> {
                     val appName = call.argument<String>("appName")
+                    var answered = false
                     authenticateUser(appName) { success, error ->
                         activity.runOnUiThread {
+                            // The negative button and the error callback can
+                            // both report one dismissal; a second reply throws.
+                            if (answered) return@runOnUiThread
+                            answered = true
                             if (success) {
                                 result.success(true)
                             } else {
@@ -326,13 +351,14 @@ class LockSurfaceChannels(
         // EventChannel for Hinge Angle Sensor
         EventChannel(messenger, HINGE_CHANNEL)
             .setStreamHandler(object : EventChannel.StreamHandler {
-                private var listener: SensorEventListener? = null
-
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
                     if (hingeSensor == null || sensorManager == null) {
                         return
                     }
-                    listener = object : SensorEventListener {
+                    // A re-listen without an intervening cancel must not stack
+                    // a second registration on the sensor.
+                    unregisterHingeListener()
+                    val listener = object : SensorEventListener {
                         override fun onSensorChanged(event: SensorEvent?) {
                             if (event != null && event.values.isNotEmpty()) {
                                 val angle = event.values[0]
@@ -342,6 +368,7 @@ class LockSurfaceChannels(
 
                         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
                     }
+                    hingeListener = listener
                     sensorManager?.registerListener(
                         listener,
                         hingeSensor,
@@ -350,8 +377,7 @@ class LockSurfaceChannels(
                 }
 
                 override fun onCancel(arguments: Any?) {
-                    listener?.let { sensorManager?.unregisterListener(it) }
-                    listener = null
+                    unregisterHingeListener()
                 }
             })
 
@@ -417,69 +443,30 @@ class LockSurfaceChannels(
                 }
             })
 
-        accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-
-        // EventChannel for Accelerometer Shake Detection
-        EventChannel(messenger, SHAKE_CHANNEL)
-            .setStreamHandler(object : EventChannel.StreamHandler {
-                private var listener: SensorEventListener? = null
-                private var lastAcceleration = SensorManager.GRAVITY_EARTH
-                private var currentAcceleration = SensorManager.GRAVITY_EARTH
-                private var shakeMagnitude = 0f
-                private var lastShakeTime = 0L
-
-                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-                    if (accelSensor == null || sensorManager == null) {
-                        return
-                    }
-                    listener = object : SensorEventListener {
-                        override fun onSensorChanged(event: SensorEvent?) {
-                            if (event != null && event.values.size >= 3) {
-                                val x = event.values[0]
-                                val y = event.values[1]
-                                val z = event.values[2]
-                                lastAcceleration = currentAcceleration
-                                currentAcceleration = kotlin.math.sqrt((x * x + y * y + z * z).toDouble()).toFloat()
-                                val delta = kotlin.math.abs(currentAcceleration - lastAcceleration)
-                                shakeMagnitude = shakeMagnitude * 0.85f + delta
-                                val now = System.currentTimeMillis()
-                                val isShake = shakeMagnitude > 9.5f && now - lastShakeTime > 500
-                                if (isShake) {
-                                    lastShakeTime = now
-                                }
-                                events?.success(mapOf(
-                                    "type" to if (isShake) "shake" else "tilt",
-                                    "magnitude" to shakeMagnitude.toDouble(),
-                                    "x" to x.toDouble(),
-                                    "y" to y.toDouble(),
-                                    "z" to z.toDouble()
-                                ))
-                            }
-                        }
-
-                        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-                    }
-                    sensorManager?.registerListener(
-                        listener,
-                        accelSensor,
-                        SensorManager.SENSOR_DELAY_UI
-                    )
-                }
-
-                override fun onCancel(arguments: Any?) {
-                    listener?.let { sensorManager?.unregisterListener(it) }
-                    listener = null
-                }
-            })
+        // No shake/accelerometer channel is registered: nothing in Dart
+        // subscribes to it (the lock panel deliberately stopped listening), and
+        // an accelerometer held at UI rate for no consumer is pure battery.
     }
 
     /** Pushes a channel event to the Dart side (e.g. `lockScreen`). */
-    fun invokeAppsMethod(method: String, arguments: Any?) {
-        appsMethodChannel.invokeMethod(method, arguments)
+    fun invokeAppsMethod(
+        method: String,
+        arguments: Any?,
+        callback: MethodChannel.Result? = null,
+    ) {
+        appsMethodChannel.invokeMethod(method, arguments, callback)
     }
 
     /** Releases everything [configure] acquired. Safe to call once. */
     fun dispose() {
+        unregisterHingeListener()
+        // Answer every reply still waiting on a dismissal or delayed start, so
+        // no Dart future outlives the activity unresolved.
+        for (reply in pendingReplies.toList()) {
+            reply(false)
+        }
+        pendingReplies.clear()
+        backgroundExecutor.shutdownNow()
         stopFingerprintScan()
         // Drop the sink so a live channel cannot outlive the activity.
         fingerprintEvents = null
@@ -489,6 +476,37 @@ class LockSurfaceChannels(
         MediaListenerService.removeSessionsMayHaveChangedListener(mediaListenerCallback)
         MediaListenerService.removeBadgeListener(badgeListener)
         appsMethodChannel.setMethodCallHandler(null)
+    }
+
+    private fun unregisterHingeListener() {
+        val listener = hingeListener
+        hingeListener = null
+        if (listener != null) {
+            sensorManager?.unregisterListener(listener)
+        }
+    }
+
+    /**
+     * A boolean method-channel reply that is sent exactly once, on the main
+     * thread. Registered in [pendingReplies] until it is answered.
+     */
+    private inner class OnceReply(private val result: MethodChannel.Result) : (Boolean) -> Unit {
+        private var answered = false
+
+        init {
+            pendingReplies.add(this)
+        }
+
+        override fun invoke(success: Boolean) {
+            if (Looper.myLooper() != Looper.getMainLooper()) {
+                mainHandler.post { invoke(success) }
+                return
+            }
+            if (answered) return
+            answered = true
+            pendingReplies.remove(this)
+            result.success(success)
+        }
     }
 
     // --- System palette ----------------------------------------------------------------
@@ -952,20 +970,27 @@ class LockSurfaceChannels(
      * chooser is not an answer to "open the camera", so this reports failure and
      * lets the caller say so instead of surprising the user.
      */
-    private fun openQuickShortcut(shortcut: String?): Boolean {
+    private fun openQuickShortcut(shortcut: String?, onStarted: (Boolean) -> Unit) {
         val intent = when (shortcut) {
             "phone" -> Intent(Intent.ACTION_DIAL)
             "camera" -> Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE)
-            else -> return false
+            else -> {
+                onStarted(false)
+                return
+            }
         }
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
 
-        val resolved = intent.resolveActivity(activity.packageManager) ?: return false
+        val resolved = intent.resolveActivity(activity.packageManager)
         // "android" is the platform's own ResolverActivity, i.e. a chooser.
-        if (resolved.packageName == "android") return false
+        if (resolved == null || resolved.packageName == "android") {
+            onStarted(false)
+            return
+        }
 
-        startWhenUnlocked(intent, null) { }
-        return true
+        // Reported only once the keyguard has been dismissed and the start
+        // accepted, exactly like launchApp.
+        startWhenUnlocked(intent, null, onStarted)
     }
 
     /**
@@ -1256,6 +1281,28 @@ class LockSurfaceChannels(
 
         val actions = playbackState?.actions ?: 0L
         val duration = metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION)
+
+        // The platform's position is true at `lastPositionUpdateTime`, which
+        // can be long before this emit (the signature throttle skips position
+        // ticks). Dart extrapolates from the moment it *receives* the payload,
+        // so the position sent must be the one true now, at emit time.
+        val emittedAt = SystemClock.elapsedRealtime()
+        var position = playbackState?.position ?: 0L
+        val updatedAt = playbackState?.lastPositionUpdateTime ?: 0L
+        if (playbackState != null &&
+            playbackState.state == PlaybackState.STATE_PLAYING &&
+            updatedAt > 0L
+        ) {
+            val elapsed = emittedAt - updatedAt
+            if (elapsed > 0L) {
+                position += (elapsed * playbackState.playbackSpeed).toLong()
+            }
+        }
+        position = if (duration != null && duration > 0L) {
+            position.coerceIn(0L, duration)
+        } else {
+            position.coerceAtLeast(0L)
+        }
         return mapOf(
             "packageName" to controllerPackage,
             "appLabel" to appLabel,
@@ -1265,8 +1312,9 @@ class LockSurfaceChannels(
             // A missing or zero duration is "unknown"; Dart must not draw a
             // progress bar against it.
             "durationMs" to duration?.takeIf { it > 0L },
-            "positionMs" to (playbackState?.position ?: 0L),
-            "positionUpdatedAtMs" to (playbackState?.lastPositionUpdateTime ?: 0L),
+            "positionMs" to position,
+            // The instant [position] is true, on the same elapsed-realtime clock.
+            "positionUpdatedAtMs" to (if (updatedAt > 0L) emittedAt else 0L),
             "speed" to (playbackState?.playbackSpeed ?: 1.0f).toDouble(),
             "state" to state,
             "canPrev" to (actions and PlaybackState.ACTION_SKIP_TO_PREVIOUS != 0L),
@@ -1592,7 +1640,15 @@ class LockSurfaceChannels(
                 }
             )
         } else {
-            callback(true, null)
+            // API 26-27 has no BiometricPrompt. A secure device must not be
+            // reported as verified when nothing verified it: fail closed. An
+            // insecure device has nothing to verify, as on the path above.
+            val keyguardManager = activity.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            if (keyguardManager != null && !keyguardManager.isDeviceSecure) {
+                callback(true, null)
+            } else {
+                callback(false, "Authentication is not supported on this Android version")
+            }
         }
     }
 }

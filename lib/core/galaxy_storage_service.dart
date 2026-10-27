@@ -27,16 +27,42 @@ class CustomConstellationConfig {
         'packageNames': packageNames,
       };
 
-  factory CustomConstellationConfig.fromJson(Map<String, dynamic> json) =>
-      CustomConstellationConfig(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        primaryColorValue:
-            json['primaryColorValue'] as int? ??
-            LuminousHomeTheme.aqua.toARGB32(),
-        emblemIconCodePoint: json['emblemIconCodePoint'] as int? ?? Icons.star_rounded.codePoint,
-        packageNames: List<String>.from(json['packageNames'] as List? ?? []),
-      );
+  /// Throws a [TypeError] when `id` or `name` is missing or not a string;
+  /// [parseList] skips such entries. Optional fields of the wrong type fall
+  /// back to their defaults, and non-string package names are dropped.
+  factory CustomConstellationConfig.fromJson(Map<String, dynamic> json) {
+    final color = json['primaryColorValue'];
+    final emblem = json['emblemIconCodePoint'];
+    final packages = json['packageNames'];
+    return CustomConstellationConfig(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      primaryColorValue:
+          color is int ? color : LuminousHomeTheme.aqua.toARGB32(),
+      emblemIconCodePoint:
+          emblem is int ? emblem : Icons.star_rounded.codePoint,
+      packageNames: packages is List
+          ? packages.whereType<String>().toList()
+          : <String>[],
+    );
+  }
+
+  /// Parses a stored constellation list, skipping any entry that cannot be
+  /// read. One malformed entry must not take down every other constellation —
+  /// or the whole app load with it.
+  static List<CustomConstellationConfig> parseList(Object? raw) {
+    if (raw is! List) return const [];
+    final parsed = <CustomConstellationConfig>[];
+    for (final entry in raw) {
+      if (entry is! Map<String, dynamic>) continue;
+      try {
+        parsed.add(CustomConstellationConfig.fromJson(entry));
+      } catch (e) {
+        debugPrint('Skipping unreadable custom constellation: $e');
+      }
+    }
+    return parsed;
+  }
 
   IconData get icon {
     switch (emblemIconCodePoint) {
@@ -81,10 +107,24 @@ typedef CustomGalaxyConfig = CustomConstellationConfig;
 class GalaxyStorageService {
   static const String _fileName = 'galaxy_settings.json';
 
+  /// Test seam: when set, the settings file lives here instead of in the
+  /// platform's files directory. Production never sets it.
+  @visibleForTesting
+  static Directory? debugStorageDirectory;
+
+  /// Tail of the save queue. Every [saveConfig] is a read-merge-write, so two
+  /// running at once could each read the same old file and the later write
+  /// would undo the earlier one. Chaining them keeps the merges ordered.
+  static Future<void> _saveQueue = Future<void>.value();
+
   static Future<File?> _getFile() async {
     try {
-      String? dirPath = await LauncherBridge.getFilesDirPath();
-      dirPath ??= '/data/user/0/com.launcher.chronofold.mylauncher/files';
+      // No platform answer (no channel, or a non-Android host) means there is
+      // nowhere safe to persist: callers skip persistence rather than guess a
+      // package path.
+      final String? dirPath =
+          debugStorageDirectory?.path ?? await LauncherBridge.getFilesDirPath();
+      if (dirPath == null) return null;
       final dir = Directory(dirPath);
       if (!dir.existsSync()) {
         dir.createSync(recursive: true);
@@ -137,7 +177,7 @@ class GalaxyStorageService {
       if (target.existsSync()) {
         await target.copy('${target.path}.pre-import');
       }
-      await target.writeAsString(content, flush: true);
+      await _writeAtomically(target, content);
       await source.delete();
       debugPrint('Galaxy settings import applied');
       return true;
@@ -154,28 +194,52 @@ class GalaxyStorageService {
     try {
       await importPendingConfig();
       final file = await _getFile();
-      if (file != null && file.existsSync()) {
-        final content = await file.readAsString();
-        return jsonDecode(content) as Map<String, dynamic>;
-      }
+      if (file != null) return await readStored(file);
     } catch (e) {
       debugPrint('Error loading galaxy storage: $e');
     }
     return {};
   }
 
-  /// Reads the stored settings file, returning an empty object when it is
-  /// missing or unreadable. Used by [saveConfig] so a write is a merge into
-  /// whatever is already on disk rather than a full replacement.
-  static Future<Map<String, dynamic>> _readExisting(File file) async {
+  /// Reads the stored settings in [file], or an empty object when there is
+  /// none.
+  ///
+  /// A file that exists but does not decode to a JSON object (a write cut
+  /// short, say) is moved aside to `<name>.corrupt.<epochMs>` before the empty
+  /// object is returned. The next save then starts from defaults, but the
+  /// damaged data survives on disk for recovery instead of being silently
+  /// overwritten. An I/O failure while reading is rethrown, so a save aborts
+  /// rather than replacing a file it could not read.
+  @visibleForTesting
+  static Future<Map<String, dynamic>> readStored(File file) async {
+    if (!file.existsSync()) return {};
+    final content = await file.readAsString();
+    Object? decoded;
     try {
-      if (!file.existsSync()) return {};
-      final decoded = jsonDecode(await file.readAsString());
-      if (decoded is Map<String, dynamic>) return decoded;
+      decoded = jsonDecode(content);
+    } on FormatException catch (e) {
+      debugPrint('Galaxy storage is not valid JSON: $e');
+    }
+    if (decoded is Map<String, dynamic>) return decoded;
+    final backup =
+        '${file.path}.corrupt.${DateTime.now().millisecondsSinceEpoch}';
+    try {
+      await file.rename(backup);
+      debugPrint('Unreadable galaxy storage moved to $backup');
     } catch (e) {
-      debugPrint('Error reading galaxy storage: $e');
+      debugPrint('Could not back up unreadable galaxy storage: $e');
+      rethrow;
     }
     return {};
+  }
+
+  /// Replaces [file] with [content] without ever leaving it half-written: the
+  /// bytes go to a sibling `.tmp` file, are flushed, and the temp file is then
+  /// renamed over the target, which is atomic on the same filesystem.
+  static Future<void> _writeAtomically(File file, String content) async {
+    final tmp = File('${file.path}.tmp');
+    await tmp.writeAsString(content, flush: true);
+    await tmp.rename(file.path);
   }
 
   /// Pure merge of the non-null arguments into [existing].
@@ -228,7 +292,38 @@ class GalaxyStorageService {
     return data;
   }
 
+  /// Merges the non-null arguments into the stored settings.
+  ///
+  /// Saves are serialised: each one runs only after every earlier save has
+  /// finished, so callers that fire saves without awaiting them cannot have
+  /// one merge undo another.
   static Future<void> saveConfig({
+    required List<String> coreAppPackageNames,
+    List<CustomConstellationConfig>? customConstellations,
+    List<CustomGalaxyConfig>? customGalaxies,
+    Map<String, List<String>>? constellationAppOverrides,
+    List<String>? hiddenPackageNames,
+    bool? nativeLauncherMode,
+    bool? doubleTapToSleep,
+    String? swipeDownAction,
+  }) {
+    final Future<void> save = _saveQueue.then(
+      (_) => _saveNow(
+        coreAppPackageNames: coreAppPackageNames,
+        customConstellations: customConstellations,
+        customGalaxies: customGalaxies,
+        constellationAppOverrides: constellationAppOverrides,
+        hiddenPackageNames: hiddenPackageNames,
+        nativeLauncherMode: nativeLauncherMode,
+        doubleTapToSleep: doubleTapToSleep,
+        swipeDownAction: swipeDownAction,
+      ),
+    );
+    _saveQueue = save;
+    return save;
+  }
+
+  static Future<void> _saveNow({
     required List<String> coreAppPackageNames,
     List<CustomConstellationConfig>? customConstellations,
     List<CustomGalaxyConfig>? customGalaxies,
@@ -241,7 +336,7 @@ class GalaxyStorageService {
     try {
       final file = await _getFile();
       if (file != null) {
-        final existing = await _readExisting(file);
+        final existing = await readStored(file);
         final data = mergeConfig(
           existing,
           coreAppPackageNames: coreAppPackageNames,
@@ -253,7 +348,7 @@ class GalaxyStorageService {
           doubleTapToSleep: doubleTapToSleep,
           swipeDownAction: swipeDownAction,
         );
-        await file.writeAsString(jsonEncode(data), flush: true);
+        await _writeAtomically(file, jsonEncode(data));
       }
     } catch (e) {
       debugPrint('Error saving galaxy storage: $e');

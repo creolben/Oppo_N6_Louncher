@@ -25,6 +25,8 @@ import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.os.UserHandle
 import android.os.VibrationAttributes
@@ -102,6 +104,13 @@ class MainActivity : FlutterActivity() {
 
     /** The Flutter result waiting on the one in-flight `pickPdf` dialog. */
     private var pendingPdfPickResult: MethodChannel.Result? = null
+
+    /**
+     * Main-looper handler for the return bridge's delayed target start. A
+     * View's `postDelayed` is dropped once the view detaches, which left the
+     * launchApp reply unanswered; this handler always runs or is removed.
+     */
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     /** Whether PDFBoxResourceLoader has been initialized for this process. */
     private var pdfBoxInitialized = false
@@ -396,8 +405,14 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         // Everything the shared surface acquired (sensors, the media session
         // callback, the apps channel handler) is released here.
+        // A start still waiting on its compositor beat is dropped; dispose()
+        // below answers its launchApp reply with false.
+        mainHandler.removeCallbacksAndMessages(null)
         lockSurface?.dispose()
         lockSurface = null
+        // An open picker dies with the activity: answer as a cancel so the
+        // Dart future resolves (it maps null to "no import").
+        pendingPdfPickResult?.success(null)
         pendingPdfPickResult = null
         pdfExecutor.shutdown()
         shortcutExecutor.shutdown()
@@ -732,6 +747,8 @@ class MainActivity : FlutterActivity() {
             true
         } catch (error: Exception) {
             android.util.Log.d(TAG, "CF_SHORTCUTS: start refused", error)
+            // Nothing was handed anywhere, so the launcher still owns the screen.
+            lockSurfaceHost.onForeignHandoffFailed()
             false
         }
     }
@@ -873,8 +890,44 @@ class MainActivity : FlutterActivity() {
         val path = source?.getStringExtra(ShareReceiverActivity.EXTRA_SHARED_PDF_PATH)
             ?: return
         source.removeExtra(ShareReceiverActivity.EXTRA_SHARED_PDF_PATH)
+        // This activity is exported, so the extra can come from any app. Only
+        // a file inside our own imports cache (where ShareReceiverActivity
+        // copies to) is ever handed to Dart.
+        if (!isInsideImportsDir(path)) {
+            android.util.Log.w(TAG, "CF_PDF: ignoring a shared PDF path outside the imports cache")
+            return
+        }
         pendingSharedPdfPath = path
-        lockSurface?.invokeAppsMethod("onSharedPdf", mapOf("path" to path))
+        lockSurface?.invokeAppsMethod(
+            "onSharedPdf",
+            mapOf("path" to path),
+            object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    // Dart's handler delivered it, so the startup pull must not
+                    // import the same file a second time.
+                    if (pendingSharedPdfPath == path) pendingSharedPdfPath = null
+                }
+
+                override fun error(code: String, message: String?, details: Any?) {
+                    // Kept for the pull.
+                }
+
+                override fun notImplemented() {
+                    // No Dart handler yet; kept for the pull.
+                }
+            },
+        )
+    }
+
+    /** Whether [path] canonically resolves inside the private imports cache. */
+    private fun isInsideImportsDir(path: String): Boolean {
+        return try {
+            val root = ShareReceiverActivity.importsDir(applicationContext).canonicalPath
+            val candidate = File(path).canonicalPath
+            candidate.startsWith(root + File.separator)
+        } catch (error: Exception) {
+            false
+        }
     }
 
     /**
@@ -910,21 +963,21 @@ class MainActivity : FlutterActivity() {
                         result.error("PDF_ENCRYPTED", "The PDF is password protected", null)
                     }
                     return@execute
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     runOnUiThread {
                         result.error("PDF_UNREADABLE", e.message, null)
                     }
                     return@execute
                 }
-                document.use { doc ->
-                    val totalPages = doc.numberOfPages
+                try {
+                    val totalPages = document.numberOfPages
                     val lastPage = minOf(totalPages, MAX_EXTRACT_PAGES)
                     val stripper = PDFTextStripper().apply {
                         sortByPosition = true
                         startPage = 1
                         endPage = lastPage
                     }
-                    val text = stripper.getText(doc)
+                    val text = stripper.getText(document)
                     val payload = mapOf(
                         "text" to text,
                         "pageCount" to totalPages,
@@ -933,8 +986,18 @@ class MainActivity : FlutterActivity() {
                     runOnUiThread {
                         result.success(payload)
                     }
+                } finally {
+                    try {
+                        document.close()
+                    } catch (closeError: Throwable) {
+                        android.util.Log.d(TAG, "CF_PDF: closing the document failed", closeError)
+                    }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable, not Exception: a hostile or huge PDF can make
+                // PDFBox throw OutOfMemoryError, which would otherwise kill the
+                // HOME process and leave the Dart future unanswered.
+                android.util.Log.w(TAG, "CF_PDF: text extraction failed", e)
                 runOnUiThread {
                     result.error("PDF_UNREADABLE", e.message, null)
                 }
@@ -988,9 +1051,17 @@ class MainActivity : FlutterActivity() {
             // Reading a potentially large stream must not block the main thread.
             pdfExecutor.execute {
                 ShareReceiverActivity.cleanupOldImports(applicationContext)
-                val path = ShareReceiverActivity.copyToImports(applicationContext, uri)
+                var tooLarge = false
+                val path = ShareReceiverActivity.copyToImports(applicationContext, uri) {
+                    tooLarge = true
+                }
                 runOnUiThread {
-                    pending?.success(path)
+                    if (path == null && tooLarge) {
+                        // Distinct from a cancel, so Dart can say why.
+                        pending?.error("PDF_TOO_LARGE", "The PDF is larger than 25 MB", null)
+                    } else {
+                        pending?.success(path)
+                    }
                 }
             }
             return
@@ -1110,6 +1181,19 @@ class MainActivity : FlutterActivity() {
     private fun postLockSurfaceNotification(intent: Intent) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             ?: return
+        // From API 34 the full-screen-intent grant is user-revocable. Without
+        // it the platform silently downgrades the prompt to a heads-up
+        // notification, which is noise rather than a lock surface; the direct
+        // start already attempted by the caller is the only path left.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            !manager.canUseFullScreenIntent()
+        ) {
+            android.util.Log.w(
+                "ChronoFold",
+                "CF_LOCK: full-screen intent not permitted; not posting lock prompt",
+            )
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 LockSurfaceChannels.LOCK_SURFACE_CHANNEL_ID,
@@ -1178,6 +1262,7 @@ class MainActivity : FlutterActivity() {
                 "Unable to open the cosmic live wallpaper chooser",
                 exception,
             )
+            lockSurfaceHost.onForeignHandoffFailed()
             false
         }
     }
@@ -1246,7 +1331,11 @@ class MainActivity : FlutterActivity() {
 
         // Allow one compositor beat for the native bridge to become the
         // launcher task's visible buffer before the target task takes over.
-        bridge.postDelayed({
+        // Posted on the main looper rather than the bridge view: a view's
+        // pending runnables are dropped when it detaches, which left the
+        // launchApp reply unanswered. onDestroy removes this runnable and the
+        // surface's dispose() answers the reply instead.
+        mainHandler.postDelayed({
             val started = lockSurface?.startActivityQuietly(intent, options) ?: false
             if (!started) {
                 hideReturnBridge()
@@ -1349,6 +1438,7 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             // An unhandled URL throws ActivityNotFoundException. Returning false
             // lets the surface report it rather than crashing the launcher.
+            lockSurfaceHost.onForeignHandoffFailed()
             false
         }
     }
@@ -1371,6 +1461,7 @@ class MainActivity : FlutterActivity() {
             startActivity(intent)
             true
         } catch (e: Exception) {
+            lockSurfaceHost.onForeignHandoffFailed()
             false
         }
     }

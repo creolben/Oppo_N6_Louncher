@@ -109,9 +109,69 @@ void main() {
     expect(loaded.lists, isEmpty);
     expect(loaded.recipes, isEmpty);
 
-    final backup = File('${filePath()}.corrupt');
-    expect(backup.existsSync(), isTrue);
+    final backups = directory
+        .listSync()
+        .where((entity) =>
+            entity.uri.pathSegments.last
+                .startsWith('${ShoppingStore.fileName}.corrupt.'))
+        .toList();
+    expect(backups, hasLength(1));
     expect(file.existsSync(), isFalse);
+
+    // A second corrupt file gets its own backup instead of overwriting.
+    file.writeAsStringSync('also broken');
+    await store.load();
+    final second = directory
+        .listSync()
+        .where((entity) =>
+            entity.uri.pathSegments.last
+                .startsWith('${ShoppingStore.fileName}.corrupt.'))
+        .toList();
+    expect(second, hasLength(2));
+  });
+
+  test('one malformed item or list does not discard the rest', () async {
+    final file = File(filePath());
+    file.writeAsStringSync('''
+{
+  "lists": [
+    {
+      "id": "l1",
+      "name": "Groceries",
+      "createdAt": "2026-01-01T12:00:00.000",
+      "updatedAt": "2026-01-01T12:00:00.000",
+      "items": [
+        {"id": "a", "name": "milk"},
+        {"id": "b", "name": "flour", "quantity": {"amount": 1, "unit": "zz"}},
+        {"name": 42}
+      ]
+    },
+    {"id": "broken"}
+  ],
+  "recipes": [{"title": 5}],
+  "storeModeHintDismissed": true
+}
+''');
+    final loaded = await store.load();
+    expect(loaded.lists, hasLength(1));
+    expect(loaded.lists.single.items.single.name, 'milk');
+    expect(loaded.recipes, isEmpty);
+    expect(loaded.storeModeHintDismissed, isTrue);
+    expect(loaded.skippedEntries, 4);
+    // The original stays in place and a copy is kept for recovery.
+    expect(file.existsSync(), isTrue);
+    expect(
+      directory.listSync().where((entity) =>
+          entity.uri.pathSegments.last.contains('.corrupt.')),
+      hasLength(1),
+    );
+  });
+
+  test('stores without newer keys load with defaults', () async {
+    File(filePath()).writeAsStringSync('{"lists": []}');
+    final loaded = await store.load();
+    expect(loaded.storeModeHintDismissed, isFalse);
+    expect(loaded.storeMode, isFalse);
   });
 
   test('a later save replaces the previous state', () async {

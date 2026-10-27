@@ -67,9 +67,11 @@ void main() {
       await tester.pump();
 
       // Check header elements
+      // The posture chip and the dock's simulator toggle are debug-only
+      // (kDebugMode); widget tests run in debug, so they are present here.
       expect(find.text('COVER'), findsOneWidget);
       expect(find.text('ESSENTIALS'), findsOneWidget);
-      expect(find.text('SECTORS'), findsOneWidget);
+      expect(find.text('GROUPS'), findsOneWidget);
 
       // Check search pill
       expect(find.text('Search apps or cosmos...'), findsOneWidget);

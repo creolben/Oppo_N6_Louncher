@@ -134,13 +134,15 @@ class Quantity {
   /// Metric mass and volume use up to two trimmed decimals (`1.5 kg`,
   /// `250 ml`). Imperial mass and volume use the nearest common recipe
   /// fraction (`1 1/2 cups`, `3/4 lb`). Count and imperial units take their
-  /// singular or plural display name, chosen from the *rendered* amount.
+  /// singular or plural display name, chosen from the *rendered* amount; a
+  /// plain [Unit.piece] count renders as the bare number.
   String format({bool preferImperial = false}) {
     final display = _displayFor(preferImperial);
     final rendered = display.unit;
     final isSymbolUnit = rendered.isMetric && rendered.dimension != Dimension.count;
     final amountText =
         isSymbolUnit ? _trimDecimal(display.amount) : _formatFraction(display.amount);
+    if (rendered == Unit.piece) return amountText;
     final suffix = isSymbolUnit
         ? rendered.symbol
         : rendered.displayName(_pluralAmount(amountText, display.amount));
@@ -152,7 +154,8 @@ class Quantity {
   ///
   /// Metric mass and volume use trimmed decimals plus the symbol (`250 g`,
   /// `1.5 kg`). Imperial and count units use the nearest common recipe fraction
-  /// plus the singular/plural name (`16 ounces`, `1 1/2 cups`, `2 boxes`). This
+  /// plus the singular/plural name (`16 ounces`, `1 1/2 cups`, `2 boxes`); a
+  /// plain [Unit.piece] count is just the number (`2`). This
   /// is what the user typed (or a merged amount in the same unit), so a list row
   /// can always show the entered unit and offer the preferred system as a
   /// secondary approximation via [approxIn].
@@ -160,6 +163,9 @@ class Quantity {
     final bool isSymbolUnit = unit.isMetric && dimension != Dimension.count;
     final String amountText =
         isSymbolUnit ? _trimDecimal(amount) : _formatFraction(amount);
+    // A plain count reads as `2 milk`, not `2 pieces milk`; the parser's
+    // default unit carries no information worth showing.
+    if (unit == Unit.piece) return amountText;
     final String suffix =
         isSymbolUnit ? unit.symbol : unit.displayName(_pluralAmount(amountText, amount));
     return '$amountText $suffix';

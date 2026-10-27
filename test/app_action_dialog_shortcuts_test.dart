@@ -71,7 +71,7 @@ void main() {
     expect(find.text('New message'), findsOneWidget);
     expect(find.text('Search messages'), findsOneWidget);
     // The launcher's own actions are still below them.
-    expect(find.text('Launch Application'), findsOneWidget);
+    expect(find.text('Open'), findsOneWidget);
     expect(find.text('App Details & Permissions'), findsOneWidget);
   });
 
@@ -103,6 +103,6 @@ void main() {
     );
 
     expect(find.byIcon(Icons.bolt_rounded), findsNothing);
-    expect(find.text('Launch Application'), findsOneWidget);
+    expect(find.text('Open'), findsOneWidget);
   });
 }

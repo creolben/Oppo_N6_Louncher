@@ -58,6 +58,17 @@ class _AppActionDialogState extends State<AppActionDialog> {
     await launcher(shortcut, sourceBounds: sourceBounds);
   }
 
+  /// Writes the engine's whole galaxy config. Static so the hide Undo can run
+  /// after this dialog has been popped and disposed.
+  static void _persist(GalaxyLayoutEngine engine) {
+    GalaxyStorageService.saveConfig(
+      coreAppPackageNames: engine.coreAppPackageNames,
+      customConstellations: engine.customConstellations,
+      constellationAppOverrides: engine.constellationAppOverrides,
+      hiddenPackageNames: engine.hiddenPackageNames,
+    );
+  }
+
   /// The tile's rectangle in global logical pixels, for the launch reveal.
   Rect? _globalRectOf(BuildContext context) {
     final renderObject = context.findRenderObject();
@@ -109,9 +120,8 @@ class _AppActionDialogState extends State<AppActionDialog> {
                 const SizedBox(height: 12),
                 Text(
                   app.label,
-                  style: const TextStyle(
+                  style: LuminousHomeTheme.headline.copyWith(
                     color: LuminousHomeTheme.white,
-                    fontSize: 18,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -120,9 +130,10 @@ class _AppActionDialogState extends State<AppActionDialog> {
                   app.packageName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
+                  style: LuminousHomeTheme.caption.copyWith(
                     color: LuminousHomeTheme.white.withOpacity(0.45),
-                    fontSize: 11.5,
+                    fontWeight: FontWeight.w400,
+                    letterSpacing: 0,
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -160,11 +171,12 @@ class _AppActionDialogState extends State<AppActionDialog> {
                   ),
                 ),
 
-                // Actions
+                // Actions. A tap on the app already launches it, but this is
+                // the dialog's only way to open the app, so it stays.
                 _actionTile(
                   context,
                   icon: Icons.launch_rounded,
-                  label: 'Launch Application',
+                  label: 'Open',
                   color: LuminousHomeTheme.accent,
                   onTap: (sourceBounds) {
                     Navigator.of(context).pop();
@@ -172,7 +184,7 @@ class _AppActionDialogState extends State<AppActionDialog> {
                   },
                 ),
 
-                // Center Constellation Pin/Unpin
+                // Essentials pin/unpin
                 if (widget.layoutEngine != null) ...[
                   Builder(builder: (context) {
                     final core = widget.layoutEngine!.constellations.firstWhere((c) => c.id == 'core');
@@ -181,9 +193,10 @@ class _AppActionDialogState extends State<AppActionDialog> {
                     return _actionTile(
                       context,
                       icon: isInCore ? Icons.star_border_rounded : Icons.star_rounded,
-                      label: isInCore ? 'Remove from Center Constellation' : 'Pin to Center Constellation',
+                      label: isInCore ? 'Remove from Essentials' : 'Add to Essentials',
                       color: LuminousHomeTheme.accentCore,
                       onTap: (_) {
+                        final messenger = ScaffoldMessenger.of(context);
                         Navigator.of(context).pop();
                         if (isInCore) {
                           widget.layoutEngine!.removeAppFromCore(app.packageName);
@@ -197,9 +210,9 @@ class _AppActionDialogState extends State<AppActionDialog> {
                         } else {
                           final success = widget.layoutEngine!.addAppToCore(app);
                           if (!success) {
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            messenger.showSnackBar(
                               const SnackBar(
-                                content: Text('Center Constellation is full (Max 8 apps). Remove an app first.'),
+                                content: Text('Essentials is full (8 apps max). Remove an app first.'),
                                 backgroundColor: LuminousHomeTheme.panelRaised,
                               ),
                             );
@@ -217,29 +230,43 @@ class _AppActionDialogState extends State<AppActionDialog> {
                     );
                   }),
 
-                  // Hide / Unhide from Galaxy
+                  // Hide / unhide. Hiding is reversible, so it is styled as a
+                  // neutral action and offers Undo rather than reading as a
+                  // destructive one.
                   Builder(builder: (context) {
-                    final isHidden = widget.layoutEngine!.hiddenPackageNames.contains(app.packageName);
+                    final engine = widget.layoutEngine!;
+                    final isHidden = engine.hiddenPackageNames.contains(app.packageName);
 
                     return _actionTile(
                       context,
                       icon: isHidden ? Icons.visibility_rounded : Icons.visibility_off_rounded,
-                      label: isHidden ? 'Unhide in Galaxy' : 'Hide from Galaxy',
-                      color: isHidden ? LuminousHomeTheme.mint : LuminousHomeTheme.danger,
+                      label: isHidden ? 'Unhide app' : 'Hide app',
+                      color: isHidden ? LuminousHomeTheme.mint : LuminousHomeTheme.textSecondary,
                       onTap: (_) {
+                        final messenger = ScaffoldMessenger.of(context);
+                        final onActionCompleted = widget.onActionCompleted;
                         Navigator.of(context).pop();
                         if (isHidden) {
-                          widget.layoutEngine!.unhideApp(app.packageName);
+                          engine.unhideApp(app.packageName);
                         } else {
-                          widget.layoutEngine!.hideApp(app.packageName);
+                          engine.hideApp(app.packageName);
                         }
-                        GalaxyStorageService.saveConfig(
-                          coreAppPackageNames: widget.layoutEngine!.coreAppPackageNames,
-                          customConstellations: widget.layoutEngine!.customConstellations,
-                          constellationAppOverrides: widget.layoutEngine!.constellationAppOverrides,
-                          hiddenPackageNames: widget.layoutEngine!.hiddenPackageNames,
+                        _persist(engine);
+                        onActionCompleted?.call();
+                        if (isHidden) return;
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text('${app.label} hidden'),
+                            action: SnackBarAction(
+                              label: 'Undo',
+                              onPressed: () {
+                                engine.unhideApp(app.packageName);
+                                _persist(engine);
+                                onActionCompleted?.call();
+                              },
+                            ),
+                          ),
                         );
-                        widget.onActionCompleted?.call();
                       },
                     );
                   }),
@@ -305,9 +332,8 @@ class _AppActionDialogState extends State<AppActionDialog> {
                         shortcut.label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: LuminousHomeTheme.body.copyWith(
                           color: LuminousHomeTheme.textPrimary,
-                          fontSize: 13.5,
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -337,6 +363,9 @@ class _AppActionDialogState extends State<AppActionDialog> {
         bytes,
         width: 24,
         height: 24,
+        cacheWidth: (24 * MediaQuery.devicePixelRatioOf(context)).round(),
+        cacheHeight: (24 * MediaQuery.devicePixelRatioOf(context)).round(),
+        gaplessPlayback: true,
         fit: BoxFit.cover,
         errorBuilder: (context, error, stackTrace) => Icon(
           Icons.bolt_rounded,
@@ -361,7 +390,7 @@ class _AppActionDialogState extends State<AppActionDialog> {
         leading: Icon(icon, color: color, size: 20),
         title: Text(
           label,
-          style: TextStyle(color: color, fontSize: 13.5, fontWeight: FontWeight.w500),
+          style: LuminousHomeTheme.body.copyWith(color: color, fontWeight: FontWeight.w500),
         ),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM)),
         onTap: () => onTap(_globalRectOf(tileContext)),

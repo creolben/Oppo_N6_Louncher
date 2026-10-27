@@ -75,23 +75,48 @@ class ShoppingList {
 
   /// Adds [item], merging it into an existing same-named compatible line.
   ///
-  /// A merge happens only when the normalized names match **and** the
-  /// quantities are compatible: two nulls, one null and one set, or two
-  /// quantities that [Quantity.tryMerge] accepts. Anything else — a different
-  /// dimension or two different packaging units — is appended instead, so
-  /// `2 boxes pasta` never folds into `500 g pasta`.
+  /// A merge into an unchecked line happens only when the normalized names
+  /// match **and** the quantities are compatible: two nulls (`milk` + `milk`
+  /// dedupes), one null and one set, or two quantities that
+  /// [Quantity.tryMerge] accepts. Anything else — a different dimension or two
+  /// different packaging units — is appended instead, so `2 boxes pasta` never
+  /// folds into `500 g pasta`.
+  ///
+  /// Re-adding a name that only exists as a *checked* line follows Keep: the
+  /// checked line is replaced in place by [item], unchecked, keeping its id, so
+  /// the item comes back to the list instead of vanishing into Done.
   ShoppingList addOrMerge(ShoppingItem item, {DateTime? now}) {
     final next = List<ShoppingItem>.of(items);
     for (var i = 0; i < next.length; i++) {
       final existing = next[i];
+      if (existing.checked) continue;
       if (existing.normalizedName != item.normalizedName) continue;
-      final mergedQuantity = _mergeQuantities(existing.quantity, item.quantity);
-      if (mergedQuantity == null) continue;
+      final merged = _mergeQuantities(existing.quantity, item.quantity);
+      if (!merged.$1) continue;
 
-      next[i] = existing.copyWith(
-        quantity: mergedQuantity,
+      next[i] = ShoppingItem(
+        id: existing.id,
+        name: existing.name,
+        quantity: merged.$2,
+        aisle: existing.aisle,
+        checked: existing.checked,
         note: existing.note ?? item.note,
         sourceRecipeId: existing.sourceRecipeId ?? item.sourceRecipeId,
+        parentId: existing.parentId,
+      );
+      return copyWith(items: next, updatedAt: now ?? DateTime.now());
+    }
+    for (var i = 0; i < next.length; i++) {
+      final existing = next[i];
+      if (!existing.checked) continue;
+      if (existing.normalizedName != item.normalizedName) continue;
+      next[i] = ShoppingItem(
+        id: existing.id,
+        name: item.name,
+        quantity: item.quantity,
+        aisle: item.aisle,
+        note: item.note,
+        sourceRecipeId: item.sourceRecipeId,
       );
       return copyWith(items: next, updatedAt: now ?? DateTime.now());
     }
@@ -99,14 +124,15 @@ class ShoppingList {
     return copyWith(items: next, updatedAt: now ?? DateTime.now());
   }
 
-  /// Returns the merged quantity, or null when the two are incompatible.
+  /// Returns `(compatible, merged)`.
   ///
-  /// A pair of nulls is compatible and yields null; one null adopts the other
-  /// side's quantity.
-  static Quantity? _mergeQuantities(Quantity? a, Quantity? b) {
-    if (a == null) return b;
-    if (b == null) return a;
-    return a.tryMerge(b);
+  /// A pair of nulls is compatible and stays null; one null adopts the other
+  /// side's quantity; two quantities merge through [Quantity.tryMerge].
+  static (bool, Quantity?) _mergeQuantities(Quantity? a, Quantity? b) {
+    if (a == null) return (true, b);
+    if (b == null) return (true, a);
+    final merged = a.tryMerge(b);
+    return (merged != null, merged);
   }
 
   ShoppingList copyWith({
@@ -139,15 +165,25 @@ class ShoppingList {
         'sortMode': sortMode.jsonValue,
       };
 
-  factory ShoppingList.fromJson(Map<String, dynamic> json) {
+  /// Parses a stored list. Each item is parsed on its own, so one malformed
+  /// item is skipped (and reported through [onSkippedItem]) instead of
+  /// discarding the whole list.
+  factory ShoppingList.fromJson(
+    Map<String, dynamic> json, {
+    void Function(Object error)? onSkippedItem,
+  }) {
+    final items = <ShoppingItem>[];
+    for (final raw in json['items'] as List? ?? const []) {
+      try {
+        items.add(ShoppingItem.fromJson(Map<String, dynamic>.from(raw as Map)));
+      } catch (error) {
+        onSkippedItem?.call(error);
+      }
+    }
     return ShoppingList(
       id: json['id'] as String,
       name: json['name'] as String,
-      items: (json['items'] as List? ?? const [])
-          .map((item) => ShoppingItem.fromJson(
-                Map<String, dynamic>.from(item as Map),
-              ))
-          .toList(),
+      items: items,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
       checkedCollapsed: json['checkedCollapsed'] as bool? ?? false,

@@ -241,14 +241,12 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                       const SizedBox(width: 7),
                       Expanded(
                         child: Text(
-                          'OPPO N6 FLEX MODE • ${widget.foldable.hingeAngle.round()}°',
+                          'Tabletop',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: LuminousHomeTheme.micro.copyWith(
                             color: LuminousHomeTheme.textSecondary,
-                            fontSize: 10,
                             fontWeight: FontWeight.w600,
-                            letterSpacing: 0.2,
                           ),
                         ),
                       ),
@@ -296,11 +294,9 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                               'Fullscreen',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
+                              style: LuminousHomeTheme.micro.copyWith(
                                 color: LuminousHomeTheme.textSecondary,
-                                fontSize: 10,
                                 fontWeight: FontWeight.w600,
-                                letterSpacing: 0.2,
                               ),
                             ),
                           ),
@@ -321,20 +317,14 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
               children: [
                 Text(
                   timeStr,
-                  style: const TextStyle(
-                    color: LuminousHomeTheme.textPrimary,
-                    fontSize: 52,
-                    fontWeight: FontWeight.w300,
+                  style: LuminousHomeTheme.display.copyWith(
                     letterSpacing: -1.5,
-                    height: 1.0,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   dateStr,
-                  style: const TextStyle(
-                    color: LuminousHomeTheme.textSecondary,
-                    fontSize: 11,
+                  style: LuminousHomeTheme.caption.copyWith(
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0.3,
                   ),
@@ -377,11 +367,11 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Search galaxy applications...',
+                        'Search apps',
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
+                        style: LuminousHomeTheme.chipLabel.copyWith(
                           color: LuminousHomeTheme.textMuted,
-                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
                         ),
                       ),
                     ),
@@ -444,11 +434,9 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                 const SizedBox(width: 4),
                 Text(
                   _isLaunchpadCollapsed ? 'Expand launchpad' : 'Collapse panel',
-                  style: const TextStyle(
+                  style: LuminousHomeTheme.micro.copyWith(
                     color: LuminousHomeTheme.textSecondary,
-                    fontSize: 10,
                     fontWeight: FontWeight.w600,
-                    letterSpacing: 0.2,
                   ),
                 ),
               ],
@@ -526,7 +514,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
         if (widget.onEditCore != null)
           _cockpitActionButton(
             icon: Icons.hub_rounded,
-            label: 'Center Hub',
+            label: 'Edit Essentials',
             color: LuminousHomeTheme.amber,
             onTap: widget.onEditCore!,
           ),
@@ -570,7 +558,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
             height: LuminousHomeTheme.minimumTouchTarget,
             child: ListView(
               scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
+              physics: const ClampingScrollPhysics(),
               children: [
                 _sectorChip(
                   label: 'Essentials',
@@ -604,7 +592,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
           // Tactile Launchpad Grid
           Expanded(
             child: GridView.builder(
-              physics: const BouncingScrollPhysics(),
+              physics: const ClampingScrollPhysics(),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
                 mainAxisSpacing: 10,
@@ -644,7 +632,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
             if (widget.onEditCore != null)
               _cockpitActionButton(
                 icon: Icons.hub_rounded,
-                label: 'Center Hub',
+                label: 'Edit Essentials',
                 color: LuminousHomeTheme.amber,
                 onTap: widget.onEditCore!,
               ),
@@ -711,11 +699,10 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
               const SizedBox(width: 6),
               Text(
                 label,
-                style: TextStyle(
+                style: LuminousHomeTheme.chipLabel.copyWith(
                   color: isSelected
                       ? LuminousHomeTheme.textPrimary
                       : LuminousHomeTheme.textSecondary,
-                  fontSize: 12,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
                 ),
               ),
@@ -740,6 +727,8 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
     );
 
     return Builder(builder: (buttonContext) {
+      final int iconCacheExtent =
+          (44 * MediaQuery.devicePixelRatioOf(buttonContext)).round();
       return Semantics(
         button: true,
         label: app.notificationCount > 0
@@ -800,6 +789,10 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                               ? Image.memory(
                                   app.iconBytes!,
                                   fit: BoxFit.cover,
+                                  // Decode at the 44dp tile's physical size.
+                                  cacheWidth: iconCacheExtent,
+                                  cacheHeight: iconCacheExtent,
+                                  gaplessPlayback: true,
                                   errorBuilder: (context, error, stackTrace) => Icon(
                                     app.fallbackIcon,
                                     color: app.accentColor,
@@ -830,9 +823,8 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: LuminousHomeTheme.chipLabel.copyWith(
                       color: LuminousHomeTheme.textPrimary,
-                      fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -874,10 +866,9 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
                 const SizedBox(height: 3),
                 Text(
                   label,
-                  style: const TextStyle(
-                    color: LuminousHomeTheme.textSecondary,
-                    fontSize: 10.5,
+                  style: LuminousHomeTheme.caption.copyWith(
                     fontWeight: FontWeight.w500,
+                    letterSpacing: 0,
                   ),
                 ),
               ],

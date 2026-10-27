@@ -62,7 +62,7 @@ class DocumentParser {
         final line = lines[i];
         if (line.isEmpty || _isPageNumber(line)) continue;
         if (_isStopHeading(line)) break;
-        items.add(parser.parseLine(line));
+        _addParsed(items, parser.parseLine(line));
       }
     } else if (isRecipe) {
       title = _titleBefore(lines, lines.length, servingsIndex);
@@ -73,12 +73,12 @@ class DocumentParser {
           continue;
         }
         if (title != null && line == title && items.isEmpty) continue;
-        items.add(parser.parseLine(line));
+        _addParsed(items, parser.parseLine(line));
       }
     } else {
       for (final line in lines) {
         if (line.isEmpty || line.length > 120 || _isPageNumber(line)) continue;
-        items.add(parser.parseLine(line));
+        _addParsed(items, parser.parseLine(line));
       }
     }
 
@@ -88,6 +88,11 @@ class DocumentParser {
       servings: servings,
       items: items,
     );
+  }
+
+  /// Keeps lines that name something; a bare number ("2") is dropped.
+  static void _addParsed(List<ParsedIngredient> items, ParsedIngredient parsed) {
+    if (parsed.name.isNotEmpty) items.add(parsed);
   }
 
   static int _sectionEnd(List<String> lines, int start) {

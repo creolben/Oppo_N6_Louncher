@@ -79,6 +79,46 @@ void main() {
     });
   });
 
+  group('IngredientParser edge cases', () {
+    test('a pack count with a pack size counts the packs', () {
+      final parsed = parser.parseLine('2 x 400g cans tomatoes');
+      expect(parsed.name, 'tomatoes');
+      expect(parsed.quantity, const Quantity(2, Unit.can));
+      expect(parsed.note, '400 g');
+    });
+
+    test('digits glued to a non-unit word stay in the name', () {
+      final parsed = parser.parseLine('7up');
+      expect(parsed.name, '7up');
+      expect(parsed.quantity, isNull);
+      expect(parser.parseLine('2 7up').name, '7up');
+      // A glued unit still parses.
+      expect(parser.parseLine('400g rice').quantity, const Quantity(400, Unit.gram));
+    });
+
+    test('a bare number names nothing', () {
+      expect(parser.parseLine('2').name, isEmpty);
+      expect(parser.parseLine('2 kg').name, isEmpty);
+    });
+
+    test('cloves are a count unit', () {
+      final parsed = parser.parseLine('2 cloves garlic');
+      expect(parsed.name, 'garlic');
+      expect(parsed.quantity, const Quantity(2, Unit.clove));
+      expect(parsed.aisle, 'Produce');
+    });
+
+    test('parseAmount accepts whole recipe amounts only', () {
+      expect(IngredientParser.parseAmount('1 1/2'), 1.5);
+      expect(IngredientParser.parseAmount('½'), 0.5);
+      expect(IngredientParser.parseAmount('1½'), 1.5);
+      expect(IngredientParser.parseAmount('3/4'), 0.75);
+      expect(IngredientParser.parseAmount('2,5'), 2.5);
+      expect(IngredientParser.parseAmount('2 cups'), isNull);
+      expect(IngredientParser.parseAmount('abc'), isNull);
+    });
+  });
+
   group('IngredientParser.guessAisle', () {
     test('maps keywords to store aisles', () {
       expect(IngredientParser.guessAisle('milk'), 'Dairy & Eggs');

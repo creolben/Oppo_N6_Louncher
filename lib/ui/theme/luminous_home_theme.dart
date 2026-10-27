@@ -468,6 +468,25 @@ abstract final class LuminousHomeTheme {
     height: 1.0,
   );
 
+  /// The folded cover's clock: a smaller sibling of [display] that fits the
+  /// narrow outer panel. Tabular figures keep it from shifting width as the
+  /// minute rolls over.
+  static TextStyle get clock => const TextStyle(
+    color: textPrimary,
+    fontSize: 38,
+    fontWeight: FontWeight.w300,
+    letterSpacing: -1.2,
+    height: 1.05,
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
+
+  /// Sheet and dialog headings.
+  static TextStyle get headline => const TextStyle(
+    color: textPrimary,
+    fontSize: 18,
+    fontWeight: FontWeight.w600,
+  );
+
   static TextStyle get title => const TextStyle(
     color: textPrimary,
     fontSize: 16,
@@ -490,6 +509,15 @@ abstract final class LuminousHomeTheme {
     color: textSecondary,
     fontSize: 11,
     fontWeight: FontWeight.w600,
+    letterSpacing: 0.2,
+  );
+
+  /// The smallest step: section overlines, counts and dense secondary
+  /// metadata. Nothing in the launcher sets type below this.
+  static TextStyle get micro => const TextStyle(
+    color: textMuted,
+    fontSize: 10,
+    fontWeight: FontWeight.w500,
     letterSpacing: 0.2,
   );
 

@@ -182,6 +182,15 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   late AnimationController _slideController;
   late Animation<double> _slideAnimation;
 
+  /// The curve behind the current [_slideAnimation]. Each unlock/snap-back
+  /// builds a new one, so the previous one is disposed when it is replaced.
+  CurvedAnimation? _slideCurve;
+
+  CurvedAnimation _newSlideCurve(Curve curve) {
+    _slideCurve?.dispose();
+    return _slideCurve = CurvedAnimation(parent: _slideController, curve: curve);
+  }
+
   /// How far the panel has been pulled up, by drag or by the unlock slide.
   ///
   /// A [ValueNotifier] on purpose: the only thing this value moves is a
@@ -597,7 +606,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
     _slideAnimation =
         Tween<double>(begin: 0.0, end: 1.0).animate(
-          CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
+          _newSlideCurve(Curves.easeOutCubic),
         )..addListener(() {
           // The slide moves one transform; pushing it through the notifier keeps
           // ~330 lines of lock screen from rebuilding per animation frame.
@@ -1459,7 +1468,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
     _slideAnimation = Tween<double>(begin: _panelOffset.value, end: 900.0)
         .animate(
-          CurvedAnimation(parent: _slideController, curve: Curves.easeInCubic),
+          _newSlideCurve(Curves.easeInCubic),
         );
     await _slideController.forward(from: 0.0);
     if (!mounted) return;
@@ -1474,7 +1483,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   void _snapBack() {
     _slideAnimation = Tween<double>(begin: _panelOffset.value, end: 0.0)
         .animate(
-          CurvedAnimation(parent: _slideController, curve: Curves.easeOutBack),
+          _newSlideCurve(Curves.easeOutBack),
         );
     _slideController.forward(from: 0.0).then((_) {
       _panelOffset.value = 0.0;
@@ -1589,9 +1598,18 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     _authResolveTimer?.cancel();
     _fingerprintSubscription?.cancel();
     _mediaSubscription?.cancel();
-    LauncherBridge.setScreenOnListener(null);
-    LauncherBridge.setUserPresentListener(null);
+    // Owner-checked: a newer panel may already have installed its own.
+    LauncherBridge.clearScreenOnListener(_onScreenOn);
+    LauncherBridge.clearUserPresentListener(_onUserPresent);
     LauncherBridge.stopFingerprintScan();
+    // A pending prompt must not leave its awaiter hanging forever. Completed
+    // directly rather than through [_resolveAuth], which would setState.
+    final pendingAuth = _authCompleter;
+    _authCompleter = null;
+    if (pendingAuth != null && !pendingAuth.isCompleted) {
+      pendingAuth.complete(AuthOutcome.denied);
+    }
+    _slideCurve?.dispose();
     _physicsTicker.dispose();
     _slideController.dispose();
     super.dispose();

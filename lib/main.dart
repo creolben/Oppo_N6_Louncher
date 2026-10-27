@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -231,10 +231,13 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     _foldable = FoldableController();
     _camera = CameraController();
     _layoutEngine = GalaxyLayoutEngine();
-    // Fixture-backed for now. Registering an HTTP provider here is the only
-    // change needed to make inline answers live; the surface is provider-blind.
+    // No live inline provider exists yet. Registering an HTTP provider here is
+    // the only change needed to make inline answers live; the surface is
+    // provider-blind. The fixture is debug-only: a release build must never
+    // stream canned "answers" to a real user, so there the coordinator runs
+    // handoff-only and the surface offers the native web-search handoff.
     _searchCoordinator = SearchCoordinator(
-      providers: [FixtureSearchProvider()],
+      providers: [if (kDebugMode) FixtureSearchProvider()],
     );
     _shoppingController = ShoppingController();
     unawaited(_shoppingController.load());
@@ -257,7 +260,9 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     });
 
     LauncherBridge.setHomeButtonListener(() {
-      if (mounted) {
+      // While the lock panel is up, Home belongs to the keyguard: the surfaces
+      // under the panel must stay exactly as the user left them.
+      if (mounted && !_isLocked) {
         if (_isSearchOpen) {
           setState(() => _isSearchOpen = false);
         }
@@ -382,8 +387,20 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     setState(() => _isShoppingOpen = false);
   }
 
+  /// Forces the shopping store's debounced save to disk now. Only once the
+  /// store has loaded, so an early flush can never overwrite saved lists with
+  /// the empty pre-load state.
+  void _flushShopping() {
+    if (_shoppingController.isLoaded) {
+      unawaited(_shoppingController.flush());
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _flushShopping();
+    }
     if (state == AppLifecycleState.resumed) {
       _checkDefaultLauncherStatus();
       if (mounted) {
@@ -418,7 +435,11 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   /// `reconcileOnMount` on the panel), so it appears only for a lock that
   /// still exists.
   void _lockForScreenOff() {
-    if (!mounted || _nativeMode) return;
+    if (!mounted) return;
+    // Persist any pending shopping edit before the device sleeps, whichever
+    // surface owns the lock.
+    _flushShopping();
+    if (_nativeMode) return;
     // Re-assert the window flag BEFORE the early-out rather than after it.
     // The flag is cleared by every lock-screen app launch, so a screen-off
     // that landed on a panel mounted by the lock buttons used to skip this
@@ -427,12 +448,22 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     // surface depending on launch history. Pushing first keeps the
     // invariant — panel mounted ⟺ overlay enabled — in Cosmic mode.
     unawaited(LauncherBridge.setLockScreenOverlayEnabled(true));
+    // The shopping surface holds FLAG_KEEP_SCREEN_ON in store mode. Release it
+    // directly: with the panel off, the frame that disposes the surface (and
+    // releases the flag itself) may not run until the next wake.
+    if (_isShoppingOpen) {
+      unawaited(LauncherBridge.setKeepScreenOn(false));
+    }
     if (_isLocked) {
+      if (_isShoppingOpen) setState(() => _isShoppingOpen = false);
       debugPrint('CF_LOCK: screen-off with panel already up');
       return;
     }
     debugPrint('CF_LOCK: overlay re-asserted for screen-off lock');
-    setState(() => _isLocked = true);
+    setState(() {
+      _isLocked = true;
+      _isShoppingOpen = false;
+    });
   }
 
   /// Locks the device through the optional accessibility service.
@@ -551,57 +582,82 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   /// the first load a broadcast only refreshes the app list.
   bool _storedConfigApplied = false;
 
+  /// Bumped per [_loadApplications] call. Package-change broadcasts can start
+  /// overlapping reloads; only the newest may apply its scan.
+  int _loadGen = 0;
+
+  /// Retries a device scan that failed before any inventory existed, so a
+  /// transient PackageManager error does not leave an empty galaxy until the
+  /// next package change. Bounded; cancelled on dispose.
+  Timer? _scanRetryTimer;
+  int _scanRetries = 0;
+  static const int _maxScanRetries = 3;
+
   Future<void> _loadApplications() async {
-    final apps = await LauncherBridge.getInstalledApps();
+    final gen = ++_loadGen;
+    final scanned = await LauncherBridge.getInstalledApps();
+    if (gen != _loadGen || !mounted) return;
+    // A failed scan on a device returns null: keep the current inventory.
+    final List<AppEntry> apps = scanned ?? _apps;
+    if (scanned == null &&
+        apps.isEmpty &&
+        _scanRetries < _maxScanRetries) {
+      _scanRetries++;
+      _scanRetryTimer?.cancel();
+      _scanRetryTimer = Timer(const Duration(seconds: 2), () {
+        if (mounted) _loadApplications();
+      });
+    }
 
     // Load persisted galaxy configuration once, on the first load only.
     if (!_storedConfigApplied) {
       _storedConfigApplied = true;
       final config = await GalaxyStorageService.loadConfig();
+      if (!mounted) return;
+      // Deliberately not generation-checked: the config is read only once, so
+      // it must be applied even if a newer reload has overtaken this one.
       if (config.isNotEmpty) {
-        final customList =
-            (config['customConstellations'] ?? config['customGalaxies']) as List?;
-        if (customList != null) {
-          for (final raw in customList) {
-            if (raw is Map<String, dynamic>) {
-              final customConfig = CustomConstellationConfig.fromJson(raw);
-              _layoutEngine.createCustomConstellation(
-                id: customConfig.id,
-                name: customConfig.name,
-                primaryColor: Color(customConfig.primaryColorValue),
-                emblemIcon: customConfig.icon,
-                packageNames: customConfig.packageNames,
-              );
-            }
-          }
-        }
-        if (config.containsKey('coreAppPackageNames') &&
-            config['coreAppPackageNames'] is List) {
-          final corePkgs = List<String>.from(
-            config['coreAppPackageNames'] as List,
+        // Every read here tolerates a malformed value: a single bad entry in
+        // the settings file used to throw out of this load and leave the
+        // launcher on its spinner for good.
+        final customList = CustomConstellationConfig.parseList(
+          config['customConstellations'] ?? config['customGalaxies'],
+        );
+        for (final customConfig in customList) {
+          _layoutEngine.createCustomConstellation(
+            id: customConfig.id,
+            name: customConfig.name,
+            primaryColor: Color(customConfig.primaryColorValue),
+            emblemIcon: customConfig.icon,
+            packageNames: customConfig.packageNames,
           );
-          _layoutEngine.setCorePackageNames(corePkgs);
         }
-        if (config.containsKey('constellationAppOverrides') &&
-            config['constellationAppOverrides'] is Map) {
-          final rawOverrides =
-              config['constellationAppOverrides'] as Map<String, dynamic>;
+        final rawCore = config['coreAppPackageNames'];
+        if (rawCore is List) {
+          _layoutEngine.setCorePackageNames(
+            rawCore.whereType<String>().toList(),
+          );
+        }
+        final rawOverrides = config['constellationAppOverrides'];
+        if (rawOverrides is Map<String, dynamic>) {
           for (final entry in rawOverrides.entries) {
-            if (entry.value is List) {
+            final value = entry.value;
+            if (value is List) {
               _layoutEngine.constellationAppOverrides[entry.key] =
-                  List<String>.from(entry.value as List);
+                  value.whereType<String>().toList();
             }
           }
         }
-        if (config.containsKey('hiddenPackageNames') &&
-            config['hiddenPackageNames'] is List) {
-          final hiddenPkgs = List<String>.from(
-            config['hiddenPackageNames'] as List,
+        final rawHidden = config['hiddenPackageNames'];
+        if (rawHidden is List) {
+          _layoutEngine.setHiddenPackageNames(
+            rawHidden.whereType<String>().toList(),
           );
-          _layoutEngine.setHiddenPackageNames(hiddenPkgs);
         }
-        _nativeMode = config['nativeLauncherMode'] as bool? ?? false;
-        _doubleTapToSleep = config['doubleTapToSleep'] as bool? ?? false;
+        final rawNative = config['nativeLauncherMode'];
+        _nativeMode = rawNative is bool ? rawNative : false;
+        final rawSleep = config['doubleTapToSleep'];
+        _doubleTapToSleep = rawSleep is bool ? rawSleep : false;
         _swipeDownAction = SwipeDownAction.normalise(
           config['swipeDownAction'],
         );
@@ -644,6 +700,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       // happened to start with.
       await LauncherBridge.setLockScreenOverlayEnabled(!_nativeMode);
     }
+    if (gen != _loadGen || !mounted) return;
 
     _layoutEngine.assignApps(apps);
     if (mounted) {
@@ -716,6 +773,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     await showImportReviewSheet(
       context,
       document: document,
+      preferImperial: _shoppingController.preferImperial,
       onConfirm: (List<int> indices) =>
           _shoppingController.importParsedDocument(document, indices),
     );
@@ -785,6 +843,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _scanRetryTimer?.cancel();
     _badgeController.removeListener(_onBadgeCountsChanged);
     _badgeController.dispose();
     _foldable.dispose();
@@ -802,6 +861,9 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
+        // While the lock panel is up Back is consumed and does nothing: it
+        // must not close search or shopping underneath the lock.
+        if (_isLocked) return;
         // Back is consumed by the topmost surface first. The shopping surface
         // sits above the comet web-search surface and app search, so it must
         // close before them; otherwise Back recenters the galaxy while the
@@ -977,8 +1039,14 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                       ),
 
                       // Fullscreen Search HUD & Categorized Celestial Library
+                      // Every overlay is keyed. Unkeyed, closing one shifted
+                      // the later siblings into its element slot, so a mounted
+                      // lock panel was rebuilt as a fresh state — and the old
+                      // state's dispose then cleared the new one's unlock
+                      // listeners, stranding the panel after an unlock.
                       if (_isSearchOpen)
                         Positioned.fill(
+                          key: const ValueKey('overlay_search'),
                           child: SearchOverlay(
                             allApps: _apps,
                             camera: _camera,
@@ -995,6 +1063,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                       // Comet Web Search Surface
                       if (_isCometSearchOpen)
                         Positioned.fill(
+                          key: const ValueKey('overlay_comet'),
                           child: CometSearchSurface(
                             key: ValueKey('comet_${_cometInitialQuery ?? ''}'),
                             coordinator: _searchCoordinator,
@@ -1006,6 +1075,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                       // Shopping List Surface
                       if (_isShoppingOpen)
                         Positioned.fill(
+                          key: const ValueKey('overlay_shopping'),
                           child: ShoppingSurface(
                             controller: _shoppingController,
                             foldable: _foldable,
@@ -1016,6 +1086,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                       // Celestial Foldable Lock Screen
                       if (_isLocked)
                         Positioned.fill(
+                          key: const ValueKey('overlay_lock'),
                           child: CosmicLockScreen(
                             foldable: _foldable,
                             apps: _apps,
@@ -1157,11 +1228,11 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                     borderRadius: BorderRadius.circular(
                       LuminousHomeTheme.controlRadius + 10,
                     ),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(
-                        sigmaX: LuminousHomeTheme.glassBlur,
-                        sigmaY: LuminousHomeTheme.glassBlur,
-                      ),
+                    // An opaque fill, not a BackdropFilter: the galaxy under
+                    // the header repaints every frame and would re-run the
+                    // blur on each one (same reasoning as the dock).
+                    child: ColoredBox(
+                      color: LuminousHomeTheme.glassOpaque,
                       child: DecoratedBox(
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(

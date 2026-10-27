@@ -177,6 +177,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _focusNode.requestFocus();
     });
   }
@@ -386,7 +387,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
               CometOrb(size: 18),
               SizedBox(width: 10),
               Text(
-                'Not in this galaxy — search the cosmos',
+                'Not on this phone — search the web',
                 style: TextStyle(
                   color: LuminousHomeTheme.emberLight,
                   fontSize: 13,
@@ -528,7 +529,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
                   return ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
                     scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
+                    physics: const ClampingScrollPhysics(),
                     itemCount: categories.length,
                     separatorBuilder: (_, _) => const SizedBox(width: 8),
                     itemBuilder: (context, index) {
@@ -627,7 +628,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
                   children: [
                     Flexible(
                       child: Text(
-                        '${filtered.length} applications in sector',
+                        '${filtered.length} apps',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         softWrap: false,
@@ -700,7 +701,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                     Text(
                                       _filterHiddenOnly
                                           ? 'No hidden applications'
-                                          : 'No stars found in this sector',
+                                          : 'No apps here',
                                       style: TextStyle(
                                         color: LuminousHomeTheme.white
                                             .withValues(alpha: 0.45),
@@ -848,6 +849,8 @@ class _SearchOverlayState extends State<SearchOverlay> {
   }
 
   Widget _buildGridView(List<AppEntry> apps, double rightInset) {
+    final int iconCacheExtent =
+        (44 * MediaQuery.devicePixelRatioOf(context)).round();
     return GridView.builder(
       controller: _scrollController,
       padding: EdgeInsets.fromLTRB(
@@ -856,7 +859,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
         rightInset,
         _gridPadBottom,
       ),
-      physics: const BouncingScrollPhysics(),
+      physics: const ClampingScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: _gridMaxCrossExtent,
         mainAxisSpacing: _gridMainSpacing,
@@ -922,6 +925,9 @@ class _SearchOverlayState extends State<SearchOverlay> {
                                 ? Image.memory(
                                     app.iconBytes!,
                                     fit: BoxFit.cover,
+                                    cacheWidth: iconCacheExtent,
+                                    cacheHeight: iconCacheExtent,
+                                    gaplessPlayback: true,
                                     errorBuilder: (context, error, stackTrace) => Icon(
                                       app.fallbackIcon,
                                       color: app.accentColor,
@@ -970,6 +976,8 @@ class _SearchOverlayState extends State<SearchOverlay> {
   }
 
   Widget _buildListView(List<AppEntry> apps, double rightInset) {
+    final int iconCacheExtent =
+        (42 * MediaQuery.devicePixelRatioOf(context)).round();
     return ListView.builder(
       controller: _scrollController,
       padding: EdgeInsets.fromLTRB(
@@ -978,7 +986,7 @@ class _SearchOverlayState extends State<SearchOverlay> {
         rightInset,
         _gridPadBottom,
       ),
-      physics: const BouncingScrollPhysics(),
+      physics: const ClampingScrollPhysics(),
       itemCount: apps.length,
       itemBuilder: (context, index) {
         final app = apps[index];
@@ -1016,6 +1024,9 @@ class _SearchOverlayState extends State<SearchOverlay> {
                           ? Image.memory(
                               app.iconBytes!,
                               fit: BoxFit.cover,
+                              cacheWidth: iconCacheExtent,
+                              cacheHeight: iconCacheExtent,
+                              gaplessPlayback: true,
                               errorBuilder: (context, error, stackTrace) => Icon(
                                 app.fallbackIcon,
                                 color: app.accentColor,

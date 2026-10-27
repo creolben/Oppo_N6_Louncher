@@ -149,7 +149,7 @@ void main() {
 
     test('imperial uses common fractions and mixed numbers', () {
       expect(Quantity(1.5, Unit.cup).format(preferImperial: true), '1 1/2 cups');
-      expect(Quantity(0.75, Unit.cup).format(preferImperial: true), '3/4 cups');
+      expect(Quantity(0.75, Unit.cup).format(preferImperial: true), '3/4 cup');
       expect(Quantity(1, Unit.cup).format(preferImperial: true), '1 cup');
       expect(Quantity(16, Unit.ounce).format(preferImperial: true), '1 pound');
       expect(
@@ -159,7 +159,8 @@ void main() {
     });
 
     test('count units use names', () {
-      expect(Quantity(3, Unit.piece).format(), '3 pieces');
+      // The implicit piece renders as a bare number ("2 milk").
+      expect(Quantity(3, Unit.piece).format(), '3');
       expect(Quantity(1, Unit.box).format(), '1 box');
       expect(Quantity(2, Unit.dozen).format(), '2 dozen');
     });
@@ -184,7 +185,9 @@ void main() {
       expect(Quantity(16, Unit.ounce).formatAsEntered(), '16 ounces');
       expect(Quantity(1.5, Unit.cup).formatAsEntered(), '1 1/2 cups');
       expect(Quantity(2, Unit.box).formatAsEntered(), '2 boxes');
-      expect(Quantity(1, Unit.piece).formatAsEntered(), '1 piece');
+      expect(Quantity(1, Unit.piece).formatAsEntered(), '1');
+      expect(Quantity(0.5, Unit.cup).formatAsEntered(), '1/2 cup');
+      expect(Quantity(2, Unit.clove).formatAsEntered(), '2 cloves');
     });
   });
 

@@ -1,5 +1,4 @@
-import 'dart:ui';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../canvas/camera_controller.dart';
@@ -100,7 +99,8 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_showFoldControls) _buildFoldControls(context, posture, angle),
+            if (kDebugMode && _showFoldControls)
+              _buildFoldControls(context, posture, angle),
             _buildShelf(),
           ],
         ),
@@ -121,132 +121,116 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(LuminousHomeTheme.cardRadius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(
-            sigmaX: LuminousHomeTheme.glassBlur,
-            sigmaY: LuminousHomeTheme.glassBlur,
-          ),
-          child: Material(
-            color: LuminousHomeTheme.glassOpaque,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(
-                  LuminousHomeTheme.cardRadius,
-                ),
-                border: Border.all(color: LuminousHomeTheme.hairline),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
+        child: Material(
+          color: LuminousHomeTheme.glassOpaque,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(LuminousHomeTheme.cardRadius),
+              border: Border.all(color: LuminousHomeTheme.hairline),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: LuminousHomeTheme.softTint(
+                            LuminousHomeTheme.accent,
+                            0.14,
+                          ),
+                          borderRadius: BorderRadius.circular(
+                            LuminousHomeTheme.iconRadius,
+                          ),
+                        ),
+                        child: SizedBox.square(
+                          dimension: 40,
+                          child: Icon(
+                            Icons.screen_rotation_rounded,
+                            color: LuminousHomeTheme.accent,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Fold position',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: LuminousHomeTheme.label,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${_postureLabel(posture)} · ${angle.toStringAsFixed(0)}°',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: LuminousHomeTheme.caption.copyWith(
+                                color: LuminousHomeTheme.textMuted,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (widget.foldable.isSimulated) ...[
+                        const SizedBox(width: 8),
+                        FoldableSimulationChip(foldable: widget.foldable),
+                      ],
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, size: 19),
+                        color: LuminousHomeTheme.textSecondary,
+                        tooltip: 'Close fold controls',
+                        onPressed: () {
+                          setState(() => _showFoldControls = false);
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const ClampingScrollPhysics(),
+                    child: Row(
                       children: [
-                        DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: LuminousHomeTheme.softTint(
-                              LuminousHomeTheme.accent,
-                              0.14,
-                            ),
-                            borderRadius: BorderRadius.circular(
-                              LuminousHomeTheme.iconRadius,
-                            ),
-                          ),
-                          child: SizedBox.square(
-                            dimension: 40,
-                            child: Icon(
-                              Icons.screen_rotation_rounded,
-                              color: LuminousHomeTheme.accent,
-                              size: 20,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Fold position',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: LuminousHomeTheme.textPrimary,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${_postureLabel(posture)} · ${angle.toStringAsFixed(0)}°',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: LuminousHomeTheme.textMuted,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (widget.foldable.isSimulated) ...[
-                          const SizedBox(width: 8),
-                          FoldableSimulationChip(foldable: widget.foldable),
-                        ],
-                        IconButton(
-                          icon: const Icon(Icons.close_rounded, size: 19),
-                          color: LuminousHomeTheme.textSecondary,
-                          tooltip: 'Close fold controls',
-                          onPressed: () {
-                            setState(() => _showFoldControls = false);
-                          },
-                        ),
+                        _presetButton('Cover · 0°', DevicePosture.folded),
+                        const SizedBox(width: 8),
+                        _presetButton('Tabletop · 90°', DevicePosture.tabletop),
+                        const SizedBox(width: 8),
+                        _presetButton('Main · 180°', DevicePosture.flat),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      physics: const BouncingScrollPhysics(),
-                      child: Row(
-                        children: [
-                          _presetButton('Cover · 0°', DevicePosture.folded),
-                          const SizedBox(width: 8),
-                          _presetButton(
-                            'Tabletop · 90°',
-                            DevicePosture.tabletop,
-                          ),
-                          const SizedBox(width: 8),
-                          _presetButton('Main · 180°', DevicePosture.flat),
-                        ],
+                  ),
+                  const SizedBox(height: 2),
+                  SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      activeTrackColor: LuminousHomeTheme.accent,
+                      inactiveTrackColor: LuminousHomeTheme.hairlineStrong,
+                      thumbColor: LuminousHomeTheme.textPrimary,
+                      overlayColor: LuminousHomeTheme.softTint(
+                        LuminousHomeTheme.accent,
+                        0.16,
                       ),
+                      trackHeight: 3,
                     ),
-                    const SizedBox(height: 2),
-                    SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        activeTrackColor: LuminousHomeTheme.accent,
-                        inactiveTrackColor: LuminousHomeTheme.hairlineStrong,
-                        thumbColor: LuminousHomeTheme.textPrimary,
-                        overlayColor: LuminousHomeTheme.softTint(
-                          LuminousHomeTheme.accent,
-                          0.16,
-                        ),
-                        trackHeight: 3,
-                      ),
-                      child: Slider(
-                        value: angle,
-                        min: 0,
-                        max: 180,
-                        semanticFormatterCallback: (value) {
-                          return '${value.round()} degrees';
-                        },
-                        onChanged: (value) {
-                          widget.foldable.setHingeAngle(value);
-                        },
-                      ),
+                    child: Slider(
+                      value: angle,
+                      min: 0,
+                      max: 180,
+                      semanticFormatterCallback: (value) {
+                        return '${value.round()} degrees';
+                      },
+                      onChanged: (value) {
+                        widget.foldable.setHingeAngle(value);
+                      },
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -263,128 +247,125 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(LuminousHomeTheme.dockRadius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(
-            sigmaX: LuminousHomeTheme.glassBlur,
-            sigmaY: LuminousHomeTheme.glassBlur,
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    LuminousHomeTheme.glassStrong,
-                    LuminousHomeTheme.glass,
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(
-                  LuminousHomeTheme.dockRadius,
-                ),
-                border: Border.all(color: LuminousHomeTheme.hairline),
+        // An opaque-enough fill instead of a BackdropFilter: the galaxy under
+        // the dock repaints every frame, and a sigma-24 blur over it re-ran
+        // the blur on every one of those frames. At this alpha the blurred
+        // field read as the same dark milky glass anyway.
+        child: Material(
+          color: LuminousHomeTheme.glassOpaque,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  LuminousHomeTheme.glassStrong,
+                  LuminousHomeTheme.glass,
+                ],
               ),
-              child: SizedBox(
-                height: 64,
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: Row(
-                    children: [
+              borderRadius: BorderRadius.circular(LuminousHomeTheme.dockRadius),
+              border: Border.all(color: LuminousHomeTheme.hairline),
+            ),
+            child: SizedBox(
+              height: 64,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const ClampingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Row(
+                  children: [
+                    _cockpitIconButton(
+                      icon: Icons.search_rounded,
+                      color: LuminousHomeTheme.accent,
+                      tooltip: 'Search apps',
+                      onTap: widget.onOpenSearch,
+                    ),
+                    if (widget.onOpenWebSearch != null)
+                      _cometButton(widget.onOpenWebSearch!),
+                    if (widget.onOpenShopping != null)
                       _cockpitIconButton(
-                        icon: Icons.search_rounded,
-                        color: LuminousHomeTheme.accent,
-                        tooltip: 'Search apps',
-                        onTap: widget.onOpenSearch,
+                        icon: Icons.shopping_cart_rounded,
+                        color: LuminousHomeTheme.groceryAccent,
+                        tooltip: 'Shopping list',
+                        onTap: widget.onOpenShopping!,
                       ),
-                      if (widget.onOpenWebSearch != null)
-                        _cometButton(widget.onOpenWebSearch!),
-                      if (widget.onOpenShopping != null)
-                        _cockpitIconButton(
-                          icon: Icons.shopping_cart_rounded,
-                          color: LuminousHomeTheme.groceryAccent,
-                          tooltip: 'Shopping list',
-                          onTap: widget.onOpenShopping!,
-                        ),
-                      const _ShelfDivider(),
-                      ...widget.layoutEngine.constellations.map((
-                        constellation,
-                      ) {
-                        return _constellationShortcut(
-                          label: constellation.name,
-                          color: constellation.primaryColor,
-                          icon: constellation.emblemIcon,
-                          onTap: () {
-                            _jumpToConstellation(constellation.id);
-                          },
-                          onLongPress: constellation.id == 'core'
-                              ? widget.onEditCore
-                              : null,
-                        );
-                      }),
-                      if (widget.onCreateConstellation != null ||
-                          widget.onCreateGalaxy != null)
-                        _cockpitIconButton(
-                          icon: Icons.add_rounded,
-                          color: LuminousHomeTheme.accent,
-                          tooltip: 'Create constellation',
-                          emphasized: true,
-                          onTap:
-                              widget.onCreateConstellation ??
-                              widget.onCreateGalaxy!,
-                        ),
-                      const _ShelfDivider(),
-                      _cockpitIconButton(
-                        icon: Icons.filter_center_focus_rounded,
-                        color: LuminousHomeTheme.textSecondary,
-                        tooltip: 'Recenter galaxy',
+                    const _ShelfDivider(),
+                    ...widget.layoutEngine.constellations.map((constellation) {
+                      return _constellationShortcut(
+                        label: constellation.name,
+                        color: constellation.primaryColor,
+                        icon: constellation.emblemIcon,
                         onTap: () {
-                          widget.layoutEngine.collapseAllExceptCore();
-                          widget.camera.resetView();
+                          _jumpToConstellation(constellation.id);
+                        },
+                        onLongPress: constellation.id == 'core'
+                            ? widget.onEditCore
+                            : null,
+                      );
+                    }),
+                    if (widget.onCreateConstellation != null ||
+                        widget.onCreateGalaxy != null)
+                      _cockpitIconButton(
+                        icon: Icons.add_rounded,
+                        color: LuminousHomeTheme.accent,
+                        tooltip: 'Create group',
+                        emphasized: true,
+                        onTap:
+                            widget.onCreateConstellation ??
+                            widget.onCreateGalaxy!,
+                      ),
+                    const _ShelfDivider(),
+                    _cockpitIconButton(
+                      icon: Icons.filter_center_focus_rounded,
+                      color: LuminousHomeTheme.textSecondary,
+                      tooltip: 'Recenter galaxy',
+                      onTap: () {
+                        widget.layoutEngine.collapseAllExceptCore();
+                        widget.camera.resetView();
+                      },
+                    ),
+                    // Developer tooling: the posture simulator is for
+                    // exercising fold layouts without hardware, so release
+                    // builds never draw it.
+                    if (kDebugMode && !widget.foldable.isFolded)
+                      _cockpitIconButton(
+                        icon: Icons.splitscreen_rounded,
+                        color: _showFoldControls
+                            ? LuminousHomeTheme.accent
+                            : LuminousHomeTheme.textSecondary,
+                        tooltip: 'Foldable simulator',
+                        emphasized: _showFoldControls,
+                        onTap: () {
+                          setState(
+                            () => _showFoldControls = !_showFoldControls,
+                          );
                         },
                       ),
-                      if (!widget.foldable.isFolded)
-                        _cockpitIconButton(
-                          icon: Icons.splitscreen_rounded,
-                          color: _showFoldControls
-                              ? LuminousHomeTheme.accent
-                              : LuminousHomeTheme.textSecondary,
-                          tooltip: 'Foldable simulator',
-                          emphasized: _showFoldControls,
-                          onTap: () {
-                            setState(
-                              () => _showFoldControls = !_showFoldControls,
-                            );
-                          },
-                        ),
-                      if (!widget.foldable.isFolded)
-                        _cockpitIconButton(
-                          icon: Icons.lock_outline_rounded,
-                          color: LuminousHomeTheme.textSecondary,
-                          tooltip: 'Lock screen',
-                          onTap: widget.onLock,
-                        ),
-                      if (widget.onOpenGestures != null)
-                        _cockpitIconButton(
-                          icon: Icons.touch_app_rounded,
-                          color: LuminousHomeTheme.textSecondary,
-                          tooltip: 'Gestures',
-                          onTap: widget.onOpenGestures!,
-                        ),
+                    if (!widget.foldable.isFolded)
                       _cockpitIconButton(
-                        icon: Icons.settings_outlined,
+                        icon: Icons.lock_outline_rounded,
                         color: LuminousHomeTheme.textSecondary,
-                        tooltip: 'Settings',
-                        // Long-press is the second way into the Gestures sheet,
-                        // so the setting is discoverable from the control a user
-                        // already reaches for.
-                        onLongPress: widget.onOpenGestures,
-                        onTap: widget.onOpenSettings,
+                        tooltip: 'Lock screen',
+                        onTap: widget.onLock,
                       ),
-                    ],
-                  ),
+                    if (widget.onOpenGestures != null)
+                      _cockpitIconButton(
+                        icon: Icons.touch_app_rounded,
+                        color: LuminousHomeTheme.textSecondary,
+                        tooltip: 'Gestures',
+                        onTap: widget.onOpenGestures!,
+                      ),
+                    _cockpitIconButton(
+                      icon: Icons.settings_outlined,
+                      color: LuminousHomeTheme.textSecondary,
+                      tooltip: 'Settings',
+                      // Long-press is the second way into the Gestures sheet,
+                      // so the setting is discoverable from the control a user
+                      // already reaches for.
+                      onLongPress: widget.onOpenGestures,
+                      onTap: widget.onOpenSettings,
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -464,7 +445,7 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
     required VoidCallback onTap,
     VoidCallback? onLongPress,
   }) {
-    final semanticLabel = 'Open $label constellation';
+    final semanticLabel = 'Open $label group';
     final radius = BorderRadius.circular(LuminousHomeTheme.iconRadius);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -540,12 +521,10 @@ class _FoldableCockpitBarState extends State<FoldableCockpitBar> {
             alignment: Alignment.center,
             child: Text(
               label,
-              style: TextStyle(
+              style: LuminousHomeTheme.caption.copyWith(
                 color: isSelected
                     ? LuminousHomeTheme.textPrimary
                     : LuminousHomeTheme.textSecondary,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
               ),
             ),
           ),

@@ -75,6 +75,10 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   SupernovaAnimation? _activeSupernova;
   AppEntry? _focusedApp;
 
+  /// The launch deferred behind the supernova. Cancelled on dispose so an app
+  /// can never open after the canvas that was tapped is gone.
+  Timer? _pendingLaunchTimer;
+
   @override
   void initState() {
     super.initState();
@@ -391,7 +395,15 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
     widget.onAppSelected?.call(app);
 
-    Future.delayed(const Duration(milliseconds: 300), () {
+    _pendingLaunchTimer?.cancel();
+    _pendingLaunchTimer = Timer(const Duration(milliseconds: 300), () {
+      _pendingLaunchTimer = null;
+      // The panel can lock inside the supernova's 300ms. The canvas stays
+      // mounted under the lock surface but its tickers are muted, so a muted
+      // canvas means something now covers it and the tap is void.
+      if (!mounted || !TickerMode.getValuesNotifier(context).value.enabled) {
+        return;
+      }
       LauncherBridge.launchApp(app, sourceBounds: sourceBounds);
     });
   }
@@ -460,7 +472,11 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     SemanticsBinding.instance.removeSemanticsEnabledListener(
       _onSemanticsEnabledChanged,
     );
+    _pendingLaunchTimer?.cancel();
     widget.camera.removeListener(_onCameraChange);
+    // Only this canvas's own binding is torn down: during a posture transition
+    // the incoming canvas may already have re-bound the camera.
+    widget.camera.detach(this);
     _renderLoopTicker.dispose();
     _paintRepaintNotifier.dispose();
     super.dispose();
