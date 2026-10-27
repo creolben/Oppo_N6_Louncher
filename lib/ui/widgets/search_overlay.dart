@@ -502,11 +502,11 @@ class _SearchOverlayState extends State<SearchOverlay> {
                       onPressed: () => setState(() => _isGridView = !_isGridView),
                     ),
 
-                    // System Settings Shortcut
+                    // ChronoFold Settings
                     if (widget.onOpenSettings != null)
                       IconButton(
                         icon: const Icon(Icons.tune_rounded, color: LuminousHomeTheme.white70, size: 24),
-                        tooltip: 'System Settings',
+                        tooltip: 'Settings',
                         onPressed: widget.onOpenSettings,
                       ),
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/semantics.dart';
@@ -49,6 +50,16 @@ class GalaxyInteractiveCanvas extends StatefulWidget {
     this.badgeRevision = 0,
   });
 
+  /// How long the canvas keeps rendering after the last sign of activity
+  /// before it rests on its last painted frame.
+  ///
+  /// The render loop is the launcher's largest steady cost (120Hz on the N6's
+  /// panel). With nobody touching the galaxy and nothing in flight there is
+  /// nothing worth drawing at that rate, so after this window the ticker stops
+  /// and any touch, camera move, animation or relevant rebuild restarts it.
+  @visibleForTesting
+  static const Duration idleTimeout = Duration(seconds: 8);
+
   @override
   State<GalaxyInteractiveCanvas> createState() => _GalaxyInteractiveCanvasState();
 }
@@ -58,7 +69,31 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   late Ticker _renderLoopTicker;
   final ChangeNotifier _paintRepaintNotifier = ChangeNotifier();
   double _animationTime = 0.0;
-  Duration _lastFrameTime = Duration.zero;
+
+  /// The ticker timestamp of the previous frame, or null when the next frame
+  /// must only re-establish the baseline.
+  ///
+  /// Cleared whenever the loop (re)starts or is unmuted, so the first frame
+  /// after a rest never sees the rest itself as one enormous `dt`: simulated
+  /// time carries forward from where it stopped instead of skipping ahead.
+  Duration? _lastFrameTime;
+
+  // Idle pause bookkeeping.
+  bool _reduceMotion = false;
+
+  /// Simulated seconds since the last sign of activity.
+  double _idleSeconds = 0.0;
+
+  /// Pointers currently down on the canvas.
+  int _activePointers = 0;
+
+  ValueListenable<TickerModeData>? _tickerModeNotifier;
+  bool _tickerModeEnabled = true;
+
+  /// Fingerprint of what the layout engine currently arranges, compared on
+  /// rebuild so a change made elsewhere (an editor, a rescan) wakes the loop
+  /// to morph into it.
+  int _layoutSignature = 0;
 
   // Starfield particles in fixed world space
   final List<CosmicParticle> _starfield = [];
@@ -86,7 +121,9 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     _generateWorldStarfield(420);
 
     widget.camera.addListener(_onCameraChange);
+    widget.foldable.addListener(_onFoldableChange);
     _renderLoopTicker = createTicker(_onRenderTick);
+    _layoutSignature = _computeLayoutSignature();
 
     // A reader can be switched on while this screen is already up, and nothing
     // else here rebuilds when that happens — without this the canvas would stay
@@ -103,19 +140,109 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     // who turned animations off should get one still frame of it rather than a
     // 120Hz loop they explicitly asked not to have.
     _syncRenderLoop();
+    _syncTickerModeListener();
+  }
+
+  @override
+  void didUpdateWidget(covariant GalaxyInteractiveCanvas oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.foldable, widget.foldable)) {
+      oldWidget.foldable.removeListener(_onFoldableChange);
+      widget.foldable.addListener(_onFoldableChange);
+    }
+    // Only a rebuild that can change what is drawn wakes the loop: the cockpit
+    // rebuilds this canvas every minute for its clock, and that alone must not
+    // cost eight seconds of 120Hz.
+    final int signature = _computeLayoutSignature();
+    if (signature != _layoutSignature ||
+        !identical(oldWidget.apps, widget.apps) ||
+        !identical(oldWidget.layoutEngine, widget.layoutEngine) ||
+        !identical(oldWidget.camera, widget.camera) ||
+        !identical(oldWidget.foldable, widget.foldable) ||
+        oldWidget.badgeRevision != widget.badgeRevision) {
+      _layoutSignature = signature;
+      _markActivity();
+    }
   }
 
   void _syncRenderLoop() {
-    final bool reduceMotion =
-        MediaQuery.maybeDisableAnimationsOf(context) ?? false;
-    if (reduceMotion) {
+    _reduceMotion = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+    if (_reduceMotion) {
       if (_renderLoopTicker.isActive) _renderLoopTicker.stop();
       // Paint the resting arrangement once.
       _requestRepaint();
-    } else if (!_renderLoopTicker.isActive) {
+    } else {
+      // Turning reduce motion off, or any other dependency change (text
+      // scale, theme), counts as activity.
+      _markActivity();
+    }
+  }
+
+  /// Follows the TickerMode the host mutes this canvas with behind the lock,
+  /// search and shopping overlays. The mute itself is the ticker's; unmuting
+  /// is activity, and rebases simulated time so the overlay's duration is not
+  /// replayed as one jump in orbits and meteors.
+  void _syncTickerModeListener() {
+    final notifier = TickerMode.getValuesNotifier(context);
+    if (identical(notifier, _tickerModeNotifier)) return;
+    _tickerModeNotifier?.removeListener(_onTickerModeChanged);
+    _tickerModeNotifier = notifier..addListener(_onTickerModeChanged);
+    _tickerModeEnabled = notifier.value.enabled;
+  }
+
+  void _onTickerModeChanged() {
+    final bool enabled = _tickerModeNotifier?.value.enabled ?? true;
+    if (enabled == _tickerModeEnabled) return;
+    _tickerModeEnabled = enabled;
+    _lastFrameTime = null;
+    if (enabled) _markActivity();
+  }
+
+  /// Records activity: resets the idle window and makes sure the render loop
+  /// runs. Cheap enough to call on every pointer move and camera change.
+  void _markActivity() {
+    _idleSeconds = 0.0;
+    if (_reduceMotion || !mounted) return;
+    if (!_renderLoopTicker.isActive) {
+      // A fresh start: the first frame only sets the baseline.
+      _lastFrameTime = null;
+      // A meteor overdue during the rest would fire on the very first frame,
+      // reading as a reaction to the touch; push it back instead.
+      _nextMeteorSpawnTime = math.max(_nextMeteorSpawnTime, _animationTime + 1.5);
       _renderLoopTicker.start();
     }
   }
+
+  /// Whether anything on the canvas is still moving under its own power, in
+  /// which case the loop stays awake past the idle window until it finishes.
+  bool get _motionInProgress {
+    if (_activePointers > 0 || _magneticTouchWorld != null) return true;
+    if (_activeSupernova != null || _shootingStars.isNotEmpty) return true;
+    if (widget.camera.isAnimating) return true;
+    for (final c in widget.layoutEngine.constellations) {
+      final double target = c.isExpanded ? 1.0 : 0.0;
+      if ((c.expansionProgress - target).abs() > 1e-3) return true;
+      for (final app in c.apps) {
+        if ((app.worldPosition - app.basePosition).distanceSquared > 0.01) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  int _computeLayoutSignature() {
+    int hash = 0;
+    for (final c in widget.layoutEngine.constellations) {
+      hash = Object.hash(hash, identityHashCode(c), c.isExpanded, c.apps.length);
+      for (final app in c.apps) {
+        hash = Object.hash(hash, identityHashCode(app), app.notificationCount);
+      }
+    }
+    return hash;
+  }
+
+  void _onFoldableChange() => _markActivity();
 
   /// Asks the canvas to repaint without advancing the simulation.
   void _requestRepaint() {
@@ -123,7 +250,10 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     _paintRepaintNotifier.notifyListeners();
   }
 
-  void _onCameraChange() => _requestRepaint();
+  void _onCameraChange() {
+    _markActivity();
+    _requestRepaint();
+  }
 
   void _generateWorldStarfield(int count) {
     _starfield.clear();
@@ -190,7 +320,10 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   }
 
   void _updateShootingStars(double dt) {
-    if (_animationTime >= _nextMeteorSpawnTime) {
+    // Past the idle window no new meteor starts, so the ones in flight can
+    // finish and the loop can rest on an empty sky.
+    if (_idleSeconds < _idleTimeoutSeconds &&
+        _animationTime >= _nextMeteorSpawnTime) {
       _spawnShootingStar();
       _nextMeteorSpawnTime = _animationTime + 2.5 + _rng.nextDouble() * 4.0;
     }
@@ -231,15 +364,19 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     );
   }
 
-  void _onRenderTick(Duration elapsed) {
-    if (_lastFrameTime == Duration.zero) {
-      _lastFrameTime = elapsed;
-      return;
-    }
+  static final double _idleTimeoutSeconds =
+      GalaxyInteractiveCanvas.idleTimeout.inMicroseconds / 1e6;
 
-    final double dt = (elapsed.inMicroseconds - _lastFrameTime.inMicroseconds) / 1e6;
+  void _onRenderTick(Duration elapsed) {
+    final Duration? last = _lastFrameTime;
     _lastFrameTime = elapsed;
+    // The ticker's clock restarts at zero on every start, so a timestamp from
+    // before the baseline also means "rebase".
+    if (last == null || elapsed < last) return;
+
+    final double dt = (elapsed.inMicroseconds - last.inMicroseconds) / 1e6;
     _animationTime += dt;
+    _idleSeconds += dt;
 
     _updateShootingStars(dt);
 
@@ -257,6 +394,12 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
 
     // ignore: invalid_use_of_visible_for_testing_member, invalid_use_of_protected_member
     _paintRepaintNotifier.notifyListeners();
+
+    // Nothing touched, nothing in flight: rest on the frame just painted. Any
+    // activity source restarts the loop through [_markActivity].
+    if (_idleSeconds >= _idleTimeoutSeconds && !_motionInProgress) {
+      _renderLoopTicker.stop();
+    }
   }
 
   Constellation? _hitTestConstellation(Offset screenPos) {
@@ -381,6 +524,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   /// TalkBack activation, so the two can never drift apart.
   void _activateApp(AppEntry app) {
     LauncherHaptics.click();
+    _markActivity();
     // Capture the node's on-screen rectangle at tap time. The launch is
     // deliberately deferred behind the supernova, and the platform's clip
     // reveal must describe where the finger landed, not where the camera has
@@ -424,6 +568,7 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
   /// Expands or collapses [constellation], the action a hub tap performs.
   void _activateConstellation(Constellation constellation) {
     LauncherHaptics.click();
+    _markActivity();
     if (constellation.id == 'core') {
       final anyOuterExpanded = widget.layoutEngine.constellations.any(
         (c) => c.id != 'core' && (c.isExpanded || c.expansionProgress > 0.25),
@@ -473,6 +618,8 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
       _onSemanticsEnabledChanged,
     );
     _pendingLaunchTimer?.cancel();
+    _tickerModeNotifier?.removeListener(_onTickerModeChanged);
+    widget.foldable.removeListener(_onFoldableChange);
     widget.camera.removeListener(_onCameraChange);
     // Only this canvas's own binding is torn down: during a posture transition
     // the incoming canvas may already have re-bound the camera.
@@ -637,7 +784,33 @@ class _GalaxyInteractiveCanvasState extends State<GalaxyInteractiveCanvas>
     );
   }
 
+  void _onPointerDown(PointerDownEvent event) {
+    _activePointers++;
+    _markActivity();
+  }
+
+  void _onPointerUp(PointerEvent event) {
+    if (_activePointers > 0) _activePointers--;
+    _markActivity();
+  }
+
   Widget _buildCanvas() {
+    // The raw pointer listener sees a touch on its down event, before the
+    // gesture arena decides anything, so a resting loop is already running by
+    // the time the first drag frame arrives.
+    return Listener(
+      onPointerDown: _onPointerDown,
+      onPointerMove: (_) => _markActivity(),
+      onPointerUp: _onPointerUp,
+      onPointerCancel: _onPointerUp,
+      onPointerSignal: (_) => _markActivity(),
+      onPointerPanZoomStart: (_) => _markActivity(),
+      onPointerPanZoomUpdate: (_) => _markActivity(),
+      child: _buildGestures(),
+    );
+  }
+
+  Widget _buildGestures() {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTapUp: _handleTapUp,

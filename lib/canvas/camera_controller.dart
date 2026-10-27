@@ -39,6 +39,14 @@ class CameraController extends ChangeNotifier {
   double get zoom => _zoom;
   Size get viewportSize => _viewportSize;
 
+  /// Whether the camera is moving on its own: kinetic inertia, the zoom
+  /// snap-back spring or a [flyTo] in flight.
+  ///
+  /// The canvas keeps its render loop awake while this is true, so motion the
+  /// camera started is never cut short by the canvas going idle.
+  bool get isAnimating =>
+      (_ticker?.isActive ?? false) || (_flyController?.isAnimating ?? false);
+
   /// Whether the camera's ticker and fly controller were created from [vsync].
   bool isBoundTo(TickerProvider vsync) => identical(_vsync, vsync);
 

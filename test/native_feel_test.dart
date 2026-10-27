@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mylauncher/core/foldable_controller.dart';
 import 'package:mylauncher/main.dart';
 import 'package:mylauncher/ui/theme/luminous_home_theme.dart';
 import 'package:mylauncher/ui/widgets/native_panel_transition.dart';
@@ -118,26 +117,24 @@ void main() {
   });
 
   group('Header utility chips', () {
-    testWidgets('shows Cosmic, not COSMIC, at 12sp w500', (tester) async {
+    testWidgets('shows Set default, not SET DEFAULT, at 12sp w500',
+        (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: CosmicHeaderHud(
-              foldable: FoldableController(),
-              isDefaultLauncher: true,
-              nativeMode: false,
-              onToggleNativeMode: () {},
-              onLockScreen: () {},
+              isDefaultLauncher: false,
+              onSetDefaultLauncher: () {},
             ),
           ),
         ),
       );
       await tester.pump();
 
-      expect(find.text('Cosmic'), findsOneWidget);
-      expect(find.text('COSMIC'), findsNothing);
+      expect(find.text('Set default'), findsOneWidget);
+      expect(find.text('SET DEFAULT'), findsNothing);
 
-      final Text label = tester.widget<Text>(find.text('Cosmic'));
+      final Text label = tester.widget<Text>(find.text('Set default'));
       expect(label.style?.fontSize, 12);
       expect(label.style?.fontWeight, FontWeight.w500);
       expect(label.style?.letterSpacing, isNull,
@@ -162,13 +159,8 @@ void main() {
               ),
               child: Scaffold(
                 body: CosmicHeaderHud(
-                  foldable: FoldableController(),
                   isDefaultLauncher: false,
                   onSetDefaultLauncher: () {},
-                  onOpenLiveWallpaper: () {},
-                  nativeMode: false,
-                  onToggleNativeMode: () {},
-                  onLockScreen: () {},
                   onToggleCockpit: () {},
                 ),
               ),

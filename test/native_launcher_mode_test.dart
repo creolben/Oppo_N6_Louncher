@@ -119,11 +119,8 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: CosmicHeaderHud(
-              foldable: FoldableController(),
               isDefaultLauncher: false,
               onSetDefaultLauncher: () => requestedDefault = true,
-              nativeMode: true,
-              onToggleNativeMode: () {},
             ),
           ),
         ),
@@ -137,87 +134,48 @@ void main() {
       expect(requestedDefault, isTrue);
     });
 
-    testWidgets('CosmicHeaderHud displays and toggles Native / Cosmic mode',
+    testWidgets(
+        'CosmicHeaderHud hides Set default once ChronoFold is the home app',
         (tester) async {
-      var toggled = false;
-
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: CosmicHeaderHud(
-              foldable: FoldableController(),
               isDefaultLauncher: true,
-              nativeMode: true,
-              onToggleNativeMode: () => toggled = true,
+              onSetDefaultLauncher: () {},
             ),
           ),
         ),
       );
       await tester.pump();
 
-      expect(find.text('Native'), findsOneWidget);
       expect(find.text('Set default'), findsNothing);
-
-      await tester.tap(find.text('Native'));
-      await tester.pump();
-
-      expect(toggled, isTrue);
     });
 
-    testWidgets('CosmicHeaderHud displays Lock button in Cosmic mode',
+    testWidgets(
+        'CosmicHeaderHud no longer carries settings, Lock or posture telemetry',
         (tester) async {
-      var locked = false;
-
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: CosmicHeaderHud(
-              foldable: FoldableController(),
-              isDefaultLauncher: true,
-              nativeMode: false,
-              onLockScreen: () => locked = true,
-              onToggleNativeMode: () {},
+              isDefaultLauncher: false,
+              onSetDefaultLauncher: () {},
+              onToggleCockpit: () {},
             ),
           ),
         ),
       );
       await tester.pump();
 
-      expect(find.text('Cosmic'), findsOneWidget);
-      expect(find.text('Lock'), findsOneWidget);
-
-      await tester.tap(find.text('Lock'));
-      await tester.pump();
-
-      expect(locked, isTrue);
-    });
-
-    testWidgets('CosmicHeaderHud keeps the Lock button in Native mode too',
-        (tester) async {
-      var locked = false;
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: CosmicHeaderHud(
-              foldable: FoldableController(),
-              isDefaultLauncher: true,
-              nativeMode: true,
-              onLockScreen: () => locked = true,
-              onToggleNativeMode: () {},
-            ),
-          ),
-        ),
-      );
-      await tester.pump();
-
-      expect(find.text('Native'), findsOneWidget);
-      expect(find.text('Lock'), findsOneWidget);
-
-      await tester.tap(find.text('Lock'));
-      await tester.pump();
-
-      expect(locked, isTrue);
+      // Lock-surface mode and wallpaper moved into Settings; Lock is on the
+      // dock; the posture readout was ornamental.
+      expect(find.text('Cosmic'), findsNothing);
+      expect(find.text('Native'), findsNothing);
+      expect(find.text('Ambient'), findsNothing);
+      expect(find.text('Lock'), findsNothing);
+      expect(find.text('Flat'), findsNothing);
+      expect(find.text('Cockpit'), findsOneWidget);
     });
   });
 }

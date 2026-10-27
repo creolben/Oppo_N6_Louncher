@@ -1016,7 +1016,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 _dockIconButton(
                   icon: Icons.settings_outlined,
                   color: LuminousHomeTheme.textSecondary,
-                  tooltip: 'Launcher Settings',
+                  tooltip: 'Settings',
                   onTap: widget.onOpenSettings,
                 ),
               ],

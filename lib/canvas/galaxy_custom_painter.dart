@@ -118,6 +118,19 @@ class GalaxyCustomPainter extends CustomPainter {
   static final Paint _burstPaint = Paint();
   static final Paint _streakPaint = Paint();
 
+  /// Alpha carrier for the faded text layers (app labels, core title). Only
+  /// its colour is read by saveLayer, so one instance replaces a fresh Paint
+  /// per label per frame.
+  static final Paint _textLayerPaint = Paint();
+
+  /// The five backdrop shaders, built once per painter and viewport size.
+  ///
+  /// They depend only on the size and [animationTime], and [animationTime] is
+  /// fixed for a painter's lifetime — repaint-notifier frames reuse the same
+  /// painter — so rebuilding them every frame produced identical gradients.
+  Size? _deepSpaceSize;
+  List<Shader>? _deepSpaceShaders;
+
   static final Path _path = Path();
   static final Path _starPath = Path();
 
@@ -158,10 +171,23 @@ class GalaxyCustomPainter extends CustomPainter {
 
   void _paintDeepSpace(Canvas canvas, Size size) {
     final bgRect = Offset.zero & size;
+    if (_deepSpaceShaders == null || _deepSpaceSize != size) {
+      _deepSpaceShaders = _buildDeepSpaceShaders(size);
+      _deepSpaceSize = size;
+    }
+    final shaders = _deepSpaceShaders!;
+    _bgPaint.shader = shaders[0];
+    canvas.drawRect(bgRect, _bgPaint);
+    for (int i = 1; i < shaders.length; i++) {
+      _nebulaPaint.shader = shaders[i];
+      canvas.drawRect(bgRect, _nebulaPaint);
+    }
+  }
 
+  List<Shader> _buildDeepSpaceShaders(Size size) {
     // An ink-blue cyclorama keeps the OLED depth without reading as empty
     // space. The brighter ceiling makes the clock legible without a glow.
-    _bgPaint.shader = ui.Gradient.radial(
+    final background = ui.Gradient.radial(
       Offset(size.width * 0.5, size.height * 0.5),
       size.longestSide * 0.90,
       const [
@@ -171,7 +197,6 @@ class GalaxyCustomPainter extends CustomPainter {
       ],
       const [0.0, 0.55, 1.0],
     );
-    canvas.drawRect(bgRect, _bgPaint);
 
     final double driftX1 = math.sin(animationTime * 0.12) * 25.0;
     final double driftY1 = math.cos(animationTime * 0.10) * 20.0;
@@ -180,7 +205,7 @@ class GalaxyCustomPainter extends CustomPainter {
 
     // Slow orchid and aqua fields keep the original drift inputs while
     // behaving more like light through fluid than deep-space nebulae.
-    _nebulaPaint.shader = ui.Gradient.radial(
+    final orchidField = ui.Gradient.radial(
       Offset(size.width * 0.30 + driftX1, size.height * 0.35 + driftY1),
       size.longestSide * 0.58,
       [
@@ -190,9 +215,8 @@ class GalaxyCustomPainter extends CustomPainter {
       ],
       const [0.0, 0.45, 1.0],
     );
-    canvas.drawRect(bgRect, _nebulaPaint);
 
-    _nebulaPaint.shader = ui.Gradient.radial(
+    final aquaField = ui.Gradient.radial(
       Offset(size.width * 0.70 + driftX2, size.height * 0.65 + driftY2),
       size.longestSide * 0.52,
       [
@@ -202,10 +226,9 @@ class GalaxyCustomPainter extends CustomPainter {
       ],
       const [0.0, 0.42, 1.0],
     );
-    canvas.drawRect(bgRect, _nebulaPaint);
 
     // A low cobalt horizon grounds the field like a seamless cyclorama.
-    _nebulaPaint.shader = ui.Gradient.linear(
+    final horizon = ui.Gradient.linear(
       Offset(0, size.height * 0.34),
       Offset(0, size.height * 0.94),
       [
@@ -216,10 +239,9 @@ class GalaxyCustomPainter extends CustomPainter {
       ],
       const [0.0, 0.42, 0.72, 1.0],
     );
-    canvas.drawRect(bgRect, _nebulaPaint);
 
     final double corePulse = 0.05 + 0.02 * math.sin(animationTime * 1.5);
-    _nebulaPaint.shader = ui.Gradient.radial(
+    final corePulseField = ui.Gradient.radial(
       Offset(size.width * 0.5, size.height * 0.5),
       size.longestSide * 0.36,
       [
@@ -229,7 +251,8 @@ class GalaxyCustomPainter extends CustomPainter {
       ],
       const [0.0, 0.48, 1.0],
     );
-    canvas.drawRect(bgRect, _nebulaPaint);
+
+    return [background, orchidField, aquaField, horizon, corePulseField];
   }
 
   void _paintWorldStarfield(Canvas canvas) {
@@ -643,7 +666,7 @@ class GalaxyCustomPainter extends CustomPainter {
             tp.width,
             tp.height,
           ),
-          Paint()
+          _textLayerPaint
             ..color = LuminousHomeTheme.textPrimary.withValues(
               alpha: closedAlpha * 0.90,
             ),
@@ -1185,7 +1208,8 @@ class GalaxyCustomPainter extends CustomPainter {
                 lp.width,
                 lp.height,
               ),
-              Paint()..color = LuminousHomeTheme.white.withValues(alpha: labelAlpha),
+              _textLayerPaint
+                ..color = LuminousHomeTheme.white.withValues(alpha: labelAlpha),
             );
             lp.paint(
               canvas,

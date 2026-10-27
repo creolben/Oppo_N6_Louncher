@@ -259,6 +259,7 @@ class GalaxyStorageService {
     bool? nativeLauncherMode,
     bool? doubleTapToSleep,
     String? swipeDownAction,
+    bool? firstRunHintDismissed,
   }) {
     final data = Map<String, dynamic>.from(existing);
     data['coreAppPackageNames'] = coreAppPackageNames;
@@ -288,6 +289,11 @@ class GalaxyStorageService {
     if (swipeDownAction != null) {
       data['swipeDownAction'] = swipeDownAction;
     }
+    // Absent in files written before the first-run hint existed; readers treat
+    // a missing or non-bool value as "not dismissed yet".
+    if (firstRunHintDismissed != null) {
+      data['firstRunHintDismissed'] = firstRunHintDismissed;
+    }
 
     return data;
   }
@@ -306,6 +312,7 @@ class GalaxyStorageService {
     bool? nativeLauncherMode,
     bool? doubleTapToSleep,
     String? swipeDownAction,
+    bool? firstRunHintDismissed,
   }) {
     final Future<void> save = _saveQueue.then(
       (_) => _saveNow(
@@ -317,6 +324,7 @@ class GalaxyStorageService {
         nativeLauncherMode: nativeLauncherMode,
         doubleTapToSleep: doubleTapToSleep,
         swipeDownAction: swipeDownAction,
+        firstRunHintDismissed: firstRunHintDismissed,
       ),
     );
     _saveQueue = save;
@@ -332,6 +340,7 @@ class GalaxyStorageService {
     bool? nativeLauncherMode,
     bool? doubleTapToSleep,
     String? swipeDownAction,
+    bool? firstRunHintDismissed,
   }) async {
     try {
       final file = await _getFile();
@@ -347,6 +356,7 @@ class GalaxyStorageService {
           nativeLauncherMode: nativeLauncherMode,
           doubleTapToSleep: doubleTapToSleep,
           swipeDownAction: swipeDownAction,
+          firstRunHintDismissed: firstRunHintDismissed,
         );
         await _writeAtomically(file, jsonEncode(data));
       }
