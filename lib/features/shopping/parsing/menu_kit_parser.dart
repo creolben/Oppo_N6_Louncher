@@ -353,6 +353,11 @@ class MenuKitParser {
 
     _Mode mode = _Mode.none;
     _RecipePage? page;
+    String? dailySideTitle;
+    int? dailySideServings;
+    var dailyVegetarian = false;
+    var pendingVegetarianList = false;
+    String? pendingVariant;
     MenuVariant variant = MenuVariant.regular;
     // The list the last shopping-list heading opened, so a section heading on
     // the next page continues it.
@@ -387,6 +392,18 @@ class MenuKitParser {
       final line = lines[i].trim().replaceAll(RegExp(r'\s+'), ' ');
       if (line.isEmpty) continue;
 
+      // A variant word on its own line (`VEGETARIAN`) belongs to the heading
+      // that follows (`MENU`, `SHOPPING LIST`).
+      if (pendingVariant != null &&
+          line != 'MENU' &&
+          !line.endsWith('SHOPPING LIST')) {
+        pendingVariant = null;
+      }
+      if (_variantWord.hasMatch(line)) {
+        pendingVariant = line.toUpperCase();
+        continue;
+      }
+
       final header = _pageHeader.firstMatch(line);
       if (header != null) {
         closeDay();
@@ -413,6 +430,116 @@ class MenuKitParser {
         continue;
       }
 
+      final daily = _dailyHeader.firstMatch(line);
+      if (daily != null) {
+        closeDay();
+        closeRecipe();
+        mode = _Mode.none;
+        dailyVegetarian = line.toUpperCase().contains('VEGETARIAN');
+        final sidePage = line.toUpperCase().endsWith('SIDE');
+        // Titles run until the first non-heading line. Whether a second
+        // all-caps line is another dish or a wrapped title depends on the
+        // ingredient heading further down.
+        final rawTitles = <String>[];
+        var j = i + 1;
+        while (j < lines.length) {
+          final raw = lines[j].trim().replaceAll(RegExp(r'\s+'), ' ');
+          if (raw.isEmpty) {
+            j++;
+            continue;
+          }
+          if (!_isHeading(raw)) break;
+          if (raw != 'SIDE DISH' && raw != 'MAIN DISH') rawTitles.add(raw);
+          j++;
+        }
+        var heading = '';
+        for (var k = j; k < lines.length && k < i + 30; k++) {
+          final candidate = lines[k].trim();
+          final upper = candidate.toUpperCase();
+          if (upper.startsWith('MAIN: INGREDIENTS') ||
+              upper.startsWith('SIDE: INGREDIENTS')) {
+            heading = upper;
+            break;
+          }
+          if (_dailyHeader.hasMatch(candidate) ||
+              _pageHeader.hasMatch(candidate)) {
+            break;
+          }
+        }
+        final titles = _titlesFor(
+          rawTitles,
+          _dayDishes(
+            menus,
+            dailyVegetarian ? MenuVariant.vegetarian : MenuVariant.regular,
+            _weekday[daily.group(1)!] ?? '',
+          ),
+        );
+        if (titles.isNotEmpty) {
+          final sideHeading = heading.startsWith('SIDE');
+          page = _RecipePage(
+            title: _titleCase(sideHeading ? titles.join(' ') : titles.first),
+            side: sidePage || sideHeading,
+            vegetarianPage: dailyVegetarian,
+          );
+          dailySideTitle = !sideHeading && titles.length > 1
+              ? _titleCase(titles[1])
+              : null;
+          dailySideServings = null;
+          mode = _Mode.dailyIntro;
+        }
+        continue;
+      }
+
+      if (_vegetarianListHeader.hasMatch(line)) {
+        closeDay();
+        closeRecipe();
+        pendingVegetarianList = true;
+        mode = _Mode.none;
+        continue;
+      }
+
+      // `MEDITERRANEAN FALL | SAMOS, GREECE` — week header of the middle
+      // layout, naming the featured place instead of a date.
+      final placeHeader = _placeHeader.firstMatch(line);
+      if (placeHeader != null) {
+        closeDay();
+        closeRecipe();
+        mode = _Mode.none;
+        pendingVegetarianList = false;
+        title ??= _titleCase(
+          placeHeader
+              .group(1)!
+              .replaceFirst(RegExp(r'\s+(?:SPRING|SUMMER|FALL|WINTER)$'), ''),
+        );
+        place ??= _titleCase(placeHeader.group(2)!);
+        continue;
+      }
+
+      // `MEDITERRANEAN IN SPRING | JUNE 16–20` — the older week header, which
+      // prints no year.
+      final weekHeader = _weekHeader.firstMatch(line);
+      if (weekHeader != null) {
+        closeDay();
+        closeRecipe();
+        mode = _Mode.none;
+        final cuisine = weekHeader.group(1)!;
+        if (!cuisine.contains('SNACKS')) {
+          title ??= _titleCase(
+            cuisine.replaceFirst(RegExp(r'\s+IN\s+[A-Z]+$'), ''),
+          );
+          week ??= _titleCase(weekHeader.group(2)!);
+        }
+        if (place == null) {
+          final following = _nextLines(lines, i + 1, 1);
+          if (following.isNotEmpty && _place.hasMatch(following.first)) {
+            place = _titleCase(following.first);
+          }
+        }
+        continue;
+      }
+
+      // Any other all-caps running header (`MEDITERRANEAN | FALL | PATRAS,
+      // GREECE`): it starts a page that is not part of a recipe.
       if (_otherHeader.hasMatch(line)) {
         closeDay();
         closeRecipe();
@@ -423,7 +550,8 @@ class MenuKitParser {
       final menuHeading = _menuHeading.firstMatch(line);
       if (menuHeading != null) {
         closeDay();
-        variant = _variantOf(menuHeading.group(1));
+        variant = _variantOf(menuHeading.group(1) ?? pendingVariant);
+        pendingVariant = null;
         menu = menus.putIfAbsent(variant, () => <MenuDay>[]);
         listVariant = null;
         mode = _Mode.menu;
@@ -433,11 +561,28 @@ class MenuKitParser {
       final listHeading = _listHeading.firstMatch(line);
       if (listHeading != null) {
         closeDay();
-        variant = _variantOf(listHeading.group(1));
+        final listWord =
+            listHeading.group(1) ?? listHeading.group(2) ?? pendingVariant;
+        pendingVariant = null;
+        variant = listWord != null
+            ? _variantOf(listWord)
+            : (pendingVegetarianList
+                  ? MenuVariant.vegetarian
+                  : MenuVariant.regular);
+        pendingVegetarianList = false;
         listVariant = variant;
         lists.putIfAbsent(variant, () => <MenuKitItem>[]);
         section = '';
         mode = _Mode.table;
+        continue;
+      }
+
+      // `SHOPPING LIST: SNACKS` is not one of the two printed menus; its rows
+      // use recipe numbers instead of weekdays and are not imported.
+      if (_otherListHeading.hasMatch(line)) {
+        closeDay();
+        listVariant = null;
+        mode = _Mode.none;
         continue;
       }
 
@@ -472,6 +617,55 @@ class MenuKitParser {
               mode = _Mode.none;
             }
           }
+        case _Mode.dailyIntro:
+          final serves = _serves.firstMatch(line);
+          if (serves != null) {
+            page?.servings = int.parse(serves.group(1)!);
+          } else if (line.toUpperCase().startsWith('MAIN: INGREDIENTS') ||
+              line.toUpperCase().startsWith('SIDE: INGREDIENTS')) {
+            if (line.toUpperCase().startsWith('SIDE:')) page?.side = true;
+            if (lines[i].contains('\t')) {
+              mode = _Mode.dailyIngredients;
+            } else {
+              page = null;
+              mode = _Mode.none;
+            }
+          }
+        case _Mode.dailyIngredients:
+          final upper = line.toUpperCase();
+          if (upper.startsWith('SERVES:')) {
+            final sideServes = _serves.firstMatch(line);
+            dailySideServings = sideServes == null
+                ? null
+                : int.parse(sideServes.group(1)!);
+          } else if (upper.startsWith('SIDE: INGREDIENTS')) {
+            final open = page;
+            if (open != null && open.lines.isEmpty) {
+              // A page of its own, headed by the side's title.
+              open.side = true;
+              open.servings = dailySideServings ?? open.servings;
+            } else {
+              final mainServings = open?.servings;
+              closeRecipe();
+              page = _RecipePage(
+                title: dailySideTitle ?? 'Side dish',
+                side: true,
+                vegetarianPage: dailyVegetarian,
+              )..servings = dailySideServings ?? mainServings;
+              dailySideTitle = null;
+              dailySideServings = null;
+            }
+          } else if (upper.startsWith('MAIN: INGREDIENTS')) {
+            // Repeated heading; nothing to add.
+          } else if (upper.startsWith('COMMON SUBSTITUTIONS') ||
+              upper.startsWith('INGREDIENT SWAPS') ||
+              upper.startsWith('QUICK ASSEMBLY') ||
+              line.contains('Nutritional Information')) {
+            closeRecipe();
+            mode = _Mode.none;
+          } else {
+            page?.addLine(lines[i]);
+          }
         case _Mode.recipeIngredients:
           if (line.toUpperCase().startsWith('COMMON SUBSTITUTIONS') ||
               line.contains('Nutritional Information')) {
@@ -495,7 +689,7 @@ class MenuKitParser {
         case _Mode.pantry:
           final sectionMatch = _sectionHeading.firstMatch(line);
           if (sectionMatch != null) {
-            section = sectionMatch.group(1)!;
+            section = sectionMatch.group(1)!.replaceFirst(RegExp(r'^#\s*'), '');
             mode = _Mode.table;
             continue;
           }
@@ -531,6 +725,9 @@ class MenuKitParser {
       for (final day in menus[MenuVariant.vegetarian] ?? const <MenuDay>[])
         ...day.dishes,
     ];
+    final hasVegetarianPages = pages.any(
+      (_RecipePage page) => page.vegetarianPage,
+    );
     return MenuKit(
       title: title ?? 'Meal plan',
       week: week,
@@ -546,7 +743,11 @@ class MenuKitParser {
               recipe.ingredients,
             ),
             side: recipe.side,
-            variants: _recipeVariants(recipe, vegetarianDishes),
+            variants: _recipeVariants(
+              recipe,
+              vegetarianDishes,
+              hasVegetarianPages: hasVegetarianPages,
+            ),
           ),
       ],
     );
@@ -557,12 +758,13 @@ class MenuKitParser {
   /// lists the dish (or prints no menu to check against).
   static Set<MenuVariant> _recipeVariants(
     _RecipePage page,
-    List<String> vegetarianDishes,
-  ) {
+    List<String> vegetarianDishes, {
+    bool hasVegetarianPages = false,
+  }) {
     if (page.vegetarianPage) return const <MenuVariant>{MenuVariant.vegetarian};
-    final shared =
-        vegetarianDishes.isEmpty ||
-        vegetarianDishes.any((String dish) => similarNames(dish, page.title));
+    final shared = vegetarianDishes.isEmpty
+        ? !hasVegetarianPages
+        : vegetarianDishes.any((String dish) => similarNames(dish, page.title));
     return <MenuVariant>{
       MenuVariant.regular,
       if (shared) MenuVariant.vegetarian,
@@ -582,6 +784,75 @@ class MenuKitParser {
   /// An all-caps line with letters: a page or dish title.
   static bool _isHeading(String line) =>
       line == line.toUpperCase() && RegExp(r'[A-Z]').hasMatch(line);
+
+  /// Joins a title that wraps onto a second line (`CRUSTY BREAD WITH GARLIC,`
+  /// / `HERBS & LEMON`) without merging two separate dishes.
+  static List<String> _joinWrappedTitles(List<String> titles) {
+    final joined = <String>[];
+    for (final title in titles) {
+      final previous = joined.isEmpty ? null : joined.last;
+      if (previous != null &&
+          (previous.endsWith(',') ||
+              previous.endsWith('-') ||
+              previous.endsWith('&') ||
+              RegExp(r'^(?:WITH|AND|&)\b').hasMatch(title))) {
+        joined.last = '$previous $title';
+      } else {
+        joined.add(title);
+      }
+    }
+    return joined;
+  }
+
+  /// The dishes the printed menu lists for [day], preferring [variant].
+  static List<String> _dayDishes(
+    Map<MenuVariant, List<MenuDay>> menus,
+    MenuVariant variant,
+    String day,
+  ) {
+    for (final candidate in <MenuVariant>[
+      variant,
+      MenuVariant.regular,
+      MenuVariant.vegetarian,
+    ]) {
+      for (final menuDay in menus[candidate] ?? const <MenuDay>[]) {
+        if (menuDay.day == day && menuDay.dishes.isNotEmpty) {
+          return menuDay.dishes;
+        }
+      }
+    }
+    return const <String>[];
+  }
+
+  /// Joins title lines that merely wrap, using [dishes] to tell a continuation
+  /// (`CHICKPEA TAGINE WITH PRESERVED` + `LEMON, CARROTS & OLIVES`) from the
+  /// next dish printed on the page.
+  static List<String> _titlesFor(List<String> raw, List<String> dishes) {
+    if (dishes.isEmpty) return _joinWrappedTitles(raw);
+    final titles = <String>[];
+    var current = '';
+    for (final line in raw) {
+      final candidate = current.isEmpty ? line : '$current $line';
+      final wanted = ShoppingItem.normalizeName(candidate);
+      final isDish = dishes.any((String dish) {
+        final name = ShoppingItem.normalizeName(dish);
+        return name == wanted || name.startsWith(wanted);
+      });
+      final continues =
+          current.endsWith(',') ||
+          current.endsWith('-') ||
+          current.endsWith('&') ||
+          isDish;
+      if (current.isNotEmpty && !continues) {
+        titles.add(current);
+        current = line;
+      } else {
+        current = candidate;
+      }
+    }
+    if (current.isNotEmpty) titles.add(current);
+    return titles;
+  }
 
   static final RegExp _serves = RegExp(
     r'^Serves:?\s*(\d+)',
@@ -622,7 +893,10 @@ class MenuKitParser {
   /// Reads the one or two `name amount` pairs of a pantry row. Returns an
   /// empty list when the line does not look like one.
   static List<MenuKitItem> _parsePantryRow(String line) {
+    // The notes under the pantry table are sentences, not items.
+    if (line.endsWith('.')) return const <MenuKitItem>[];
     final tokens = line.split(' ');
+    if (tokens.length > 20) return const <MenuKitItem>[];
     final items = <MenuKitItem>[];
     var start = 0;
     while (start < tokens.length) {
@@ -632,7 +906,7 @@ class MenuKitParser {
         // A trailing name with no amount column ("Bay leaves").
         items.add(
           _item(
-            name: tokens.sublist(start).join(' '),
+            name: _trimOr(tokens.sublist(start).join(' ')),
             amount: '',
             aisle: 'Pantry',
             pantry: true,
@@ -643,8 +917,8 @@ class MenuKitParser {
       final amountEnd = _findAmountEnd(tokens, amountStart);
       items.add(
         _item(
-          name: tokens.sublist(start, amountStart).join(' '),
-          amount: tokens.sublist(amountStart, amountEnd).join(' '),
+          name: _trimOr(tokens.sublist(start, amountStart).join(' ')),
+          amount: _trimOr(tokens.sublist(amountStart, amountEnd).join(' ')),
           aisle: 'Pantry',
           pantry: true,
         ),
@@ -653,6 +927,10 @@ class MenuKitParser {
     }
     return items.length > 2 ? const <MenuKitItem>[] : items;
   }
+
+  /// The older vegetarian pantry prints alternatives (`Green lentils OR`).
+  static String _trimOr(String text) =>
+      text.endsWith(' OR') ? text.substring(0, text.length - 3) : text;
 
   /// The index of the first amount token after at least one name token, or
   /// -1.
@@ -734,7 +1012,7 @@ class MenuKitParser {
   }
 
   static bool _startsName(String token) =>
-      token.isNotEmpty && RegExp(r'^[A-ZÀ-Ý]').hasMatch(token);
+      token != 'OR' && token.isNotEmpty && RegExp(r'^[A-ZÀ-Ý]').hasMatch(token);
 
   static final RegExp _plainAmount = RegExp(
     r'^[\d¼½¾⅓⅔⅛][\d¼½¾⅓⅔⅛/. ]*(?: [A-Za-z]+)?$',
@@ -842,6 +1120,36 @@ class MenuKitParser {
     r"^[A-Z][A-Z &\-]*(?: \| [A-Z0-9À-Ý ,.'\-]+){2,}$",
   );
 
+  /// A recipe day page, in any of the printed shapes:
+  /// `MEDITERRANEAN | MONDAY JUNE 16`,
+  /// `MEDITERRANEAN FALL | SAMOS, GREECE | MONDAY`,
+  /// `MEDITERRANEAN | TUESDAY SIDE`.
+  static final RegExp _dailyHeader = RegExp(
+    r'^[A-Z][A-Z &\-]*(?:\s*\|[^|]+)*\|\s*'
+    r'(MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)'
+    r'(?:\s+[A-Z]+\s+\d{1,2})?(?:\s+SIDE)?$',
+  );
+
+  /// `MEDITERRANEAN FALL | SAMOS, GREECE | VEGETARIAN` — heads the vegetarian
+  /// shopping list; the list heading itself is plain.
+  static final RegExp _vegetarianListHeader = RegExp(
+    r'^[A-Z][A-Z &\-]*(?:\s*\|[^|]+)*\|\s*VEGETARIAN$',
+  );
+
+  /// `MEDITERRANEAN IN SPRING | JUNE 16–20` — the older week header, which
+  /// prints no year.
+  static final RegExp _weekHeader = RegExp(
+    r'^([A-Z][A-Z &\-]+?)\s*\|\s*'
+    r'([A-Z]+ \d{1,2}(?:\s*[–-]\s*\d{1,2})?)$',
+  );
+
+  /// `MEDITERRANEAN FALL | SAMOS, GREECE` — cuisine and place, no date.
+  /// Table headings (`RECIPE MEAT | SEAFOOD QTY …`) are not place headers.
+  static final RegExp _placeHeader = RegExp(
+    r"^(?!RECIPE\b)(?!.*\bQTY\b)([A-Z][A-Z &\-]+?)\s*\|\s*"
+    r"([A-ZÀ-Ý][A-ZÀ-Ý .,'\-]+)$",
+  );
+
   static final RegExp _place = RegExp(r"^[A-ZÀ-Ý .'\-]+, [A-ZÀ-Ý .'\-]+$");
 
   static final RegExp _menuHeading = RegExp(
@@ -849,14 +1157,28 @@ class MenuKitParser {
     caseSensitive: false,
   );
 
-  static final RegExp _listHeading = RegExp(
-    r'^(?:(VEGETARIAN|VEGAN|REGULAR|CLASSIC)\s+)?SHOPPING LIST$',
+  /// A variant word printed on its own line, with the heading on the next one.
+  static final RegExp _variantWord = RegExp(
+    r'^(VEGETARIAN|VEGAN|REGULAR|CLASSIC)$',
     caseSensitive: false,
   );
 
-  /// `RECIPE PRODUCE QTY NOTES EST. COST` — group 1 is the section.
+  static final RegExp _listHeading = RegExp(
+    r'^(?:(VEGETARIAN|VEGAN|REGULAR|CLASSIC)\s+)?SHOPPING LIST'
+    r'(?::\s*(VEGETARIAN|VEGAN|REGULAR|CLASSIC))?$',
+    caseSensitive: false,
+  );
+
+  /// `SHOPPING LIST: SNACKS` — a list the app does not model.
+  static final RegExp _otherListHeading = RegExp(
+    r'^SHOPPING LIST:\s*[A-Z]+$',
+    caseSensitive: false,
+  );
+
+  /// `RECIPE PRODUCE QTY NOTES EST. COST` — group 1 is the section. The older
+  /// layout prints `RECIPE #` and a trailing `*`.
   static final RegExp _sectionHeading = RegExp(
-    r'^RECIPE (.+?) QTY NOTES EST\. ?COST$',
+    r'^RECIPE(?: #)? (.+?) QTY NOTES EST\. ?COST(?: \*)?$',
     caseSensitive: false,
   );
 
@@ -916,12 +1238,21 @@ class MenuKitParser {
   }
 }
 
-enum _Mode { none, menu, table, pantry, recipeIntro, recipeIngredients }
+enum _Mode {
+  none,
+  menu,
+  table,
+  pantry,
+  recipeIntro,
+  recipeIngredients,
+  dailyIntro,
+  dailyIngredients,
+}
 
 /// A recipe page while it is being read.
 class _RecipePage {
   final String title;
-  final bool side;
+  bool side;
   final bool vegetarianPage;
 
   /// The left-column text of each ingredient, wrapped lines rejoined.

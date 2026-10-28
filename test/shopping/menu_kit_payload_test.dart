@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mylauncher/features/shopping/parsing/ingredient_parser.dart';
 import 'package:mylauncher/features/shopping/parsing/menu_kit_parser.dart';
 
 import '../../tool/menu_kit/payload.dart';
@@ -126,6 +127,38 @@ void main() {
       final decoded = jsonDecode(jsonEncode(payload)) as Map<String, Object?>;
       expect(decoded['title'], 'Mediterranean');
       expect((decoded['items']! as List<Object?>), isNotEmpty);
+    });
+  });
+
+  group('duplicate recipe titles', () {
+    test('a dish printed for both menus is one row with both variants', () {
+      const kit = MenuKit(
+        title: 'Mediterranean',
+        recipes: <MenuKitRecipe>[
+          MenuKitRecipe(
+            title: 'Creamy Polenta',
+            servings: 4,
+            ingredients: <ParsedIngredient>[],
+            variants: <MenuVariant>{MenuVariant.regular},
+          ),
+          MenuKitRecipe(
+            title: 'Creamy Polenta',
+            servings: 4,
+            ingredients: <ParsedIngredient>[],
+            side: true,
+            variants: <MenuVariant>{MenuVariant.vegetarian},
+          ),
+        ],
+      );
+      final duplicatePayload = menuKitPayload(
+        kit,
+        sourceFile: 'Mediterranean_20251128.pdf',
+        pdfSha256: sha,
+      );
+      final recipes = (duplicatePayload['recipes']! as List<Object?>)
+          .cast<Map<String, Object?>>();
+      expect(recipes, hasLength(1));
+      expect(recipes.single['variants'], <String>['regular', 'vegetarian']);
     });
   });
 }

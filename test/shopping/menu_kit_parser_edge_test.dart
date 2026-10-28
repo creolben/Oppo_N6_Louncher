@@ -510,6 +510,155 @@ void main() {
     });
   });
 
+  group('older layouts', () {
+    // June 2025: one page per day with a main and a side, single-letter day
+    // codes, `RECIPE #` table headings and a colon-form vegetarian list.
+    const spring = '''
+MEDITERRANEAN IN SPRING | JUNE 16–20
+PROVENCE, FRANCE
+MENU
+MONDAY
+WARM LENTILS
+ARTICHOKE SALAD
+MEDITERRANEAN | MONDAY JUNE 16
+WARM LENTILS
+ARTICHOKE SALAD
+Serves: 4 | Prep Time: 15 minutes
+MAIN: INGREDIENTS\tINSTRUCTIONS
+1 cup dry green lentils, rinsed\t1.Cook lentils.
+2 cups water\t2.Drain.
+Serves: 4 | Prep Time: 10 minutes
+SIDE: INGREDIENTS\tINSTRUCTIONS
+1 bunch asparagus, trimmed\t1.Steam asparagus.
+1 lemon, juiced\t2.Squeeze lemon.
+SHOPPING LIST
+RECIPE #\tPRODUCE\tQTY\tNOTES\tEST.  COST *
+M\tAsparagus\t1 bunch\tFresh\t\$3.00
+T, W\tLemon\t2\t-\t\$1.00
+RECIPE #\tDAIRY\tQTY\tNOTES\tEST.  COST *
+M\tFeta\t4 oz\tBlock\t\$2.00
+PANTRY\tQTY\tPANTRY\tQTY
+Olive oil\t1 cup\tSalt\tAs needed
+Prices are based on a aggregate of grocery costs from across the U.S.
+They do not reflect organic, grass fed, or other premium ingredients.
+SHOPPING LIST: VEGETARIAN
+RECIPE\tPRODUCE\tQTY\tNOTES\tEST. COST *
+M\tAsparagus\t1 bunch\tFresh\t\$3.00
+PANTRY\tQTY\tPANTRY\tQTY
+Green lentils OR\t2 cups dry OR\tSalt\tAs needed
+SHOPPING LIST: SNACKS
+RECIPE #\tPRODUCE\tQTY\tNOTES\tEST. COST *
+1\tZucchini\t2 medium\t-\t\$1.50
+''';
+
+    // Late 2025 – mid 2026: the place stands in for the date, each dish has
+    // its own page, and the vegetarian list is flagged on the page header.
+    const autumn = '''
+MEDITERRANEAN FALL | SAMOS, GREECE
+SAMOS
+MENU
+MONDAY
+SPICED LENTIL STEW
+SAGE BREADCRUMBS
+MEDITERRANEAN FALL | SAMOS, GREECE | MONDAY
+SPICED LENTIL STEW
+A story about the dish.
+Serves: 4 | Prep Time: 20 minutes
+MAIN: INGREDIENTS\tINSTRUCTIONS
+1 cup lentils\t1.Simmer lentils.
+MEDITERRANEAN FALL | SAMOS, GREECE | MONDAY
+SAGE BREADCRUMBS
+A story about the side.
+Serves: 4 | Prep Time: 5 minutes
+SIDE: INGREDIENTS\tINSTRUCTIONS
+2 slices sourdough\t1.Toast the bread.
+MEDITERRANEAN FALL | SAMOS, GREECE | VEGETARIAN | TUESDAY
+EGGPLANT STEW
+A story about the vegetarian dish.
+Serves: 4 | Prep Time: 15 minutes
+MAIN: INGREDIENTS\tINSTRUCTIONS
+1 eggplant\t1.Bake the eggplant.
+MEDITERRANEAN FALL | SAMOS, GREECE
+SHOPPING LIST
+RECIPE\tPRODUCE\tQTY\tNOTES\tEST. COST
+M\tLentils\t1 cup\t-\t\$2.00
+MEDITERRANEAN FALL | SAMOS, GREECE | VEGETARIAN
+SHOPPING LIST
+RECIPE\tPRODUCE\tQTY\tNOTES\tEST. COST
+T\tEggplant\t1\t-\t\$3.00
+''';
+
+    test('reads a daily-page week with a colon-form vegetarian list', () {
+      final kit = _parse(spring);
+      expect(kit.title, 'Mediterranean');
+      expect(kit.week, 'June 16–20');
+      expect(kit.place, 'Provence, France');
+
+      final regular = kit
+          .itemsFor(MenuVariant.regular)
+          .map((MenuKitItem item) => item.name);
+      expect(
+        regular,
+        containsAll(<String>[
+          'Asparagus',
+          'Lemon',
+          'Feta',
+          'Olive oil',
+          'Salt',
+        ]),
+      );
+      expect(
+        regular.any((String name) => name.startsWith('Prices are based')),
+        isFalse,
+      );
+      expect(regular, isNot(contains('Zucchini')));
+
+      final vegetarian = kit.itemsFor(MenuVariant.vegetarian);
+      final lentils = _named(vegetarian, 'Green lentils');
+      expect(lentils.amountText, '2 cups dry');
+      expect(vegetarian.map((MenuKitItem item) => item.name), contains('Salt'));
+
+      expect(kit.recipes, hasLength(2));
+      expect(kit.recipes.first.title, 'Warm Lentils');
+      expect(kit.recipes.first.side, isFalse);
+      expect(kit.recipes.last.title, 'Artichoke Salad');
+      expect(kit.recipes.last.side, isTrue);
+      final ingredientNames = kit.recipes
+          .expand(
+            (MenuKitRecipe recipe) =>
+                recipe.ingredients.map((ParsedIngredient i) => i.name),
+          )
+          .toList();
+      expect(
+        ingredientNames.any((String name) => name.contains('Cook lentils')),
+        isFalse,
+      );
+    });
+
+    test('reads place-headed pages and a page-header vegetarian list', () {
+      final kit = _parse(autumn);
+      expect(kit.title, 'Mediterranean');
+      expect(kit.place, 'Samos, Greece');
+      expect(
+        kit.itemsFor(MenuVariant.regular).map((MenuKitItem i) => i.name),
+        <String>['Lentils'],
+      );
+      expect(
+        kit.itemsFor(MenuVariant.vegetarian).map((MenuKitItem i) => i.name),
+        <String>['Eggplant'],
+      );
+
+      expect(kit.recipes.map((MenuKitRecipe recipe) => recipe.title), <String>[
+        'Spiced Lentil Stew',
+        'Sage Breadcrumbs',
+        'Eggplant Stew',
+      ]);
+      expect(kit.recipes[1].side, isTrue);
+      expect(kit.recipes[0].variants, <MenuVariant>{MenuVariant.regular});
+      expect(kit.recipes[2].variants, <MenuVariant>{MenuVariant.vegetarian});
+    });
+  });
+
   group('DocumentParser routing', () {
     test('a kit wins over the generic list reading', () {
       final document = const DocumentParser().parseDocument(kMenuKitText);

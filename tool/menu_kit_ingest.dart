@@ -76,6 +76,7 @@ Future<void> main(List<String> args) async {
       sourceFile: name,
       pdfSha256: sha,
       pdfPath: '$sha.pdf',
+      startOverride: _dateFromName(name),
     );
     payloads.add(payload);
     final summary =
@@ -156,6 +157,19 @@ Future<Map<String, String>> _extract(List<File> pdfs) async {
   } finally {
     work.deleteSync(recursive: true);
   }
+}
+
+/// The `planweek` date in a downloaded file name
+/// (`Mediterranean_20250613.pdf`), used when the PDF prints no year.
+DateTime? _dateFromName(String name) {
+  final match = RegExp(r'(?:^|[^0-9])(\d{4})(\d{2})(\d{2})(?:[^0-9]|$)')
+      .firstMatch(name);
+  if (match == null) return null;
+  final year = int.parse(match.group(1)!);
+  final month = int.parse(match.group(2)!);
+  final day = int.parse(match.group(3)!);
+  final date = DateTime.utc(year, month, day);
+  return date.month == month && date.day == day ? date : null;
 }
 
 Future<String> _sha256(File file) async {

@@ -11,8 +11,9 @@ Map<String, Object?> menuKitPayload(
   required String sourceFile,
   required String pdfSha256,
   String? pdfPath,
+  DateTime? startOverride,
 }) {
-  final start = weekStart(kit.week);
+  final start = weekStart(kit.week) ?? startOverride;
   return <String, Object?>{
     'title': kit.title,
     'week_label': kit.week,
@@ -46,28 +47,49 @@ Map<String, Object?> menuKitPayload(
             'pantry': item.pantry,
           },
     ],
-    'recipes': <Map<String, Object?>>[
-      for (final (index, recipe) in kit.recipes.indexed)
-        <String, Object?>{
-          'position': index,
-          'title': recipe.title,
-          'servings': recipe.servings,
-          'side': recipe.side,
-          'variants': <String>[
-            for (final variant in _printed)
-              if (recipe.variants.contains(variant)) variant.name,
-          ],
-          'ingredients': <Map<String, Object?>>[
-            for (final ParsedIngredient ingredient in recipe.ingredients)
-              <String, Object?>{
-                'name': ingredient.name,
-                ..._quantity(ingredient.quantity),
-                'note': ingredient.note,
-              },
-          ],
-        },
-    ],
+    'recipes': _recipes(kit),
   };
+}
+
+/// One row per recipe title. A side printed for both menus is one dish; the
+/// table's `unique (kit_id, title)` stores it once, so union its variants
+/// here instead of letting the last page overwrite the first.
+List<Map<String, Object?>> _recipes(MenuKit kit) {
+  final merged = <String, Map<String, Object?>>{};
+  for (final (index, recipe) in kit.recipes.indexed) {
+    final variants = <String>[
+      for (final variant in _printed)
+        if (recipe.variants.contains(variant)) variant.name,
+    ];
+    final existing = merged[recipe.title.toLowerCase()];
+    if (existing == null) {
+      merged[recipe.title.toLowerCase()] = <String, Object?>{
+        'position': index,
+        'title': recipe.title,
+        'servings': recipe.servings,
+        'side': recipe.side,
+        'variants': variants,
+        'ingredients': <Map<String, Object?>>[
+          for (final ParsedIngredient ingredient in recipe.ingredients)
+            <String, Object?>{
+              'name': ingredient.name,
+              ..._quantity(ingredient.quantity),
+              'note': ingredient.note,
+            },
+        ],
+      };
+    } else {
+      final union = <String>{
+        ...(existing['variants']! as List<String>),
+        ...variants,
+      };
+      existing['variants'] = <String>[
+        for (final variant in _printed)
+          if (union.contains(variant.name)) variant.name,
+      ];
+    }
+  }
+  return merged.values.toList();
 }
 
 const List<MenuVariant> _printed = <MenuVariant>[
