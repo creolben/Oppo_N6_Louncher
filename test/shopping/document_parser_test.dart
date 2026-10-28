@@ -6,6 +6,13 @@ import 'package:mylauncher/features/shopping/parsing/document_parser.dart';
 void main() {
   const parser = DocumentParser();
 
+  test('reads column tabs from the PDF extractor as plain spaces', () {
+    final tabbed = parser.parseDocument('2 kg\tflour\n1 l\tmilk\n');
+    final spaced = parser.parseDocument('2 kg flour\n1 l milk\n');
+    expect(tabbed.items, spaced.items);
+    expect(tabbed.items.first.name, 'flour');
+  });
+
   test('detects recipe, title, servings and the ingredients section', () {
     const text = 'Chocolate Chip Cookies\n'
         '\n'
