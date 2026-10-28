@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import 'ingredient_parser.dart';
 import 'menu_kit_parser.dart';
 
@@ -39,7 +41,13 @@ class DocumentParser {
   const DocumentParser();
 
   ParsedDocument parseDocument(String fullText) {
-    final kit = const MenuKitParser().tryParse(fullText);
+    MenuKit? kit;
+    try {
+      kit = const MenuKitParser().tryParse(fullText);
+    } catch (error, stack) {
+      // A kit layout the parser trips on still imports as a plain list.
+      debugPrint('CF_PDF: meal-kit parse failed: $error\n$stack');
+    }
     if (kit != null) {
       return ParsedDocument(isRecipe: false, title: kit.title, menuKit: kit);
     }

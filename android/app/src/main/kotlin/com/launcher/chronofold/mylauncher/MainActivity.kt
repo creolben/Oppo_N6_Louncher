@@ -51,6 +51,7 @@ import androidx.annotation.NonNull
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.android.FlutterActivityLaunchConfigs.BackgroundMode
 import io.flutter.embedding.android.RenderMode
@@ -995,12 +996,24 @@ class MainActivity : FlutterActivity() {
                 try {
                     val totalPages = document.numberOfPages
                     val lastPage = minOf(totalPages, MAX_EXTRACT_PAGES)
-                    val stripper = ColumnTextStripper().apply {
+                    fun PDFTextStripper.configured() = apply {
                         sortByPosition = true
                         startPage = 1
                         endPage = lastPage
                     }
-                    val text = stripper.getText(document)
+                    // Columns first; if the column pass fails on this device
+                    // (an exception, or a class the release build broke), the
+                    // stock stripper still gets the list out, minus the tabs
+                    // recipe import needs.
+                    val text = try {
+                        ColumnTextStripper().configured().getText(document)
+                    } catch (e: Exception) {
+                        android.util.Log.w(TAG, "CF_PDF: column extraction failed, retrying plain", e)
+                        PDFTextStripper().configured().getText(document)
+                    } catch (e: LinkageError) {
+                        android.util.Log.w(TAG, "CF_PDF: column extraction failed, retrying plain", e)
+                        PDFTextStripper().configured().getText(document)
+                    }
                     val payload = mapOf(
                         "text" to text,
                         "pageCount" to totalPages,

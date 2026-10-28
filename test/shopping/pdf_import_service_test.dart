@@ -1,6 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mylauncher/core/launcher_bridge.dart';
+import 'package:mylauncher/features/shopping/parsing/document_parser.dart';
 import 'package:mylauncher/features/shopping/parsing/pdf_text_import.dart';
+
+class _ThrowingParser extends DocumentParser {
+  const _ThrowingParser();
+
+  @override
+  ParsedDocument parseDocument(String fullText) => throw StateError('boom');
+}
 
 /// A [PdfImportService] wired to fakes: no device, no platform channel.
 PdfImportService _service({
@@ -31,6 +39,21 @@ void main() {
       final names =
           result.document!.items.map((item) => item.name.toLowerCase()).toSet();
       expect(names, containsAll(<String>{'milk', 'eggs'}));
+    });
+
+    test('a parser error is a typed failure, not an unhandled exception',
+        () async {
+      final PdfImportService service = PdfImportService(
+        extract: (String path) async => const PdfTextResult(text: 'Milk'),
+        pick: () async => 'picked.pdf',
+        parser: const _ThrowingParser(),
+      );
+
+      final PdfImportResult result = await service.importPath('a.pdf');
+
+      expect(result.isSuccess, isFalse);
+      expect(result.error, PdfImportErrorKind.unreadable);
+      expect(result.message, PdfImportService.unreadableMessage);
     });
 
     test('an empty text layer is a typed failure with the exact message',

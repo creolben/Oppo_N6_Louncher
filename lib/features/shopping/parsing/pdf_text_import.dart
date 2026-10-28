@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/launcher_bridge.dart';
@@ -95,7 +96,8 @@ class PdfImportService {
     final PdfTextResult extracted;
     try {
       extracted = await extract(path);
-    } catch (_) {
+    } catch (error) {
+      debugPrint('CF_PDF: text extraction failed: $error');
       return const PdfImportResult.failure(
         PdfImportErrorKind.unreadable,
         unreadableMessage,
@@ -124,6 +126,14 @@ class PdfImportService {
       );
     }
 
-    return PdfImportResult.success(parser.parseDocument(extracted.text));
+    try {
+      return PdfImportResult.success(parser.parseDocument(extracted.text));
+    } catch (error, stack) {
+      debugPrint('CF_PDF: parsing the extracted text failed: $error\n$stack');
+      return const PdfImportResult.failure(
+        PdfImportErrorKind.unreadable,
+        unreadableMessage,
+      );
+    }
   }
 }
