@@ -50,3 +50,9 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Local secrets (never commit Supabase keys or tokens)
+.env
+.env.local
+.env.*.local
+!.env.example

@@ -95,6 +95,12 @@ To use ChronoFold as your home screen, install it and set it as the default laun
 flutter test
 ```
 
+## Supabase
+
+Weekly meal-kit PDFs can be stored in a hosted Supabase project. See
+[tool/supabase/README.md](tool/supabase/README.md) for the one-time setup and
+the ingest command.
+
 ## Design boundaries
 
 - ColorOS-inspired hybrid visual language, not an exact ColorOS clone.
