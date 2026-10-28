@@ -40,8 +40,9 @@ rest_count() { # <table> -> prints the row count, or "missing"
   body=$(mktemp)
   headers=$(mktemp)
   code=$(curl -sS -o "$body" -D "$headers" -w '%{http_code}' \
-    "$SUPABASE_URL/rest/v1/$table?select=*&limit=1" "${auth[@]}" || true)
-  if [[ $code != 200 ]]; then
+    "$SUPABASE_URL/rest/v1/$table?select=*&limit=1" "${auth[@]}" \
+    -H "Prefer: count=exact" || true)
+  if [[ $code != 200 && $code != 206 ]]; then
     rm -f "$body" "$headers"
     echo "missing"
     return
@@ -77,10 +78,11 @@ if [[ ${SUPABASE_ANON_KEY:-} ]]; then
     -H "apikey: $SUPABASE_ANON_KEY" || true)
   anon_total=$(tr -d '\r' <"$anon_headers" |
     sed -n 's/^[Cc]ontent-[Rr]ange:.*\/\([0-9]*\)$/\1/p' | tail -1)
+  anon_rows=$(cat "$anon_body")
   rm -f "$anon_body" "$anon_headers"
   if [[ $anon_code == 401 || $anon_code == 403 ]]; then
     pass "anon key is refused (HTTP $anon_code)"
-  elif [[ $anon_code == 200 && ${anon_total:-1} == 0 ]]; then
+  elif [[ $anon_code == 200 && (${anon_total:-1} == 0 || $anon_rows == "[]") ]]; then
     pass "anon key is granted no rows"
   else
     warn "anon key can read menu_kits (HTTP $anon_code, ${anon_total:-?} rows)"

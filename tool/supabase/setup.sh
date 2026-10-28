@@ -97,7 +97,9 @@ if [[ -n $create_name ]]; then
   created=$(supabase projects create "$create_name" \
     --org-id "$org" --region "$region" --db-password "$db_password" \
     --output json 2>&1) || die "project creation failed: $created"
-  ref=$(jq -r '.ref // .id // empty' <<<"$created" 2>/dev/null || true)
+  # The CLI prints progress lines before the JSON body.
+  created_json=$(sed -n '/^{/,$p' <<<"$created")
+  ref=$(jq -r '.ref // .id // empty' <<<"$created_json" 2>/dev/null || true)
   [[ -n $ref ]] || die "could not read the new project ref from: $created"
   note "project ref $ref"
 
