@@ -1,4 +1,5 @@
 import 'ingredient_parser.dart';
+import 'menu_kit_parser.dart';
 
 /// A document interpreted as either a recipe or a plain list.
 class ParsedDocument {
@@ -7,24 +8,30 @@ class ParsedDocument {
   final int? servings;
   final List<ParsedIngredient> items;
 
+  /// Set when the text is a weekly meal-kit PDF; [items] is then empty and the
+  /// kit's own shopping lists are reviewed instead.
+  final MenuKit? menuKit;
+
   const ParsedDocument({
     required this.isRecipe,
     this.title,
     this.servings,
     this.items = const [],
+    this.menuKit,
   });
 
-  bool get isEmpty => items.isEmpty;
+  bool get isEmpty => menuKit == null && items.isEmpty;
 
   @override
   String toString() =>
       'ParsedDocument(recipe: $isRecipe, title: $title, servings: $servings, '
-      'items: ${items.length})';
+      'items: ${items.length}, menuKit: ${menuKit != null})';
 }
 
 /// Splits pasted or imported text into a [ParsedDocument].
 ///
-/// Recognizes a servings line, an `Ingredients` heading that ends at the next
+/// A weekly meal-kit PDF is handed to [MenuKitParser]. Otherwise it
+/// recognizes a servings line, an `Ingredients` heading that ends at the next
 /// method/instructions/directions/steps/preparation heading, and otherwise
 /// treats every non-empty short line as a list item. Page numbers and (in list
 /// mode) lines longer than 120 characters are skipped.
@@ -32,8 +39,16 @@ class DocumentParser {
   const DocumentParser();
 
   ParsedDocument parseDocument(String fullText) {
+    final kit = const MenuKitParser().tryParse(fullText);
+    if (kit != null) {
+      return ParsedDocument(isRecipe: false, title: kit.title, menuKit: kit);
+    }
+
     const parser = IngredientParser();
+    // The extractor marks wide column gaps with tabs; a plain document reads
+    // them as the single space it always got.
     final lines = fullText
+        .replaceAll('\t', ' ')
         .split(RegExp(r'\r?\n'))
         .map((line) => line.trim())
         .toList();

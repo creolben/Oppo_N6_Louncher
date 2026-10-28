@@ -12,7 +12,7 @@ import '../parsing/document_parser.dart';
 import '../parsing/pdf_text_import.dart';
 import '../shopping_controller.dart';
 import 'grocery_chrome.dart';
-import 'import_review_sheet.dart';
+import 'menu_kit_sheet.dart';
 import 'list_pane.dart';
 import 'lists_pane.dart';
 import 'quick_add_capsule.dart';
@@ -197,12 +197,10 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
       showGrocerySnackBar(context, 'No list items found in the clipboard');
       return;
     }
-    await showImportReviewSheet(
+    await reviewImportedDocument(
       context,
+      controller: widget.controller,
       document: document,
-      preferImperial: widget.controller.preferImperial,
-      onConfirm: (List<int> indices) =>
-          widget.controller.importParsedDocument(document, indices),
     );
   }
 
@@ -227,12 +225,10 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
       showGrocerySnackBar(context, 'No list items found in this PDF');
       return;
     }
-    await showImportReviewSheet(
+    await reviewImportedDocument(
       context,
+      controller: widget.controller,
       document: document,
-      preferImperial: widget.controller.preferImperial,
-      onConfirm: (List<int> indices) =>
-          widget.controller.importParsedDocument(document, indices),
     );
   }
 

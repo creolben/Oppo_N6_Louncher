@@ -34,7 +34,7 @@ import 'features/shopping/parsing/document_parser.dart';
 import 'features/shopping/parsing/pdf_text_import.dart';
 import 'features/shopping/shopping_controller.dart';
 import 'features/shopping/ui/grocery_chrome.dart';
-import 'features/shopping/ui/import_review_sheet.dart';
+import 'features/shopping/ui/menu_kit_sheet.dart';
 import 'features/shopping/ui/shopping_surface.dart';
 import 'ui/format/clock_format.dart';
 import 'ui/screens/folded_cover_screen.dart';
@@ -967,12 +967,10 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       _showSharedPdfError('No list items found in this PDF');
       return;
     }
-    await showImportReviewSheet(
+    await reviewImportedDocument(
       context,
+      controller: _shoppingController,
       document: document,
-      preferImperial: _shoppingController.preferImperial,
-      onConfirm: (List<int> indices) =>
-          _shoppingController.importParsedDocument(document, indices),
     );
   }
 

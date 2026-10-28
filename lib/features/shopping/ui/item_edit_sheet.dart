@@ -128,6 +128,10 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
         note: note.isEmpty ? null : note,
         sourceRecipeId: widget.item.sourceRecipeId,
         parentId: _parentId,
+        // A typed amount replaces the imported wording rather than hiding it.
+        amountText: _quantity == null ? widget.item.amountText : null,
+        costCents: widget.item.costCents,
+        days: widget.item.days,
       ),
     );
     Navigator.of(context).maybePop();
@@ -211,7 +215,9 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
                       key: const ValueKey<String>('edit_item_amount'),
                       controller: _amount,
                       label: 'Amount',
-                      hint: '1',
+                      // An imported amount (`4 medium bulbs`) stays visible
+                      // until a structured one is typed over it.
+                      hint: widget.item.amountText ?? '1',
                       // Text, not a number pad, so `1 1/2` and `½` can be
                       // typed.
                       keyboardType: TextInputType.text,

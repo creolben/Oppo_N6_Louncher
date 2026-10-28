@@ -8,6 +8,7 @@ import 'models/shopping_list.dart';
 import 'models/unit.dart';
 import 'parsing/document_parser.dart';
 import 'parsing/ingredient_parser.dart';
+import 'parsing/menu_kit_parser.dart';
 
 /// A removed list item together with everything needed to restore it exactly.
 ///
@@ -899,6 +900,67 @@ class ShoppingController extends ChangeNotifier {
     _lists[index] = updated;
     _afterMutation();
     return null;
+  }
+
+  /// Builds a new list named [name] from meal-kit [items] and makes it the
+  /// active list, so a week's shopping never mixes into another list.
+  ///
+  /// Each line keeps its printed amount, note, price and cooking days; a
+  /// remembered aisle for the name still wins over the kit's section.
+  ///
+  /// [recipes] are saved alongside, at their printed servings. A recipe whose
+  /// title is already saved is skipped, so importing the same week again (or
+  /// its other menu) never duplicates one.
+  ShoppingList? importMenuKit(
+    String name,
+    List<MenuKitItem> items, {
+    List<MenuKitRecipe> recipes = const <MenuKitRecipe>[],
+  }) {
+    if (items.isEmpty) return null;
+    final savedTitles = _recipes
+        .map((recipe) => recipe.title.trim().toLowerCase())
+        .toSet();
+    for (final kitRecipe in recipes) {
+      if (!savedTitles.add(kitRecipe.title.trim().toLowerCase())) continue;
+      _recipes.add(
+        Recipe(
+          id: _newId('recipe'),
+          title: kitRecipe.title,
+          baseServings: kitRecipe.servings,
+          targetServings: kitRecipe.servings,
+          ingredients: kitRecipe.ingredients
+              .map(
+                (parsed) => Ingredient(
+                  name: parsed.name,
+                  quantity: parsed.quantity,
+                  note: parsed.note,
+                ),
+              )
+              .toList(),
+        ),
+      );
+    }
+    var list = createList(name);
+    for (final kitItem in items) {
+      list = list.addOrMerge(
+        ShoppingItem(
+          id: _newId('item'),
+          name: kitItem.name,
+          quantity: kitItem.quantity,
+          amountText: kitItem.amountText,
+          aisle: aisleFor(kitItem.name, kitItem.aisle),
+          note: kitItem.note,
+          costCents: kitItem.costCents,
+          days: kitItem.days,
+        ),
+        now: _clock(),
+      );
+    }
+    final index = _lists.indexWhere((candidate) => candidate.id == list.id);
+    _lists[index] = list;
+    _activeListId = list.id;
+    _afterMutation();
+    return list;
   }
 
   void setPreferImperial(bool value) {

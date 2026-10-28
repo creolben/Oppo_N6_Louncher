@@ -213,8 +213,18 @@ class _ListPaneState extends State<ListPane> {
             groceryAisleRank(a).compareTo(groceryAisleRank(b)),
       );
 
+    final int? totalCost = list.estimatedCostCents();
+
     return CustomScrollView(
       slivers: <Widget>[
+        if (totalCost != null)
+          SliverToBoxAdapter(
+            child: _CostSummary(
+              remainingCents:
+                  list.estimatedCostCents(uncheckedOnly: true) ?? 0,
+              totalCents: totalCost,
+            ),
+          ),
         if (manualOrder)
           SliverReorderableList(
             itemCount: topLevel.length,
@@ -387,6 +397,71 @@ class _ItemUnit extends StatelessWidget {
   }
 }
 
+/// `$12.50` from a cent count.
+String formatCents(int cents) {
+  final String sign = cents < 0 ? '-' : '';
+  final int value = cents.abs();
+  final String fraction = (value % 100).toString().padLeft(2, '0');
+  return '$sign\$${value ~/ 100}.$fraction';
+}
+
+/// The estimated spend of a list whose lines carry prices (an imported meal
+/// kit): what is still to buy, out of the whole list.
+class _CostSummary extends StatelessWidget {
+  final int remainingCents;
+  final int totalCents;
+
+  const _CostSummary({
+    required this.remainingCents,
+    required this.totalCents,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final String remaining = formatCents(remainingCents);
+    final String total = formatCents(totalCents);
+    return Semantics(
+      container: true,
+      label: 'Estimated cost: $remaining left of $total',
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          LuminousHomeTheme.screenGutter,
+          LuminousHomeTheme.space4,
+          LuminousHomeTheme.screenGutter,
+          LuminousHomeTheme.space8,
+        ),
+        child: Row(
+          children: <Widget>[
+            const Icon(
+              Icons.receipt_long_rounded,
+              size: 16,
+              color: LuminousHomeTheme.textMuted,
+            ),
+            const SizedBox(width: LuminousHomeTheme.space8),
+            Expanded(
+              child: Text(
+                'Est. $remaining left',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: LuminousHomeTheme.label.copyWith(
+                  color: LuminousHomeTheme.groceryAccent,
+                ),
+              ),
+            ),
+            Text(
+              'of $total',
+              style: LuminousHomeTheme.caption.copyWith(
+                color: LuminousHomeTheme.textMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _DoneHeader extends StatelessWidget {
   final int count;
   final bool collapsed;
@@ -524,7 +599,10 @@ class _ItemRow extends StatelessWidget {
     this.showAisle = false,
   });
 
-  String get _quantityText => item.quantity?.formatAsEntered() ?? '';
+  String get _quantityText => item.displayAmount;
+
+  String? get _costText =>
+      item.costCents == null ? null : formatCents(item.costCents!);
 
   /// The preferred-system approximation of the quantity, or null when the
   /// amount is already shown in the preferred system (or is a count).
@@ -541,6 +619,8 @@ class _ItemRow extends StatelessWidget {
       if (_quantityText.isNotEmpty) _quantityText,
       ?_approxText,
       item.name,
+      if (item.days.isNotEmpty) 'for ${item.days.join(', ')}',
+      if (_costText != null) 'about $_costText',
     ];
     return parts.join(' ');
   }
@@ -636,6 +716,20 @@ class _ItemRow extends StatelessWidget {
                           ),
                           child: Text(item.name),
                         ),
+                        if (item.days.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              item.days.join(' · '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: LuminousHomeTheme.caption.copyWith(
+                                color: checked
+                                    ? LuminousHomeTheme.textMuted
+                                    : LuminousHomeTheme.groceryAccent,
+                              ),
+                            ),
+                          ),
                         if (item.note != null && item.note!.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(top: 2),
@@ -667,7 +761,7 @@ class _ItemRow extends StatelessWidget {
               ),
             ),
           ),
-          if (_quantityText.isNotEmpty) ...<Widget>[
+          if (_quantityText.isNotEmpty || _costText != null) ...<Widget>[
             const SizedBox(width: LuminousHomeTheme.space12),
             Flexible(
               child: ExcludeSemantics(
@@ -692,6 +786,17 @@ class _ItemRow extends StatelessWidget {
                           _approxText!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
+                          style: LuminousHomeTheme.caption.copyWith(
+                            color: LuminousHomeTheme.textMuted,
+                          ),
+                        ),
+                      ),
+                    if (_costText != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          _costText!,
+                          maxLines: 1,
                           style: LuminousHomeTheme.caption.copyWith(
                             color: LuminousHomeTheme.textMuted,
                           ),

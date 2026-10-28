@@ -51,7 +51,6 @@ import androidx.annotation.NonNull
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
-import com.tom_roush.pdfbox.text.PDFTextStripper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.android.FlutterActivityLaunchConfigs.BackgroundMode
 import io.flutter.embedding.android.RenderMode
@@ -996,7 +995,7 @@ class MainActivity : FlutterActivity() {
                 try {
                     val totalPages = document.numberOfPages
                     val lastPage = minOf(totalPages, MAX_EXTRACT_PAGES)
-                    val stripper = PDFTextStripper().apply {
+                    val stripper = ColumnTextStripper().apply {
                         sortByPosition = true
                         startPage = 1
                         endPage = lastPage

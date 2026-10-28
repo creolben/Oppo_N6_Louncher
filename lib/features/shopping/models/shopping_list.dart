@@ -1,6 +1,17 @@
 import 'quantity.dart';
 import 'shopping_item.dart';
 
+/// The short weekday names [ShoppingItem.days] uses, in week order.
+const List<String> weekdayOrder = <String>[
+  'Mon',
+  'Tue',
+  'Wed',
+  'Thu',
+  'Fri',
+  'Sat',
+  'Sun',
+];
+
 /// How a list orders its unchecked rows.
 enum ShoppingSortMode {
   /// Grouped into sticky aisle sections in the canonical store order. This is
@@ -103,6 +114,11 @@ class ShoppingList {
         note: existing.note ?? item.note,
         sourceRecipeId: existing.sourceRecipeId ?? item.sourceRecipeId,
         parentId: existing.parentId,
+        amountText: merged.$2 == null
+            ? _joinAmounts(existing.amountText, item.amountText)
+            : null,
+        costCents: _sumCosts(existing.costCents, item.costCents),
+        days: _unionDays(existing.days, item.days),
       );
       return copyWith(items: next, updatedAt: now ?? DateTime.now());
     }
@@ -117,6 +133,9 @@ class ShoppingList {
         aisle: item.aisle,
         note: item.note,
         sourceRecipeId: item.sourceRecipeId,
+        amountText: item.amountText,
+        costCents: item.costCents,
+        days: item.days,
       );
       return copyWith(items: next, updatedAt: now ?? DateTime.now());
     }
@@ -133,6 +152,40 @@ class ShoppingList {
     if (b == null) return (true, a);
     final merged = a.tryMerge(b);
     return (merged != null, merged);
+  }
+
+  /// Both free-form amounts of a merge, joined so neither purchase is lost
+  /// (`1 head + 2 heads`). Equal amounts are kept once.
+  static String? _joinAmounts(String? a, String? b) {
+    if (a == null || a.isEmpty) return b;
+    if (b == null || b.isEmpty || a == b) return a;
+    return '$a + $b';
+  }
+
+  static int? _sumCosts(int? a, int? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    return a + b;
+  }
+
+  /// The days of both lines, in week order.
+  static List<String> _unionDays(List<String> a, List<String> b) {
+    if (b.isEmpty) return a;
+    if (a.isEmpty) return b;
+    final Set<String> all = <String>{...a, ...b};
+    return weekdayOrder.where(all.contains).toList();
+  }
+
+  /// Total estimated cost of the lines that carry one, in cents, or null when
+  /// none do. [uncheckedOnly] counts only what is still to buy.
+  int? estimatedCostCents({bool uncheckedOnly = false}) {
+    int? total;
+    for (final item in items) {
+      final cost = item.costCents;
+      if (cost == null || (uncheckedOnly && item.checked)) continue;
+      total = (total ?? 0) + cost;
+    }
+    return total;
   }
 
   ShoppingList copyWith({
