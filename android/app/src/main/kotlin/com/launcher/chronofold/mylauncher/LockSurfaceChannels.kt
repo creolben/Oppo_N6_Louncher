@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
@@ -29,6 +30,7 @@ import android.os.CancellationSignal
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.Process
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.provider.Settings
@@ -104,8 +106,17 @@ class LockSurfaceChannels(
         /** Fixed id so [LockActivity] can cancel the prompt that raised it. */
         const val LOCK_SURFACE_NOTIFICATION_ID = 0x10C4
 
-        /** Edge length of the launcher icons sent to Dart. */
-        private const val ICON_PIXELS = 96
+        /**
+         * The largest edge an app icon is drawn at anywhere in the launcher,
+         * in dp. Icons are rasterised at this size times the display density
+         * (208 px at 520 dpi) so they are as sharp as the stock launcher's;
+         * the old fixed 96 px was upscaled on every surface and read soft.
+         */
+        private const val ICON_DP = 64
+
+        /** Hard bounds on the rasterised icon edge, in px. */
+        private const val ICON_MIN_PIXELS = 96
+        private const val ICON_MAX_PIXELS = 256
 
         /** Longest edge album art is scaled to before it is sent to Dart. */
         private const val MEDIA_ART_MAX_PIXELS = 256
@@ -638,7 +649,71 @@ class LockSurfaceChannels(
 
     // --- App inventory -----------------------------------------------------------------
 
+    /** The icon edge for this display, in px. */
+    private fun iconPixels(): Int {
+        val density = activity.resources.displayMetrics.density
+        return Math.round(ICON_DP * density).coerceIn(ICON_MIN_PIXELS, ICON_MAX_PIXELS)
+    }
+
     private fun fetchInstalledApps(includeIcons: Boolean): List<Map<String, Any?>> {
+        val launcherApps = activity.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
+        val fromLauncherApps = if (launcherApps != null) {
+            try {
+                fetchThroughLauncherApps(launcherApps, includeIcons)
+            } catch (error: Exception) {
+                android.util.Log.w("ChronoFold", "CF_SCAN: LauncherApps query failed", error)
+                null
+            }
+        } else {
+            null
+        }
+        if (fromLauncherApps != null && fromLauncherApps.isNotEmpty()) return fromLauncherApps
+        return fetchThroughPackageManager(includeIcons)
+    }
+
+    /**
+     * The launcher-grade inventory: `LauncherApps` is the API the platform
+     * builds launchers on. It answers for the current user with the same
+     * MAIN/LAUNCHER set as a package query, and its icons are requested at
+     * the display's density rather than whatever bucket the drawable loader
+     * picked.
+     */
+    private fun fetchThroughLauncherApps(
+        launcherApps: LauncherApps,
+        includeIcons: Boolean,
+    ): List<Map<String, Any?>> {
+        val densityDpi = activity.resources.displayMetrics.densityDpi
+        val pixels = iconPixels()
+        val ownPackage = activity.applicationContext.packageName
+        val appList = ArrayList<Map<String, Any?>>()
+        for (info in launcherApps.getActivityList(null, Process.myUserHandle())) {
+            val component = info.componentName
+            if (component.packageName == ownPackage) continue
+            val appInfo = info.applicationInfo
+            val appData = HashMap<String, Any?>()
+            appData["packageName"] = component.packageName
+            appData["activityName"] = component.className
+            appData["label"] = info.label?.toString() ?: component.packageName
+            appData["isSystemApp"] = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            appData["category"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                appInfo.category
+            } else {
+                -1
+            }
+            if (includeIcons) {
+                appData["iconBytes"] = try {
+                    drawableToByteArray(info.getIcon(densityDpi), pixels)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            appList.add(appData)
+        }
+        return appList
+    }
+
+    /** The pre-LauncherApps path, kept as the fallback for a refused query. */
+    private fun fetchThroughPackageManager(includeIcons: Boolean): List<Map<String, Any?>> {
         val pm = activity.packageManager
         val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
@@ -650,6 +725,7 @@ class LockSurfaceChannels(
             pm.queryIntentActivities(mainIntent, 0)
         }
 
+        val pixels = iconPixels()
         val appList = ArrayList<Map<String, Any?>>()
 
         for (resolveInfo in resolveInfoList) {
@@ -677,7 +753,7 @@ class LockSurfaceChannels(
             if (includeIcons) {
                 try {
                     val iconDrawable = resolveInfo.loadIcon(pm)
-                    val iconBytes = drawableToByteArray(iconDrawable)
+                    val iconBytes = drawableToByteArray(iconDrawable, pixels)
                     appData["iconBytes"] = iconBytes
                 } catch (e: Exception) {
                     appData["iconBytes"] = null
@@ -691,17 +767,16 @@ class LockSurfaceChannels(
     }
 
     /**
-     * Renders [drawable] into a launcher-sized PNG.
+     * Renders [drawable] into a PNG [pixels] on a side.
      *
      * Icons used to be sent at intrinsic size — for adaptive icons that is
      * 432px on this device — which put tens of megabytes into a single
-     * platform-channel message and made the Dart side decode every icon at
-     * full size. The Dart layer already downscales to this size before drawing,
-     * so scaling here is lossless from the launcher's point of view and removes
-     * both the channel weight and the decode cost.
+     * platform-channel message. They are now rasterised at the size the
+     * launcher actually draws them (see [ICON_DP]), so the channel stays small
+     * and nothing is upscaled on screen.
      */
-    private fun drawableToByteArray(drawable: Drawable): ByteArray {
-        val bitmap = Bitmap.createBitmap(ICON_PIXELS, ICON_PIXELS, Bitmap.Config.ARGB_8888)
+    private fun drawableToByteArray(drawable: Drawable, pixels: Int): ByteArray {
+        val bitmap = Bitmap.createBitmap(pixels, pixels, Bitmap.Config.ARGB_8888)
         try {
             val canvas = Canvas(bitmap)
             drawable.setBounds(0, 0, canvas.width, canvas.height)

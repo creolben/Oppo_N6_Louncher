@@ -10,6 +10,7 @@ import '../models/now_playing.dart';
 import '../models/quick_shortcut.dart';
 import '../ui/theme/luminous_home_theme.dart';
 import '../ui/theme/system_palette.dart';
+import '../ui/theme/wallpaper_tone.dart';
 
 class LauncherBridge {  static const MethodChannel _appsChannel =
       MethodChannel('com.launcher.chronofold/apps');
@@ -40,8 +41,10 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   static final StreamController<SystemPalette?> _systemPaletteController =
       StreamController<SystemPalette?>.broadcast();
 
-  /// Edge length icons are decoded at, matching the native side's downscale.
-  static const int _iconPixels = 96;
+  /// Broadcasts the native `onWallpaperToneChanged` pushes, one per real
+  /// wallpaper change while the launcher runs.
+  static final StreamController<WallpaperTone?> _wallpaperToneController =
+      StreamController<WallpaperTone?>.broadcast();
 
   static VoidCallback? _onLockScreenListener;
   static VoidCallback? _onPackageChangeListener;
@@ -77,6 +80,9 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
           break;
         case 'onSystemPaletteChanged':
           _systemPaletteController.add(SystemPalette.fromMap(call.arguments));
+          break;
+        case 'onWallpaperToneChanged':
+          _wallpaperToneController.add(WallpaperTone.fromMap(call.arguments));
           break;
         case 'onSharedPdf':
           final Object? args = call.arguments;
@@ -273,14 +279,14 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     ]);
   }
 
+  /// Decodes an icon at the size native rasterised it: the display's own
+  /// density times the largest edge the launcher draws, so nothing is
+  /// upscaled on screen. The old fixed 96 px decode left every icon soft at
+  /// 520 dpi.
   static Future<ui.Image?> _decodeIconBytes(Uint8List? bytes) async {
     if (bytes == null) return null;
     try {
-      final codec = await ui.instantiateImageCodec(
-        bytes,
-        targetWidth: _iconPixels,
-        targetHeight: _iconPixels,
-      );
+      final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
       return frame.image;
     } catch (e) {
@@ -740,17 +746,59 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return false;
   }
 
-  /// Tells Android that Flutter has produced a new launcher frame after a
-  /// foreground return. The native return bridge remains opaque until this
-  /// acknowledgement, preventing the system task compositor from flashing
-  /// ColorOS content between the external app and the cover screen.
-  static Future<void> notifyLauncherFrameReady() async {
-    if (!kIsWeb && Platform.isAndroid) {
-      try {
-        await _appsChannel.invokeMethod('launcherFrameReady');
-      } catch (e) {
-        debugPrint('Could not acknowledge launcher frame: $e');
-      }
+  /// The system wallpaper's colour verdict, or null when the platform has
+  /// none. Null on a non-Android host, where there is no wallpaper.
+  static Future<WallpaperTone?> getWallpaperTone() async {
+    _ensureHandlerInitialized();
+    if (!_usePlatformChannels) return null;
+    try {
+      final Map<dynamic, dynamic>? raw =
+          await _appsChannel.invokeMethod<Map<dynamic, dynamic>>(
+        'getWallpaperTone',
+      );
+      return WallpaperTone.fromMap(raw);
+    } catch (e) {
+      debugPrint('CF_WALLPAPER: reading the wallpaper colours failed: $e');
+      return null;
+    }
+  }
+
+  /// Wallpaper-colour pushes from native, one per change while the launcher
+  /// runs. Empty on a host without the platform channel.
+  static Stream<WallpaperTone?> get wallpaperToneChanges {
+    _ensureHandlerInitialized();
+    return _wallpaperToneController.stream;
+  }
+
+  /// Reports where the launcher is scrolled to, in wallpaper fractions, so the
+  /// system wallpaper pans with the galaxy the way it pans with a paged home.
+  /// Both axes are 0..1 with 0.5 at rest. A no-op off Android.
+  static Future<void> setWallpaperOffsets(double x, double y) async {
+    if (!_usePlatformChannels) return;
+    try {
+      await _appsChannel.invokeMethod('setWallpaperOffsets', {
+        'x': x.clamp(0.0, 1.0),
+        'y': y.clamp(0.0, 1.0),
+      });
+    } catch (e) {
+      debugPrint('CF_WALLPAPER: wallpaper offsets refused: $e');
+    }
+  }
+
+  /// Blurs the wallpaper behind the launcher window while a full-screen
+  /// surface is up, or clears the blur. Answers whether the blur is in effect:
+  /// false on a platform or build that has no window blur, in which case the
+  /// surface's own scrim is all there is.
+  static Future<bool> setWindowBlur(bool enabled) async {
+    if (!_usePlatformChannels) return false;
+    try {
+      return await _appsChannel.invokeMethod<bool>('setWindowBlur', {
+            'enabled': enabled,
+          }) ??
+          false;
+    } catch (e) {
+      debugPrint('CF_WALLPAPER: window blur refused: $e');
+      return false;
     }
   }
 

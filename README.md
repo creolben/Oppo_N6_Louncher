@@ -11,6 +11,7 @@ It is designed to be dependable enough for daily use as your default HOME app, w
 - **Constellations & sectors** — group apps into named, color-coded constellations (Essentials, Connect, Workspace, Studio, and your own), each editable in place.
 - **Cosmic lock screen** — an optional launcher-owned lock surface with clustered app orbs and quick shortcuts. Authentication always delegates to the Android keyguard.
 - **App & web search** — search installed apps or escalate a miss to the comet web-search surface without retyping.
+- **Wallpaper-backed home** — the launcher window shows the ColorOS system wallpaper through a transparent surface, with Launcher3-style legibility scrims, chrome icons that follow the wallpaper's colour verdict, and parallax offsets reported to the system.
 - **Live wallpaper hand-off** — hands off to Android's live-wallpaper chooser for an ambient cosmic backdrop.
 - **Accessibility-minded** — 48 dp touch targets, TalkBack semantics on painted app nodes, scalable text, safe-area handling, and support for the system "reduce motion" preference.
 
@@ -50,12 +51,12 @@ lib/
   ui/                    Screens (folded cover, tabletop cockpit), widgets, and theme
   features/lockscreen/   Cosmic lock screen
 android/app/             Native launcher integration (HOME role, package queries,
-                         keyguard, hinge sensor, app-return bridge, wallpaper preview)
+                         keyguard, hinge sensor, wallpaper colours and offsets, wallpaper preview)
 ```
 
 Key pieces:
 
-- **LauncherBridge** — the platform channel to Android: querying and launching installed apps, HOME/screen lifecycle events, default-launcher status, keyguard overlay control, and the live-wallpaper preview.
+- **LauncherBridge** — the platform channel to Android: querying and launching installed apps, HOME/screen lifecycle events, default-launcher status, keyguard overlay control, the system wallpaper's colour verdict, scroll offsets and blur, and the live-wallpaper preview.
 - **FoldableController** — reads posture (folded / unfolded / tabletop) and drives layout switching.
 - **CameraController** — pan, zoom, and inertial motion for the galaxy canvas.
 - **GalaxyLayoutEngine** — assigns apps to constellations, tracks core/hidden packages, custom constellations, and per-constellation overrides.

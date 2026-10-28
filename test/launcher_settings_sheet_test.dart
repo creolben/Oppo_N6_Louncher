@@ -287,7 +287,7 @@ void main() {
 
     expect(find.text('Use galaxy'), findsOneWidget);
     expect(
-      find.text('Off: ColorOS shows its own wallpaper when apps close'),
+      find.text('Off: Home sits on your ColorOS wallpaper'),
       findsOneWidget,
     );
     await tester.tap(find.text('Galaxy wallpaper'));
@@ -299,6 +299,6 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(find.text('Use galaxy'), findsNothing);
-    expect(find.text('On: closing an app shows the galaxy'), findsOneWidget);
+    expect(find.text('On: the galaxy is your system wallpaper'), findsOneWidget);
   });
 }

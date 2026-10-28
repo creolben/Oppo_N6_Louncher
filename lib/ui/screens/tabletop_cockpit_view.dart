@@ -109,19 +109,10 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
         .where((c) => c.id != 'core')
         .toList();
 
+    // No field of its own: the system wallpaper shows through the window in
+    // tabletop posture too, and the deck's own gradient grounds the controls.
     return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            LuminousHomeTheme.backgroundTop,
-            LuminousHomeTheme.background,
-            LuminousHomeTheme.backgroundDeep,
-          ],
-          stops: [0.0, 0.58, 1.0],
-        ),
-      ),
+      color: Colors.transparent,
       child: SafeArea(
         child: Column(
           children: [
@@ -468,7 +459,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: LuminousHomeTheme.glassOpaque,
         border: Border(
           top: BorderSide(color: LuminousHomeTheme.hairline, width: 0.8),
@@ -548,7 +539,7 @@ class _TabletopCockpitViewState extends State<TabletopCockpitView> {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      decoration: const BoxDecoration(color: LuminousHomeTheme.glassOpaque),
+      decoration: BoxDecoration(color: LuminousHomeTheme.glassOpaque),
       child: Column(
         children: [
           // Sector Selector Chips Row. Tall enough for the 48dp touch minimum;

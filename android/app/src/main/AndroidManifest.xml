@@ -40,11 +40,16 @@
              orientation restrictions when the smallest width is >= 600dp, so
              the inner display must lay out at any aspect ratio. The manifest is
              the one source; the Dart side must not re-assert orientations. -->
+        <!-- HomeLaunchTheme / HomeTheme show the system wallpaper through a
+             transparent window (res/values/styles.xml). The launcher paints
+             over the same picture the keyguard, recents and the stock
+             launcher compose on, which is what makes every transition into
+             and out of HOME read as one continuous surface. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:theme="@style/LaunchTheme"
+            android:theme="@style/HomeLaunchTheme"
             android:resizeableActivity="true"
             android:screenOrientation="portrait"
             android:clearTaskOnLaunch="true"
@@ -55,10 +60,11 @@
             <!-- Specifies an Android theme to apply to this Activity as soon as
                  the Android process has started. This theme is visible to the user
                  while the Flutter UI initializes. After that, this theme continues
-                 to determine the Window background behind the Flutter UI. -->
+                 to determine the Window background behind the Flutter UI: for the
+                 home surface that background is the wallpaper itself. -->
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
-              android:resource="@style/NormalTheme"
+              android:resource="@style/HomeTheme"
               />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>

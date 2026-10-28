@@ -335,9 +335,9 @@ class _CreateConstellationModalState extends State<CreateConstellationModal> {
                               } else {
                                 if (_selectedPackages.length >= 8) {
                                   ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('A group holds up to 8 apps.'),
-                                      duration: Duration(seconds: 2),
+                                    SnackBar(
+                                      content: const Text('A group holds up to 8 apps.'),
+                                      duration: const Duration(seconds: 2),
                                       backgroundColor: LuminousHomeTheme.panelRaised,
                                     ),
                                   );

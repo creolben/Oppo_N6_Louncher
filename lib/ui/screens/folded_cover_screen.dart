@@ -30,7 +30,7 @@ abstract final class CoverStyle {
   static Color get accent => LuminousHomeTheme.accent;
   static const Color secondaryAccent = LuminousHomeTheme.cobalt;
   static const Color tertiaryAccent = LuminousHomeTheme.orchid;
-  static const Color hairline = LuminousHomeTheme.hairline;
+  static Color get hairline => LuminousHomeTheme.hairline;
   static const Color label = LuminousHomeTheme.textSecondary;
   static const Color labelMuted = LuminousHomeTheme.textMuted;
 
@@ -211,7 +211,9 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     final selectedConstellation = _selectedConstellation;
 
     return Scaffold(
-      backgroundColor: CoverStyle.page,
+      // Transparent: the system wallpaper shows through the window, as it
+      // does behind every other ColorOS home surface on the cover display.
+      backgroundColor: Colors.transparent,
       // The detector wraps the whole cover with translucent hit testing, so it
       // receives the taps no interactive child claimed — the empty space the
       // sleep gesture lives on. It only listens for taps; dragging and scrolling
@@ -221,68 +223,9 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
         onTapUp: _handleCoverTapUp,
         child: Stack(
           children: [
-            // 1. Luminous Horizon atmosphere: an ink-blue OLED field with a
-            // low cobalt horizon and restrained aqua/orchid light.
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    const DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            CoverStyle.pageTop,
-                            CoverStyle.page,
-                            CoverStyle.pageDeep,
-                          ],
-                          stops: [0.0, 0.58, 1.0],
-                        ),
-                      ),
-                    ),
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: RadialGradient(
-                          center: const Alignment(-0.9, -0.62),
-                          radius: 0.9,
-                          colors: [
-                            CoverStyle.accent.withValues(alpha: 0.13),
-                            Colors.transparent,
-                          ],
-                        ),
-                      ),
-                    ),
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: RadialGradient(
-                          center: const Alignment(0.95, 0.02),
-                          radius: 0.82,
-                          colors: [
-                            CoverStyle.tertiaryAccent.withValues(alpha: 0.11),
-                            Colors.transparent,
-                          ],
-                        ),
-                      ),
-                    ),
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: RadialGradient(
-                          center: const Alignment(0.08, 1.16),
-                          radius: 0.8,
-                          colors: [
-                            CoverStyle.secondaryAccent.withValues(alpha: 0.2),
-                            Colors.transparent,
-                          ],
-                          stops: const [0.0, 1.0],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            // 1. The field is the system wallpaper itself; nothing is painted
+            // behind the stardust any more. The legibility scrims live one
+            // level up (see `WallpaperScrim`), under every posture's chrome.
 
             // 2. Ambient Stardust Starfield Background. The boundary keeps the
             // breathing pulse repainting this layer only, instead of dragging
@@ -341,7 +284,9 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             ),
 
             // 4. Scrim so the scrolling body dissolves under the floating dock
-            // instead of colliding with it.
+            // instead of colliding with it. It never goes opaque: the
+            // wallpaper stays visible under the dock, as it does under the
+            // ColorOS dock.
             Positioned(
               left: 0,
               right: 0,
@@ -354,9 +299,11 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
                       colors: [
-                        CoverStyle.page.withValues(alpha: 0.0),
-                        CoverStyle.page.withValues(alpha: 0.86),
-                        CoverStyle.page,
+                        // Stacks on the home-level bottom scrim, so it stays
+                        // light; together they never go opaque.
+                        LuminousHomeTheme.wallpaperScrim.withValues(alpha: 0.0),
+                        LuminousHomeTheme.wallpaperScrim.withValues(alpha: 0.3),
+                        LuminousHomeTheme.wallpaperScrim.withValues(alpha: 0.4),
                       ],
                       stops: const [0.0, 0.55, 1.0],
                     ),
@@ -859,7 +806,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                       foregroundColor: constellation.primaryColor,
                       backgroundColor: LuminousHomeTheme.glass,
                       minimumSize: const Size(0, CoverStyle.touchTarget),
-                      side: const BorderSide(
+                      side: BorderSide(
                         color: LuminousHomeTheme.hairline,
                         width: 0.8,
                       ),

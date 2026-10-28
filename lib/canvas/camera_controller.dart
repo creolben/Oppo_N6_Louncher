@@ -11,6 +11,9 @@ class CameraController extends ChangeNotifier {
   static const double minZoom = 0.45;
   static const double maxZoom = 2.4;
 
+  /// How far the camera may pan from centre, in world units at zoom 1.
+  static const double maxPanWorld = 750.0;
+
   // Kinetic Physics
   Ticker? _ticker;
   FrictionSimulation? _panSimulationX;
@@ -82,10 +85,24 @@ class CameraController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// How far the camera is panned from centre on each axis, as a fraction of
+  /// its pan limit: each component is -1..1 and zero at rest.
+  ///
+  /// The launcher reports this to the system wallpaper so it parallaxes with
+  /// the galaxy the way it does with a paged home screen.
+  Offset get panFraction {
+    if (_viewportSize == Size.zero || _zoom <= 0) return Offset.zero;
+    final double maxPan = maxPanWorld * _zoom;
+    return Offset(
+      ((_translation.dx - _viewportSize.width / 2) / maxPan).clamp(-1.0, 1.0),
+      ((_translation.dy - _viewportSize.height / 2) / maxPan).clamp(-1.0, 1.0),
+    );
+  }
+
   Offset _clampTranslation(Offset t) {
     if (_viewportSize == Size.zero) return t;
-    // Allow panning up to 750px from center in world space
-    final double maxPan = 750.0 * _zoom;
+    // Allow panning up to maxPanWorld from center in world space
+    final double maxPan = maxPanWorld * _zoom;
     final double cx = _viewportSize.width / 2;
     final double cy = _viewportSize.height / 2;
     return Offset(

@@ -40,7 +40,7 @@ class FirstRunHintCard extends StatelessWidget {
           color: LuminousHomeTheme.glassOpaqueStrong,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusL),
-            side: const BorderSide(color: LuminousHomeTheme.hairline),
+            side: BorderSide(color: LuminousHomeTheme.hairline),
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),

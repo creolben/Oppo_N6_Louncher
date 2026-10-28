@@ -16,6 +16,8 @@ import 'ui/widgets/foldable_cockpit_bar.dart';
 import 'ui/widgets/search_overlay.dart';
 import 'ui/widgets/comet_search_surface.dart';
 import 'ui/widgets/ambient_wallpaper_sheet.dart';
+import 'ui/widgets/wallpaper_scrim.dart';
+import 'ui/theme/wallpaper_tone.dart';
 import 'core/search_coordinator.dart';
 import 'core/search_providers/fixture_search_provider.dart';
 import 'core/system_gestures.dart';
@@ -56,16 +58,27 @@ import 'lock_main.dart' as lock_surface;
 @pragma('vm:entry-point')
 Future<void> lockMain() => lock_surface.lockMain();
 
+/// The transparent, edge-to-edge system chrome, with its icons dark or light.
+///
+/// The home screen picks [darkIcons] from the wallpaper's own colour verdict
+/// (`WallpaperTone.isLight`), the way ColorOS flips its status bar on a light
+/// wallpaper, and goes back to light icons under a dark scrim or the lock
+/// panel. Exposed so tests can check the choice.
+SystemUiOverlayStyle homeOverlayStyle({required bool darkIcons}) {
+  final Brightness icons = darkIcons ? Brightness.dark : Brightness.light;
+  return SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: icons,
+    statusBarBrightness: darkIcons ? Brightness.light : Brightness.dark,
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarIconBrightness: icons,
+    systemNavigationBarContrastEnforced: false,
+  );
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Colors.transparent,
-      systemNavigationBarIconBrightness: Brightness.light,
-    ),
-  );
+  SystemChrome.setSystemUIOverlayStyle(homeOverlayStyle(darkIcons: false));
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   // The accent has to be settled before the first frame, or the launcher would
@@ -209,6 +222,28 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
 
   bool _isCockpitMode = false;
 
+  /// The platform's verdict on the system wallpaper's colours, or null until
+  /// it has answered (and on hosts with no wallpaper). Decides the chrome
+  /// icon brightness and the strength of the home scrims.
+  WallpaperTone? _wallpaperTone;
+  StreamSubscription<WallpaperTone?>? _wallpaperToneSubscription;
+
+  /// What the status and navigation bar icons were last set to, so a rebuild
+  /// only touches the platform when the choice changes.
+  bool? _darkChromeIcons;
+
+  /// Whether the wallpaper is currently blurred behind the window.
+  bool _windowBlurOn = false;
+
+  /// Wallpaper-offset reporting, coalesced to one report per frame.
+  bool _wallpaperOffsetScheduled = false;
+  Offset? _lastWallpaperOffset;
+
+  /// How far the wallpaper travels across the galaxy's full pan range: a
+  /// quarter of its own width, so it moves a little slower than the field in
+  /// front of it, the way a paged home's wallpaper lags its pages.
+  static const double _wallpaperParallax = 0.25;
+
   /// Whether ColorOS owns the lock screen instead of ChronoFold's Cosmic
   /// surface.
   ///
@@ -311,7 +346,78 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       }
     });
 
+    _camera.addListener(_scheduleWallpaperOffsets);
+    _foldable.addListener(_scheduleWallpaperOffsets);
+    unawaited(_readWallpaperTone());
+    _wallpaperToneSubscription =
+        LauncherBridge.wallpaperToneChanges.listen(_applyWallpaperTone);
+
     _loadApplications();
+  }
+
+  /// Asks the platform what it knows about the wallpaper's colours.
+  Future<void> _readWallpaperTone() async {
+    final WallpaperTone? tone = await LauncherBridge.getWallpaperTone();
+    if (mounted) _applyWallpaperTone(tone);
+  }
+
+  void _applyWallpaperTone(WallpaperTone? tone) {
+    if (!mounted || tone == _wallpaperTone) return;
+    setState(() => _wallpaperTone = tone);
+  }
+
+  /// Whether a surface that covers the whole home is up (search, the comet,
+  /// shopping). The lock panel is tracked separately.
+  bool get _fullScreenSurfaceUp =>
+      _isSearchOpen || _isCometSearchOpen || _isShoppingOpen;
+
+  /// Keeps the system chrome and the wallpaper blur in step with the screen.
+  ///
+  /// Called from [build], because every state that matters here is also what
+  /// drives a rebuild; both platform calls are made only on a real change, so
+  /// the common rebuild costs two comparisons. Icons go dark only over a
+  /// light wallpaper with nothing drawn across it; a full-screen surface
+  /// brings its own dark scrim and the lock panel its own field.
+  void _syncWallpaperChrome() {
+    final bool overlayUp = _fullScreenSurfaceUp;
+    final bool darkIcons =
+        (_wallpaperTone?.isLight ?? false) && !overlayUp && !_isLocked;
+    if (_darkChromeIcons != darkIcons) {
+      _darkChromeIcons = darkIcons;
+      SystemChrome.setSystemUIOverlayStyle(
+        homeOverlayStyle(darkIcons: darkIcons),
+      );
+    }
+    final bool blur = overlayUp && !_isLocked;
+    if (_windowBlurOn != blur) {
+      _windowBlurOn = blur;
+      unawaited(LauncherBridge.setWindowBlur(blur));
+    }
+  }
+
+  /// Reports the camera's pan to the system wallpaper once per frame.
+  void _scheduleWallpaperOffsets() {
+    if (_wallpaperOffsetScheduled) return;
+    _wallpaperOffsetScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _wallpaperOffsetScheduled = false;
+      if (mounted) _reportWallpaperOffsets();
+    });
+  }
+
+  void _reportWallpaperOffsets() {
+    Offset target = const Offset(0.5, 0.5);
+    if (!_foldable.isFolded) {
+      final Offset pan = _camera.panFraction;
+      target = Offset(
+        0.5 - pan.dx * _wallpaperParallax,
+        0.5 - pan.dy * _wallpaperParallax,
+      );
+    }
+    final Offset? last = _lastWallpaperOffset;
+    if (last != null && (last - target).distance < 0.002) return;
+    _lastWallpaperOffset = target;
+    unawaited(LauncherBridge.setWallpaperOffsets(target.dx, target.dy));
   }
 
   /// A new badge map arrived: fold it into the app entries and rebuild so every
@@ -493,17 +599,13 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     }
     if (state == AppLifecycleState.resumed) {
       _checkDefaultLauncherStatus();
-      if (mounted) {
-        // Force a new root frame, then tell Android it is safe to remove the
-        // native return bridge. The bridge hides with a short fade, so Flutter
-        // is already visibly presenting the launcher beneath it.
-        setState(() {});
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            unawaited(LauncherBridge.notifyLauncherFrameReady());
-          }
-        });
-      }
+      // The wallpaper may have changed while the user was away. The colour
+      // listener covers a change during the session; this covers the gap.
+      unawaited(_readWallpaperTone());
+      // Another wallpaper target may have scrolled the wallpaper meanwhile;
+      // re-report this window's position on the next frame.
+      _lastWallpaperOffset = null;
+      _scheduleWallpaperOffsets();
     }
     // In Native Launcher Mode, switching or opening apps never locks the launcher.
   }
@@ -939,8 +1041,11 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _scanRetryTimer?.cancel();
+    _wallpaperToneSubscription?.cancel();
     _badgeController.removeListener(_onBadgeCountsChanged);
     _badgeController.dispose();
+    _camera.removeListener(_scheduleWallpaperOffsets);
+    _foldable.removeListener(_scheduleWallpaperOffsets);
     _foldable.dispose();
     _camera.dispose();
     _searchCoordinator.dispose();
@@ -987,6 +1092,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   @override
   Widget build(BuildContext context) {
     _foldable.updateFromMediaQuery(context);
+    _syncWallpaperChrome();
 
     return PopScope(
       canPop: false,
@@ -997,7 +1103,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
         if (_isLocked) return;
         // Back is consumed by the topmost surface first. The shopping surface
         // sits above the comet web-search surface and app search, so it must
-        // close before them; otherwise Back recenters the galaxy while the
+        // close before them; otherwise Back would be swallowed while the
         // shopping list stays up.
         if (_isShoppingOpen) {
           _closeShopping();
@@ -1005,9 +1111,12 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
           _closeCometSearch();
         } else if (_isSearchOpen) {
           setState(() => _isSearchOpen = false);
-        } else {
-          _camera.resetView();
         }
+        // On the bare home surface Back is consumed and does nothing. A native
+        // home ignores Back on its own surface — ColorOS neither leaves HOME
+        // nor scrolls its pages — and recentering the galaxy here made the
+        // launcher the one home that visibly reacted. Home (the gesture or
+        // the button) is what recenters, through setHomeButtonListener.
       },
       child: Scaffold(
         body: _isLoading
@@ -1022,6 +1131,16 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                 builder: (context, _) {
                   return Stack(
                     children: [
+                      // 0. Legibility scrims over the system wallpaper, under
+                      // every posture's chrome. The lock panel and the
+                      // full-screen surfaces cover them with their own.
+                      Positioned.fill(
+                        key: const ValueKey('wallpaper_scrim'),
+                        child: WallpaperScrim(
+                          light: _wallpaperTone?.isLight ?? false,
+                        ),
+                      ),
+
                       // Main Launcher Content (Folded Cover Screen vs Unfolded Cosmic Galaxy)
                       //
                       // The lock panel and both search surfaces cover this

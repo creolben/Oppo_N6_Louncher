@@ -503,7 +503,7 @@ class _ConstellationEditorModalState extends State<ConstellationEditorModal> {
                                       ),
                                     ],
                                   ),
-                                  child: const Icon(Icons.auto_awesome, color: LuminousHomeTheme.panel, size: 22),
+                                  child: Icon(Icons.auto_awesome, color: LuminousHomeTheme.panel, size: 22),
                                 ),
                                 ...List.generate(GalaxyLayoutEngine.maxCoreApps, (index) {
                                   final angle = (index * 2 * math.pi / GalaxyLayoutEngine.maxCoreApps) - (math.pi / 2);

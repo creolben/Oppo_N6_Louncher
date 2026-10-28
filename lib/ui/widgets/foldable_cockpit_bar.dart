@@ -544,8 +544,8 @@ class _ShelfDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 4),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
       child: SizedBox(
         height: 24,
         child: VerticalDivider(

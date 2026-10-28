@@ -19,11 +19,15 @@ typedef ConstellationPalette = ({Color primary, Color secondary, Color glow});
 /// its colours from here by semantic name, so a future dynamic-colour round can
 /// re-colour the launcher by changing this file alone.
 abstract final class LuminousHomeTheme {
-  // Ink-blue OLED field.
+  // Ink-blue OLED field. Since the launcher window shows the system wallpaper
+  // these are no longer painted edge to edge; they remain the ink the lock
+  // surface, the scrims and the fallback panel roles are mixed from.
   static const Color background = Color(0xFF050A16);
   static const Color backgroundTop = Color(0xFF0A1830);
-  static const Color backgroundRaised = Color(0xFF111C31);
   static const Color backgroundDeep = Color(0xFF020711);
+
+  /// The raised node fill when no system palette exists; see [backgroundRaised].
+  static const Color _backgroundRaisedInk = Color(0xFF111C31);
 
   // Luminous horizon palette.
   static const Color cobalt = Color(0xFF6487FF);
@@ -34,12 +38,15 @@ abstract final class LuminousHomeTheme {
   static const Color amber = Color(0xFFFFD27A);
 
   // Tonal glass. Alpha is part of the role so every surface stacks the same.
+  // The white glass stays white: over a wallpaper, that is the ColorOS
+  // material. The opaque glass and the hairlines are tonal roles that follow
+  // the device's neutral ramp; their ink fallbacks live below.
   static const Color glass = Color(0x1FFFFFFF);
   static const Color glassStrong = Color(0x33FFFFFF);
-  static const Color glassOpaque = Color(0xE810192A);
-  static const Color glassOpaqueStrong = Color(0xF0141F34);
-  static const Color hairline = Color(0x2EFFFFFF);
-  static const Color hairlineStrong = Color(0x52FFFFFF);
+  static const Color _glassOpaqueInk = Color(0xE810192A);
+  static const Color _glassOpaqueStrongInk = Color(0xF0141F34);
+  static const Color _hairlineInk = Color(0x2EFFFFFF);
+  static const Color _hairlineStrongInk = Color(0x52FFFFFF);
 
   static const Color textPrimary = Color(0xFFF7FAFF);
   static const Color textSecondary = Color(0xC7DDE8F7);
@@ -207,15 +214,17 @@ abstract final class LuminousHomeTheme {
   static const Color borderCool = Color(0xFF64B5F6);
 
   // ── Panels, modals and sheets ─────────────────────────────────────────────
-  static const Color panelDeep = Color(0xFF0B0E1E);
-  static const Color panel = Color(0xFF101424);
-  static const Color panelRaised = Color(0xFF161B30);
-  static const Color glassCool = Color(0xFF141A30);
-  static const Color glassPanel = Color(0xFF101528);
-  static const Color nodeFill = Color(0xFF0F1424);
-
-  /// The modal backdrop used by every editor sheet.
-  static const Color panelScrim = Color(0xEE0B0E1E);
+  // The ink fallbacks for the tonal panel roles. The live values are the
+  // `panel*`, `glass*`, `nodeFill` and `hairline*` getters further down, which
+  // [applyPalette] re-derives from the Material You neutral ramps so a sheet
+  // sits beside a ColorOS panel in the same tint.
+  static const Color _panelDeepInk = Color(0xFF0B0E1E);
+  static const Color _panelInk = Color(0xFF101424);
+  static const Color _panelRaisedInk = Color(0xFF161B30);
+  static const Color _glassCoolInk = Color(0xFF141A30);
+  static const Color _glassPanelInk = Color(0xFF101528);
+  static const Color _nodeFillInk = Color(0xFF0F1424);
+  static const Color _panelScrimInk = Color(0xEE0B0E1E);
 
   /// The app-search overlay scrim. The alpha matches ColorOS
   /// `coui_color_mask_dark` (`#99000000`): 60% over the galaxy instead of the
@@ -279,6 +288,66 @@ abstract final class LuminousHomeTheme {
   static Color _accentDeep = aquaDeep;
   static int _paletteRevision = 0;
 
+  // The tonal surface roles, seeded with the ink fallbacks.
+  static Color _panelDeep = _panelDeepInk;
+  static Color _panel = _panelInk;
+  static Color _panelRaised = _panelRaisedInk;
+  static Color _glassCool = _glassCoolInk;
+  static Color _glassPanel = _glassPanelInk;
+  static Color _nodeFill = _nodeFillInk;
+  static Color _panelScrim = _panelScrimInk;
+  static Color _backgroundRaised = _backgroundRaisedInk;
+  static Color _glassOpaque = _glassOpaqueInk;
+  static Color _glassOpaqueStrong = _glassOpaqueStrongInk;
+  static Color _hairline = _hairlineInk;
+  static Color _hairlineStrong = _hairlineStrongInk;
+  static Color _wallpaperScrim = backgroundDeep;
+
+  // ── Tonal surfaces ────────────────────────────────────────────────────────
+  // Material You's neutral ramps, when the platform has them. ColorOS tints
+  // its own sheets, folders and dock from the same ramps, so a ChronoFold
+  // panel beside a system panel shares its hue instead of staying navy.
+
+  /// The deepest sheet surface (dialog and editor bodies).
+  static Color get panelDeep => _panelDeep;
+
+  /// The standard sheet surface.
+  static Color get panel => _panel;
+
+  /// A sheet surface one step up, for raised cards inside a sheet.
+  static Color get panelRaised => _panelRaised;
+
+  /// The cool glass behind search capsules and the comet.
+  static Color get glassCool => _glassCool;
+
+  /// The glass panel behind grouped controls.
+  static Color get glassPanel => _glassPanel;
+
+  /// The galaxy node body.
+  static Color get nodeFill => _nodeFill;
+
+  /// The modal backdrop used by every editor sheet.
+  static Color get panelScrim => _panelScrim;
+
+  /// The raised node highlight.
+  static Color get backgroundRaised => _backgroundRaised;
+
+  /// Near-opaque glass for tooltips, chips and the dock.
+  static Color get glassOpaque => _glassOpaque;
+
+  /// The strongest opaque glass, for snackbars and popups.
+  static Color get glassOpaqueStrong => _glassOpaqueStrong;
+
+  /// The one-pixel border on glass.
+  static Color get hairline => _hairline;
+
+  /// A stronger border, for focused or selected glass.
+  static Color get hairlineStrong => _hairlineStrong;
+
+  /// The ink the home scrims are mixed from. The scrims sit between the
+  /// system wallpaper and the clock, labels and dock; see `WallpaperScrim`.
+  static Color get wallpaperScrim => _wallpaperScrim;
+
   /// The launcher's current accent: the system's Material You primary, or
   /// [aqua] when the platform has none or its tone is too dark to read.
   static Color get accent => _accent;
@@ -299,13 +368,19 @@ abstract final class LuminousHomeTheme {
   /// widget re-reads the accent instead of keeping a cached `Color`.
   static int get paletteRevision => _paletteRevision;
 
-  /// Applies [palette] as the accent family, or restores [aqua] when it is null
-  /// or too low-contrast against [background].
+  /// Applies [palette] as the accent family and the tonal surface roles, or
+  /// restores the aqua accent and the ink surfaces when it is null.
   ///
   /// The Material dark-theme primary is tone 200; if that is below 3.0:1 on the
   /// OLED field the guard walks to tone 100 and then 50, and only then keeps
   /// [aqua]. The step exists because a wallpaper-derived tone can be almost the
   /// field's own ink and vanish as a focus ring.
+  ///
+  /// The surfaces come from the neutral ramps: `neutral1` tone 900 is the
+  /// Material dark surface and tone 800 its raised container; `neutral2`
+  /// tone 200 is the outline. They are mixed toward black so the launcher keeps
+  /// its depth while taking the wallpaper's hue, the way ColorOS tints its own
+  /// sheets. A palette without a tone-900 neutral keeps the ink surfaces.
   static void applyPalette(SystemPalette? palette) {
     Color nextAccent = aqua;
     Color nextDeep = aquaDeep;
@@ -327,12 +402,44 @@ abstract final class LuminousHomeTheme {
       }
     }
 
-    if (nextAccent == _accent && nextDeep == _accentDeep) return;
+    final _TonalSurfaces surfaces = _TonalSurfaces.from(palette);
+
+    final bool accentChanged =
+        nextAccent != _accent || nextDeep != _accentDeep;
+    final bool surfacesChanged = surfaces.panelDeep != _panelDeep ||
+        surfaces.panel != _panel ||
+        surfaces.panelRaised != _panelRaised ||
+        surfaces.glassCool != _glassCool ||
+        surfaces.glassPanel != _glassPanel ||
+        surfaces.nodeFill != _nodeFill ||
+        surfaces.panelScrim != _panelScrim ||
+        surfaces.backgroundRaised != _backgroundRaised ||
+        surfaces.glassOpaque != _glassOpaque ||
+        surfaces.glassOpaqueStrong != _glassOpaqueStrong ||
+        surfaces.hairline != _hairline ||
+        surfaces.hairlineStrong != _hairlineStrong ||
+        surfaces.wallpaperScrim != _wallpaperScrim;
+    if (!accentChanged && !surfacesChanged) return;
+
     _accent = nextAccent;
     _accentDeep = nextDeep;
+    _panelDeep = surfaces.panelDeep;
+    _panel = surfaces.panel;
+    _panelRaised = surfaces.panelRaised;
+    _glassCool = surfaces.glassCool;
+    _glassPanel = surfaces.glassPanel;
+    _nodeFill = surfaces.nodeFill;
+    _panelScrim = surfaces.panelScrim;
+    _backgroundRaised = surfaces.backgroundRaised;
+    _glassOpaque = surfaces.glassOpaque;
+    _glassOpaqueStrong = surfaces.glassOpaqueStrong;
+    _hairline = surfaces.hairline;
+    _hairlineStrong = surfaces.hairlineStrong;
+    _wallpaperScrim = surfaces.wallpaperScrim;
     _paletteRevision++;
     debugPrint(
-      'CF_THEME: palette applied accent=#${_hex(nextAccent)} source=$source',
+      'CF_THEME: palette applied accent=#${_hex(nextAccent)} '
+      'panel=#${_hex(surfaces.panel)} source=$source',
     );
   }
 
@@ -460,11 +567,14 @@ abstract final class LuminousHomeTheme {
   // ── Type scale ────────────────────────────────────────────────────────────
   // Base styles only. Widgets keep applying `MediaQuery.textScalerOf(context)`,
   // so these are safe to reuse at any scale.
+  // Clocks and headings sit at regular and medium weight: ColorOS sets its
+  // clock and titles in the system font's regular/medium cuts, and the old
+  // hairline weights read as a foreign surface beside them.
   static TextStyle get display => const TextStyle(
     color: textPrimary,
     fontSize: 52,
-    fontWeight: FontWeight.w300,
-    letterSpacing: -2.0,
+    fontWeight: FontWeight.w400,
+    letterSpacing: -1.5,
     height: 1.0,
   );
 
@@ -474,8 +584,8 @@ abstract final class LuminousHomeTheme {
   static TextStyle get clock => const TextStyle(
     color: textPrimary,
     fontSize: 38,
-    fontWeight: FontWeight.w300,
-    letterSpacing: -1.2,
+    fontWeight: FontWeight.w400,
+    letterSpacing: -0.8,
     height: 1.05,
     fontFeatures: [FontFeature.tabularFigures()],
   );
@@ -484,13 +594,13 @@ abstract final class LuminousHomeTheme {
   static TextStyle get headline => const TextStyle(
     color: textPrimary,
     fontSize: 18,
-    fontWeight: FontWeight.w600,
+    fontWeight: FontWeight.w500,
   );
 
   static TextStyle get title => const TextStyle(
     color: textPrimary,
     fontSize: 16,
-    fontWeight: FontWeight.w600,
+    fontWeight: FontWeight.w500,
   );
 
   static TextStyle get body => const TextStyle(
@@ -558,9 +668,13 @@ abstract final class LuminousHomeTheme {
       brightness: Brightness.dark,
       useMaterial3: true,
       colorScheme: scheme,
-      scaffoldBackgroundColor: background,
+      // Transparent: the system wallpaper is the launcher's backdrop, shown
+      // through the window by HomeTheme. Surfaces that need a field (the lock
+      // panel, sheets) paint their own.
+      scaffoldBackgroundColor: Colors.transparent,
       canvasColor: background,
-      fontFamily: 'Roboto',
+      // No font family: the platform's default sans-serif is the font the
+      // user chose in ColorOS, and naming one here would bypass that choice.
       splashColor: white.withValues(alpha: 0.08),
       highlightColor: white.withValues(alpha: 0.04),
       dividerColor: hairline,
@@ -569,8 +683,8 @@ abstract final class LuminousHomeTheme {
         displayLarge: TextStyle(
           color: textPrimary,
           fontSize: 52,
-          fontWeight: FontWeight.w300,
-          letterSpacing: -2.0,
+          fontWeight: FontWeight.w400,
+          letterSpacing: -1.5,
           height: 1.0,
         ),
         headlineLarge: TextStyle(
@@ -582,7 +696,7 @@ abstract final class LuminousHomeTheme {
         titleMedium: TextStyle(
           color: textPrimary,
           fontSize: 16,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w500,
         ),
         bodyMedium: TextStyle(
           color: textSecondary,
@@ -618,10 +732,91 @@ abstract final class LuminousHomeTheme {
         contentTextStyle: const TextStyle(color: textPrimary),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(controlRadius),
-          side: const BorderSide(color: hairline),
+          side: BorderSide(color: hairline),
         ),
         behavior: SnackBarBehavior.floating,
       ),
+    );
+  }
+}
+
+/// One derivation of the tonal surface roles from a [SystemPalette].
+///
+/// Kept as a value so [LuminousHomeTheme.applyPalette] can compare it against
+/// the live roles and bump the revision only when something actually changed.
+class _TonalSurfaces {
+  const _TonalSurfaces({
+    required this.panelDeep,
+    required this.panel,
+    required this.panelRaised,
+    required this.glassCool,
+    required this.glassPanel,
+    required this.nodeFill,
+    required this.panelScrim,
+    required this.backgroundRaised,
+    required this.glassOpaque,
+    required this.glassOpaqueStrong,
+    required this.hairline,
+    required this.hairlineStrong,
+    required this.wallpaperScrim,
+  });
+
+  final Color panelDeep;
+  final Color panel;
+  final Color panelRaised;
+  final Color glassCool;
+  final Color glassPanel;
+  final Color nodeFill;
+  final Color panelScrim;
+  final Color backgroundRaised;
+  final Color glassOpaque;
+  final Color glassOpaqueStrong;
+  final Color hairline;
+  final Color hairlineStrong;
+  final Color wallpaperScrim;
+
+  /// The ink roles, used when there is no palette or it lacks a neutral ramp.
+  static const _TonalSurfaces ink = _TonalSurfaces(
+    panelDeep: LuminousHomeTheme._panelDeepInk,
+    panel: LuminousHomeTheme._panelInk,
+    panelRaised: LuminousHomeTheme._panelRaisedInk,
+    glassCool: LuminousHomeTheme._glassCoolInk,
+    glassPanel: LuminousHomeTheme._glassPanelInk,
+    nodeFill: LuminousHomeTheme._nodeFillInk,
+    panelScrim: LuminousHomeTheme._panelScrimInk,
+    backgroundRaised: LuminousHomeTheme._backgroundRaisedInk,
+    glassOpaque: LuminousHomeTheme._glassOpaqueInk,
+    glassOpaqueStrong: LuminousHomeTheme._glassOpaqueStrongInk,
+    hairline: LuminousHomeTheme._hairlineInk,
+    hairlineStrong: LuminousHomeTheme._hairlineStrongInk,
+    wallpaperScrim: LuminousHomeTheme.backgroundDeep,
+  );
+
+  static _TonalSurfaces from(SystemPalette? palette) {
+    final Color? surface = palette?.neutral1(900);
+    if (palette == null || surface == null) return ink;
+    final Color container = palette.neutral1(800) ?? surface;
+    final Color outline = palette.neutral2(200) ?? LuminousHomeTheme.white;
+
+    Color toward(Color from, Color to, double t) =>
+        Color.lerp(from, to, t) ?? from;
+    const Color black = LuminousHomeTheme.black;
+
+    return _TonalSurfaces(
+      panelDeep: toward(surface, black, 0.35),
+      panel: surface,
+      panelRaised: toward(surface, container, 0.4),
+      glassCool: toward(surface, container, 0.3),
+      glassPanel: toward(surface, black, 0.15),
+      nodeFill: toward(surface, black, 0.2),
+      panelScrim: toward(surface, black, 0.35).withValues(alpha: 0xEE / 255),
+      backgroundRaised: toward(surface, container, 0.5),
+      glassOpaque: surface.withValues(alpha: 0xE8 / 255),
+      glassOpaqueStrong:
+          toward(surface, container, 0.3).withValues(alpha: 0xF0 / 255),
+      hairline: outline.withValues(alpha: 0x2E / 255),
+      hairlineStrong: outline.withValues(alpha: 0x52 / 255),
+      wallpaperScrim: toward(surface, black, 0.4),
     );
   }
 }

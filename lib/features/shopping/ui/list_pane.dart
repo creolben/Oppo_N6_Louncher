@@ -415,7 +415,7 @@ class _DoneHeader extends StatelessWidget {
         left: LuminousHomeTheme.space12,
         right: LuminousHomeTheme.screenGutter,
       ),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: LuminousHomeTheme.glassOpaqueStrong,
         border: Border(bottom: BorderSide(color: LuminousHomeTheme.hairline)),
       ),
@@ -864,7 +864,7 @@ class _AisleHeaderDelegate extends SliverPersistentHeaderDelegate {
       padding: const EdgeInsets.symmetric(
         horizontal: LuminousHomeTheme.screenGutter,
       ),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: LuminousHomeTheme.glassOpaqueStrong,
         border: Border(bottom: BorderSide(color: LuminousHomeTheme.hairline)),
       ),

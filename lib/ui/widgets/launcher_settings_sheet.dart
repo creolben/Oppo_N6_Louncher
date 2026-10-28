@@ -87,8 +87,9 @@ class LauncherSettingsSheet extends StatefulWidget {
   /// Opens Android's notification-access page; only the user can grant it.
   final Future<void> Function()? onRequestMediaAccess;
 
-  /// Whether ChronoFold's galaxy is the system wallpaper. ColorOS runs the
-  /// close-app animation itself and shows the system wallpaper behind it
+  /// Whether ChronoFold's galaxy is the system wallpaper. The launcher window
+  /// shows the system wallpaper through, and ColorOS runs the close-app
+  /// animation over that same wallpaper
   /// until the launcher is up, so this is what decides whether that moment
   /// looks like ChronoFold. Null leaves the wallpaper row without a status.
   final Future<bool> Function()? isGalaxyWallpaperActive;
@@ -359,8 +360,8 @@ class _LauncherSettingsSheetState extends State<LauncherSettingsSheet>
       icon: Icons.wallpaper_rounded,
       title: 'Galaxy wallpaper',
       subtitle: switch (active) {
-        true => 'On: closing an app shows the galaxy',
-        false => 'Off: ColorOS shows its own wallpaper when apps close',
+        true => 'On: the galaxy is your system wallpaper',
+        false => 'Off: Home sits on your ColorOS wallpaper',
         null => 'Preview the live galaxy wallpaper',
       },
       semanticsHint: 'Opens the galaxy wallpaper preview',
@@ -449,7 +450,7 @@ class _LauncherSettingsSheetState extends State<LauncherSettingsSheet>
             color: LuminousHomeTheme.glassPanel,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(LuminousHomeTheme.radiusM),
-              side: const BorderSide(color: LuminousHomeTheme.hairline),
+              side: BorderSide(color: LuminousHomeTheme.hairline),
             ),
             clipBehavior: Clip.antiAlias,
             child: Column(children: children),

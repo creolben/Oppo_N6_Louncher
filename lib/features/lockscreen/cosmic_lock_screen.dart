@@ -1840,8 +1840,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                                 fontSize: isTabletop
                                     ? 52
                                     : (isUnfolded ? 76 : 64),
-                                fontWeight: FontWeight.w200,
-                                letterSpacing: -2.0,
+                                // Regular weight, like the ColorOS clock;
+                                // the old hairline cut read as foreign.
+                                fontWeight: FontWeight.w400,
+                                letterSpacing: -1.5,
                                 height: 1.0,
                                 fontFeatures: const [
                                   FontFeature.tabularFigures(),

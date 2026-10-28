@@ -421,7 +421,7 @@ class _Field extends StatelessWidget {
               borderRadius: BorderRadius.circular(
                 LuminousHomeTheme.controlRadius,
               ),
-              borderSide: const BorderSide(color: LuminousHomeTheme.hairline),
+              borderSide: BorderSide(color: LuminousHomeTheme.hairline),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(

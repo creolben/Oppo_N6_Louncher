@@ -211,8 +211,8 @@ class _AppActionDialogState extends State<AppActionDialog> {
                           final success = widget.layoutEngine!.addAppToCore(app);
                           if (!success) {
                             messenger.showSnackBar(
-                              const SnackBar(
-                                content: Text('Essentials is full (8 apps max). Remove an app first.'),
+                              SnackBar(
+                                content: const Text('Essentials is full (8 apps max). Remove an app first.'),
                                 backgroundColor: LuminousHomeTheme.panelRaised,
                               ),
                             );

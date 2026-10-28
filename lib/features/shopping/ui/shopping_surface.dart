@@ -326,7 +326,7 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
             onSelectList: (_) => setState(() => _selectedRecipeId = null),
           ),
         ),
-        const VerticalDivider(
+        VerticalDivider(
           width: 1,
           thickness: 1,
           color: LuminousHomeTheme.hairline,

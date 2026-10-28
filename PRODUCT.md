@@ -25,7 +25,7 @@ The launcher runs edge-to-edge in portrait on ColorOS foldable hardware. It quer
 ## Capabilities and Constraints
 
 - Preserve the existing galaxy ticker, app-node morphing, camera pan/zoom/inertia, fold transitions, gestures, hit testing, app-launch supernova, and reduce-motion behavior.
-- Preserve Android HOME-role, package-query, keyguard, hinge-sensor, app-return bridge, and wallpaper-preview behavior.
+- Preserve Android HOME-role, package-query, keyguard, hinge-sensor, and wallpaper-preview behavior. The home window shows the system wallpaper through a transparent Flutter surface; the launcher paints no field of its own and no native cover surface is held across app launches.
 - The user approved a ColorOS-inspired hybrid visual redesign, not an exact proprietary ColorOS clone.
 - No root access, SystemUI hooks, private ColorOS APIs, or unlicensed OEM fonts, icons, wallpapers, or sounds.
 - A fixed paged grid is outside the current architecture. Third-party home widgets are allowed through AppWidgetHost with the system bind-consent prompt and must not change galaxy motion (ADR-001).

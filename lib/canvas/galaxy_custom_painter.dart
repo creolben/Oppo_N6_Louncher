@@ -110,7 +110,6 @@ class GalaxyCustomPainter extends CustomPainter {
   final TextScaler textScaler;
 
   // Statically allocated Paint objects
-  static final Paint _bgPaint = Paint();
   static final Paint _nebulaPaint = Paint();
   static final Paint _gridPaint = Paint()..style = PaintingStyle.stroke;
   static final Paint _starPaint = Paint()..style = PaintingStyle.fill;
@@ -140,13 +139,13 @@ class GalaxyCustomPainter extends CustomPainter {
   /// per label per frame.
   static final Paint _textLayerPaint = Paint();
 
-  /// The five backdrop shaders, built once per painter and viewport size.
+  /// The core pulse field, built once per painter and viewport size.
   ///
-  /// They depend only on the size and [animationTime], and [animationTime] is
+  /// It depends only on the size and [animationTime], and [animationTime] is
   /// fixed for a painter's lifetime — repaint-notifier frames reuse the same
-  /// painter — so rebuilding them every frame produced identical gradients.
+  /// painter — so rebuilding it every frame produced an identical gradient.
   Size? _deepSpaceSize;
-  List<Shader>? _deepSpaceShaders;
+  Shader? _corePulseShader;
 
   static final Path _path = Path();
   static final Path _starPath = Path();
@@ -183,79 +182,23 @@ class GalaxyCustomPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// The galaxy no longer paints a field of its own: the window shows the
+  /// system wallpaper and everything here — stars, filaments, nodes — sits on
+  /// it, so the recents close animation, the keyguard and the stock launcher's
+  /// HOME flash all land on the same picture. Only the core's breathing pulse
+  /// remains, because it belongs to the core rather than to a backdrop.
   void _paintDeepSpace(Canvas canvas, Size size) {
-    final bgRect = Offset.zero & size;
-    if (_deepSpaceShaders == null || _deepSpaceSize != size) {
-      _deepSpaceShaders = _buildDeepSpaceShaders(size);
+    if (_corePulseShader == null || _deepSpaceSize != size) {
+      _corePulseShader = _buildCorePulseShader(size);
       _deepSpaceSize = size;
     }
-    final shaders = _deepSpaceShaders!;
-    _bgPaint.shader = shaders[0];
-    canvas.drawRect(bgRect, _bgPaint);
-    for (int i = 1; i < shaders.length; i++) {
-      _nebulaPaint.shader = shaders[i];
-      canvas.drawRect(bgRect, _nebulaPaint);
-    }
+    _nebulaPaint.shader = _corePulseShader;
+    canvas.drawRect(Offset.zero & size, _nebulaPaint);
   }
 
-  List<Shader> _buildDeepSpaceShaders(Size size) {
-    // An ink-blue cyclorama keeps the OLED depth without reading as empty
-    // space. The brighter ceiling makes the clock legible without a glow.
-    final background = ui.Gradient.radial(
-      Offset(size.width * 0.5, size.height * 0.5),
-      size.longestSide * 0.90,
-      const [
-        LuminousHomeTheme.backgroundTop,
-        LuminousHomeTheme.background,
-        LuminousHomeTheme.backgroundDeep,
-      ],
-      const [0.0, 0.55, 1.0],
-    );
-
-    final double driftX1 = math.sin(animationTime * 0.12) * 25.0;
-    final double driftY1 = math.cos(animationTime * 0.10) * 20.0;
-    final double driftX2 = math.cos(animationTime * 0.09) * 30.0;
-    final double driftY2 = math.sin(animationTime * 0.11) * 25.0;
-
-    // Slow orchid and aqua fields keep the original drift inputs while
-    // behaving more like light through fluid than deep-space nebulae.
-    final orchidField = ui.Gradient.radial(
-      Offset(size.width * 0.30 + driftX1, size.height * 0.35 + driftY1),
-      size.longestSide * 0.58,
-      [
-        LuminousHomeTheme.orchid.withValues(alpha: 0.20),
-        LuminousHomeTheme.cobalt.withValues(alpha: 0.07),
-        Colors.transparent,
-      ],
-      const [0.0, 0.45, 1.0],
-    );
-
-    final aquaField = ui.Gradient.radial(
-      Offset(size.width * 0.70 + driftX2, size.height * 0.65 + driftY2),
-      size.longestSide * 0.52,
-      [
-        LuminousHomeTheme.aqua.withValues(alpha: 0.17),
-        LuminousHomeTheme.mint.withValues(alpha: 0.05),
-        Colors.transparent,
-      ],
-      const [0.0, 0.42, 1.0],
-    );
-
-    // A low cobalt horizon grounds the field like a seamless cyclorama.
-    final horizon = ui.Gradient.linear(
-      Offset(0, size.height * 0.34),
-      Offset(0, size.height * 0.94),
-      [
-        Colors.transparent,
-        LuminousHomeTheme.cobalt.withValues(alpha: 0.09),
-        LuminousHomeTheme.aqua.withValues(alpha: 0.055),
-        Colors.transparent,
-      ],
-      const [0.0, 0.42, 0.72, 1.0],
-    );
-
+  Shader _buildCorePulseShader(Size size) {
     final double corePulse = 0.05 + 0.02 * math.sin(animationTime * 1.5);
-    final corePulseField = ui.Gradient.radial(
+    return ui.Gradient.radial(
       Offset(size.width * 0.5, size.height * 0.5),
       size.longestSide * 0.36,
       [
@@ -265,8 +208,6 @@ class GalaxyCustomPainter extends CustomPainter {
       ],
       const [0.0, 0.48, 1.0],
     );
-
-    return [background, orchidField, aquaField, horizon, corePulseField];
   }
 
   void _paintWorldStarfield(Canvas canvas) {

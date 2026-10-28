@@ -38,6 +38,21 @@ Map<String, dynamic> _paletteMap({
   };
 }
 
+/// The Material dark surface tones ColorOS resolves from a purple wallpaper.
+const int _surface = 0xFF1C1B22;
+const int _container = 0xFF313036;
+const int _outline = 0xFFCAC4D0;
+
+/// A palette that also carries the neutral ramps the tonal surfaces read.
+Map<String, dynamic> _tonalMap({bool withNeutrals = true}) {
+  final Map<String, dynamic> map = _paletteMap();
+  if (withNeutrals) {
+    map['neutral1'] = <String, int>{'800': _container, '900': _surface};
+    map['neutral2'] = <String, int>{'200': _outline};
+  }
+  return map;
+}
+
 NowPlaying _media() => NowPlaying(
   packageName: 'com.test.music',
   appLabel: 'Music',
@@ -195,5 +210,54 @@ void main() {
     LuminousHomeTheme.applyPalette(null);
     await _pumpCard(tester, key: const ValueKey<String>('after-reset'));
     expect(progress().color, LuminousHomeTheme.aqua);
+  });
+
+  group('tonal surfaces', () {
+    test('without a palette the panels are the ink fallbacks', () {
+      LuminousHomeTheme.applyPalette(null);
+      expect(LuminousHomeTheme.panel, const Color(0xFF101424));
+      expect(LuminousHomeTheme.panelDeep, const Color(0xFF0B0E1E));
+      expect(LuminousHomeTheme.hairline, const Color(0x2EFFFFFF));
+      expect(LuminousHomeTheme.wallpaperScrim, LuminousHomeTheme.backgroundDeep);
+    });
+
+    test('a neutral ramp becomes the panel, glass and hairline roles', () {
+      LuminousHomeTheme.applyPalette(SystemPalette.fromMap(_tonalMap()));
+
+      // The Material dark surface is the panel, verbatim.
+      expect(LuminousHomeTheme.panel, const Color(_surface));
+      // Opaque glass keeps its alpha and takes the surface's hue.
+      expect((LuminousHomeTheme.glassOpaque.toARGB32() >> 24) & 0xFF, 0xE8);
+      expect(LuminousHomeTheme.glassOpaque.toARGB32() & 0xFFFFFF,
+          _surface & 0xFFFFFF);
+      // Hairlines are the outline tone at the ink hairline's alpha.
+      expect((LuminousHomeTheme.hairline.toARGB32() >> 24) & 0xFF, 0x2E);
+      expect(LuminousHomeTheme.hairline.toARGB32() & 0xFFFFFF,
+          _outline & 0xFFFFFF);
+      // Deeper roles stay darker than the surface, raised ones lighter.
+      expect(LuminousHomeTheme.panelDeep.computeLuminance(),
+          lessThan(LuminousHomeTheme.panel.computeLuminance()));
+      expect(LuminousHomeTheme.panelRaised.computeLuminance(),
+          greaterThan(LuminousHomeTheme.panel.computeLuminance()));
+      expect(LuminousHomeTheme.wallpaperScrim.computeLuminance(),
+          lessThan(LuminousHomeTheme.panel.computeLuminance()));
+    });
+
+    test('a palette without a tone-900 neutral keeps the ink surfaces', () {
+      LuminousHomeTheme.applyPalette(
+        SystemPalette.fromMap(_tonalMap(withNeutrals: false)),
+      );
+      expect(LuminousHomeTheme.accent, _greenColor);
+      expect(LuminousHomeTheme.panel, const Color(0xFF101424));
+    });
+
+    test('a neutral-only change still bumps the revision', () {
+      LuminousHomeTheme.applyPalette(SystemPalette.fromMap(_paletteMap()));
+      final int base = LuminousHomeTheme.paletteRevision;
+      LuminousHomeTheme.applyPalette(SystemPalette.fromMap(_tonalMap()));
+      expect(LuminousHomeTheme.paletteRevision, base + 1);
+      LuminousHomeTheme.applyPalette(SystemPalette.fromMap(_tonalMap()));
+      expect(LuminousHomeTheme.paletteRevision, base + 1);
+    });
   });
 }
