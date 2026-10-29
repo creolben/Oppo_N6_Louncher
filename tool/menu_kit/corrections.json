@@ -1,0 +1,945 @@
+[
+  {
+    "pdf": "Mediterranean_20250613.pdf",
+    "title": "Spring Asparagus & Artichoke Salad",
+    "why": "The printed prep 15 / cook 25 line is a copy of the main's (Warm Pistou Lentils, same page). The salad only steams asparagus 4-5 min and marinates 10 min.",
+    "cook_minutes": 5,
+    "rest_minutes": 10
+  },
+  {
+    "pdf": "Mediterranean_20250613.pdf",
+    "title": "Warm Pistou Lentils",
+    "why": "½ lemon, juiced (1 Tablespoon) is listed among the pistou ingredients but no step uses it; it now goes into the pistou in step 2.",
+    "steps": [
+      "Cook lentils in 3 cups of water until tender, about 20 minutes. Drain.",
+      "In a food processor, blend basil, garlic, olive oil, lemon juice, and a pinch of salt into a paste (pistou).",
+      "Toss warm lentils with pistou.",
+      "Top with a spoonful of crumbled goat cheese and serve alongside salad."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20250620.pdf",
+    "title": "Cannellini Bean & Tomato Salad",
+    "why": "No-cook salad printed with a 5-min cook time and no rest, but step 5 refrigerates it at least 30 minutes.",
+    "cook_minutes": 0,
+    "rest_minutes": 30
+  },
+  {
+    "pdf": "Mediterranean_20250620.pdf",
+    "title": "Farro with Summer Herbs",
+    "why": "Step 5 tops with toasted pine nuts (a chef's tip says how to toast them) but they are not listed; the PDF gives no amount, so a conventional ¼ cup. Cook time 15 min is shorter than the 20-25 min farro simmer in step 1.",
+    "cook_minutes": 25,
+    "add_ingredients": [
+      "¼ cup toasted pine nuts"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20250620.pdf",
+    "title": "Green Beans with Toasted Walnuts",
+    "why": "Step 6 adds fresh parsley, which is not listed; the PDF gives no amount, so a conventional 2 Tablespoons.",
+    "add_ingredients": [
+      "2 Tablespoons fresh parsley, chopped"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20250620.pdf",
+    "title": "Roasted Potatoes, Fennel & Lemon Zest",
+    "why": "The dish is named '& Lemon Zest' (menu, page title, nutrition label) but no lemon zest is listed or used, and the listed red pepper flakes are never used. Added the zest of 1 lemon (no amount in the PDF), sprinkled on at the end, and the flakes to the seasoning toss.",
+    "steps": [
+      "Preheat and prep: Preheat oven to 450°F. Line a large rimmed baking sheet with parchment paper.",
+      "Prepare potatoes: If using larger potatoes, cut into 1-inch pieces for even cooking. Place halved baby potatoes in a large pot of salted water. Bring to a boil and cook for 8-10 minutes until just tender when pierced with a fork. Drain well and let steam dry for 2-3 minutes.",
+      "Season and toss: In a large bowl, combine drained potatoes, fennel wedges, olive oil, smashed garlic, salt, pepper, and red pepper flakes if using. Toss until everything is well coated.",
+      "Arrange for roasting: Spread vegetables in a single layer on the prepared baking sheet, ensuring potatoes are cut-side down for maximum browning. Don't overcrowd.",
+      "Roast: Roast for 15 minutes, then carefully flip potatoes and toss fennel. Continue roasting for 12-15 minutes until potatoes are golden brown and crispy, and fennel is caramelized and tender.",
+      "Finish and serve: Remove from the oven and sprinkle with chopped fennel fronds and lemon zest. Serve warm."
+    ],
+    "add_ingredients": [
+      "Zest of 1 lemon"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20250627.pdf",
+    "title": "Chicken Sautéed W/ Tomatoes & Olives",
+    "why": "Step 1 heats an outdoor grill or grill pan, but the chicken is browned and braised in a skillet (step 3 'same skillet', step 4 scrapes up browned bits) and the 2 Tbsp olive oil is never used. Step 1 now heats the oil in a large skillet.",
+    "steps": [
+      "Season chicken thighs with salt and pepper. Heat olive oil in a large skillet over medium-high heat.",
+      "Brown chicken skin-side down, 6-7 minutes until crispy. Flip and cook 5 minutes more, remove to plate.",
+      "Add onion to same skillet, cook 4 minutes until softened. Add garlic, cook 30 seconds until fragrant.",
+      "Add wine, scraping up browned bits. Add tomatoes, olives, and thyme.",
+      "Return chicken to skillet, cover and simmer 15 minutes until cooked through (165°F internal temp).",
+      "Sprinkle with fresh parsley before serving.",
+      "Serve with a lemon wedge."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20250627.pdf",
+    "title": "Herbes de Provence Grilled Vegetables",
+    "why": "Side printed without a Serves/Time line, so the app showed 0 minutes; times taken from its own steps (grill 20-25 minutes), prep estimated.",
+    "prep_minutes": 10,
+    "cook_minutes": 20
+  },
+  {
+    "pdf": "Mediterranean_20250627.pdf",
+    "title": "Lentil Salad with Lemon & Parsley",
+    "why": "Step 3 stirs in mint, which is not listed (nor in the shopping list); the PDF gives no amount, so a conventional 2 Tablespoons. Side printed without a Serves/Time line, so the app showed 0 minutes; times taken from its own steps (stand 15 minutes), prep estimated.",
+    "add_ingredients": [
+      "2 Tablespoons fresh mint, chopped"
+    ],
+    "prep_minutes": 10,
+    "rest_minutes": 15
+  },
+  {
+    "pdf": "Mediterranean_20250627.pdf",
+    "title": "Ratatouille Toasts",
+    "why": "Cook time is 15 min, but step 4 alone bakes the vegetables 30 minutes.",
+    "cook_minutes": 30
+  },
+  {
+    "pdf": "Mediterranean_20250627.pdf",
+    "title": "Simple Cucumber Salad",
+    "why": "Side printed without a Serves/Time line, so the app showed 0 minutes; no cooking; prep estimated.",
+    "prep_minutes": 10
+  },
+  {
+    "pdf": "Mediterranean_20250627.pdf",
+    "title": "Tomato & Fennel Salad with Herb Vinaigrette",
+    "why": "Side printed without a Serves/Time line, so the app showed 0 minutes; times taken from its own steps (marinate 15 minutes), prep estimated.",
+    "prep_minutes": 10,
+    "rest_minutes": 15
+  },
+  {
+    "pdf": "Mediterranean_20250627.pdf",
+    "title": "White Bean & Olive Stew",
+    "why": "Nutrition panel is an exact copy of the previous week's Zucchini with Tomato, Olives & Capers (439 kcal, 17 g carbs, 4 g fiber, 53% calcium); not plausible for a stew with 2 cans of beans.",
+    "nutrition": null
+  },
+  {
+    "pdf": "Mediterranean_20250704.pdf",
+    "title": "Braised Zucchini with Mint",
+    "why": "Side printed without a Serves/Time line, so the app showed 0 minutes; cook time from its steps (5 + 5 + 1 minutes), prep estimated.",
+    "prep_minutes": 5,
+    "cook_minutes": 11
+  },
+  {
+    "pdf": "Mediterranean_20250704.pdf",
+    "title": "Couscous with Chopped Herbs",
+    "why": "Side printed without a Serves/Time line, so the app showed 0 minutes; times taken from its own steps (toast 2-3 and simmer 10-12 minutes), prep estimated.",
+    "prep_minutes": 5,
+    "cook_minutes": 15
+  },
+  {
+    "pdf": "Mediterranean_20250704.pdf",
+    "title": "Grilled Eggplant & Halloumi Stacks",
+    "why": "Step 4 drizzles a 'lemon-oregano mixture' that no step makes (the garlic is otherwise unused). Added the whisking step, same wording as the week's Grilled Halloumi recipe.",
+    "steps": [
+      "Brush eggplant slices with olive oil and season with salt and pepper.",
+      "Grill eggplant for 4-5 minutes per side until tender.",
+      "Grill halloumi for 2 minutes per side until golden.",
+      "Whisk together lemon juice, oregano, and garlic.",
+      "Layer eggplant and halloumi, drizzle with lemon-oregano mixture.",
+      "Serve with herbed couscous."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20250704.pdf",
+    "title": "Herbed Chicken Skewers with Lemon",
+    "why": "Step 1 puts oregano in the marinade but none is listed; the PDF gives no amount, so ½ Tablespoon to match the thyme. The times leave out the marinade of at least 30 minutes from step 2 (rest was 0).",
+    "rest_minutes": 30,
+    "add_ingredients": [
+      "1/2 Tablespoon dried oregano"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20250704.pdf",
+    "title": "Tomato-cucumber Salad with Feta",
+    "why": "Side printed without a Serves/Time line, so the app showed 0 minutes; no cooking; prep estimated.",
+    "prep_minutes": 10
+  },
+  {
+    "pdf": "Mediterranean_20250704.pdf",
+    "title": "Whole Wheat Pita with Olives",
+    "why": "Side printed without a Serves/Time line, so the app showed 0 minutes; warming the pita estimated at 5 minutes.",
+    "prep_minutes": 2,
+    "cook_minutes": 5
+  },
+  {
+    "pdf": "Mediterranean_20250704.pdf",
+    "title": "Yogurt-cucumber Dip with Flatbread",
+    "why": "Side printed without a Serves/Time line, so the app showed 0 minutes; times taken from its own steps (chill 30 minutes), prep estimated.",
+    "prep_minutes": 10,
+    "rest_minutes": 30
+  },
+  {
+    "pdf": "Mediterranean_20251114.pdf",
+    "title": "Braised Endive with White Beans & Garlic",
+    "why": "PDF has no braising step, yet step 7 adds the beans 'in the last 5 minutes' of it. Added a covered 20-min braise (fits the 30-min cook time); the bay leaf, never removed, is now taken out before serving.",
+    "steps": [
+      "Heat olive oil in a large, deep skillet over medium heat.",
+      "Add onion and sauté 5 minutes until softened.",
+      "Add garlic and cook 1 minute until fragrant.",
+      "Arrange endive cut-side down in the skillet.",
+      "Pour vegetable broth around the endive.",
+      "Add bay leaf, thyme, salt, and pepper.",
+      "Bring to a simmer, then cover and braise over low heat 20 minutes until the endive is very tender.",
+      "Add cannellini beans in the last 5 minutes to warm through.",
+      "Remove bay leaf. Serve warm, garnished with fresh parsley."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20251114.pdf",
+    "title": "Chicken Braised in Red Wine & Herbs",
+    "why": "PDF never browns the chicken or puts it in the skillet, yet step 8 braises 'until chicken reaches 165°F' (the chef's tip talks about browning it). Added browning after the oil heats and returning the chicken before the braise (no times in the PDF; 4-5 min per side as in the other chicken braises).",
+    "steps": [
+      "Pat chicken thighs dry with paper towels.",
+      "Season with salt, pepper, and oregano on both sides.",
+      "Heat olive oil in a large, heavy-bottomed skillet over medium-high heat.",
+      "Add chicken thighs and brown 4-5 minutes per side until golden. Remove and set aside.",
+      "Add onion and sauté 5 minutes until golden.",
+      "Add garlic and cook 1 minute until fragrant.",
+      "Pour in red wine, scraping the bottom to deglaze. Simmer 2 minutes.",
+      "Add vegetable broth, bay leaves, thyme, and tomato paste.",
+      "Return chicken to the skillet, nestling it into the liquid.",
+      "Cover partially and braise 20-25 minutes until chicken reaches 165°F.",
+      "Remove bay leaves and adjust seasoning.",
+      "Serve warm with braising liquid spooned over chicken."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20251114.pdf",
+    "title": "Farro W/ Wild Mushrooms & Chickpeas & Sage",
+    "why": "The mushrooms are cooked and set aside in step 3 but never put back; step 9 now stirs them in.",
+    "steps": [
+      "Heat olive oil in a large saucepan over medium-high heat.",
+      "Add mushrooms and cook 8 minutes until golden.",
+      "Season with salt and pepper. Remove and set aside.",
+      "Add onion and cook 5 minutes until softened.",
+      "Add garlic and cook 1 minute until fragrant.",
+      "Add farro and stir to coat, toasting 2 minutes.",
+      "Pour in white wine and cook until absorbed, stirring frequently.",
+      "Add warm broth 1 cup at a time, stirring frequently and allowing each addition to absorb before adding more (about 25 minutes total).",
+      "Stir in chickpeas, cooked mushrooms, sage, thyme, and lemon juice.",
+      "Serve warm, garnished with fresh parsley."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20251114.pdf",
+    "title": "Pan-seared Mackerel in Tomato Caper Sauce",
+    "why": "PDF never cooks the mackerel before step 9 'Return mackerel to skillet', and prints 'Finish with lemon juice and fresh parsley' twice (steps 8 and 11). Added a skin-side sear after the oil heats (no time in the PDF; a short sear per the chef's tip on crisp skin, the fish finishes in the sauce) and removed the duplicate step 8.",
+    "steps": [
+      "Pat fish fillets dry.",
+      "Season both sides with salt and pepper.",
+      "Heat olive oil in a large skillet over medium-high heat.",
+      "Add mackerel skin-side down and sear 3 minutes without moving until the skin is crisp. Flip and cook 1 minute more. Remove and set aside.",
+      "Add onion and sauté 3 minutes until softened.",
+      "Add garlic and cook 1 minute until fragrant.",
+      "Stir in tomato paste, cooking 1 minute.",
+      "Add diced tomatoes and capers, simmering 5 minutes.",
+      "Return mackerel to skillet, nestling into sauce.",
+      "Simmer gently 3-4 minutes until heated through.",
+      "Finish with lemon juice and fresh parsley."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20251114.pdf",
+    "title": "Red Wine Braised Mushrooms & Lentils",
+    "why": "PDF never simmers the dried lentils: step 8 adds the broth and step 9 goes straight to lemon juice and mushrooms; the bay leaves are never removed. Added a 20-25 min simmer and the bay-leaf removal.",
+    "steps": [
+      "Heat olive oil in a large saucepan over medium-high heat.",
+      "Add mushrooms and cook 8 minutes until golden.",
+      "Season with salt and pepper. Remove and set aside.",
+      "Add onion and cook 5 minutes until softened.",
+      "Add garlic and cook 1 minute until fragrant.",
+      "Add lentils and stir to combine.",
+      "Pour in red wine and cook until absorbed, stirring frequently, about 3 minutes.",
+      "Add vegetable broth, bay leaves, thyme, and tomato paste.",
+      "Bring to a boil, then reduce heat to low and simmer 20-25 minutes, stirring occasionally, until lentils are tender but not mushy.",
+      "Remove bay leaves, then stir in lemon juice and cooked mushrooms.",
+      "Serve warm, garnished with fresh parsley."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20251114.pdf",
+    "title": "Spiced Lentil & Eggplant Stew",
+    "why": "PDF has no simmer step: the dried lentils go in (steps 5-7) and step 8 serves, so they are never cooked. Added a 20-25 min simmer (fits the 30-min cook time and the tip that lentils should hold their shape).",
+    "steps": [
+      "Heat olive oil in a large, heavy-bottomed pot over medium heat.",
+      "Add onion and sauté 5 minutes until softened and translucent.",
+      "Add garlic and cook 1 minute until fragrant.",
+      "Add eggplant cubes and stir to coat with oil, cooking 5 minutes.",
+      "Add lentils and stir to combine.",
+      "Pour in crushed tomatoes and vegetable broth.",
+      "Add cumin, oregano, salt, and pepper. Stir well.",
+      "Bring to a boil, then reduce heat to low and simmer 20-25 minutes, stirring occasionally, until lentils are tender but still hold their shape.",
+      "Serve warm, garnished with fresh parsley."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20251114.pdf",
+    "title": "Tomato & White Bean Stew with Capers",
+    "why": "PDF has no simmer step: everything goes in, then lemon juice and serve, despite the 25-min cook time and the tip 'White beans become creamier the longer they simmer'. Added a 15-min simmer.",
+    "steps": [
+      "Heat olive oil in a large, deep skillet over medium heat.",
+      "Add onion and sauté 5 minutes until softened.",
+      "Add garlic and cook 1 minute until fragrant.",
+      "Pour in crushed tomatoes and vegetable broth.",
+      "Add cannellini beans and stir to combine.",
+      "Add capers, oregano, salt, and pepper.",
+      "Bring to a boil, then reduce heat to low and simmer 15 minutes, stirring occasionally, until slightly thickened and the beans are creamy.",
+      "Stir in lemon juice.",
+      "Serve warm, garnished with fresh parsley."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20251121.pdf",
+    "title": "Orecchiett, Cannellini Beans & Artichokes",
+    "why": "Misprinted page heading 'ORECCHIETT'; the menu prints 'ORECCHIETTE, CANNELLINI BEANS & ARTICHOKES' and the nutrition label 'ORECCHIETTE WITH CANNELLINI BEANS & ARTICHOKE HEARTS'.",
+    "rename": "Orecchiette, Cannellini Beans & Artichokes"
+  },
+  {
+    "pdf": "Mediterranean_20251121.pdf",
+    "title": "Sautéed Artichoke Hearts with Garlic & Lemon",
+    "why": "Step 6 tosses with lemon juice and zest, but only the juice is listed; the weekly prep guide sets aside lemon zest for Wednesday, so added the zest of 1 large lemon.",
+    "add_ingredients": [
+      "Zest of 1 large lemon"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20251205.pdf",
+    "title": "Mushroom & White Bean Ragù with Feta",
+    "why": "PDF step 1 heats the 3 Tablespoons olive oil with no amount, then step 2 heats the 'remaining oil'. Split not printed: 2 Tbsp to brown the mushrooms, 1 Tbsp for onion and garlic (the split the PDFs use for mushroom escabeche).",
+    "steps": [
+      "Heat 2 Tbsp olive oil in large, deep skillet over medium-high heat. Add mushrooms and cook 6–7 minutes, stirring occasionally, until golden brown. Remove and set aside.",
+      "In same skillet, heat remaining 1 Tbsp oil over medium heat. Add onion and garlic; cook 4 minutes until beginning to soften.",
+      "Stir in crushed tomatoes, tomato paste, oregano, thyme, bay leaf, red pepper flakes, salt, and pepper. Return mushrooms to skillet.",
+      "Add white beans and stir to combine. Reduce heat to medium-low and simmer uncovered 15 minutes, stirring occasionally, until sauce thickens and coats spoon and flavors meld.",
+      "Remove bay leaf. Stir in crumbled feta just before serving. Adjust seasoning and serve."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20251212.pdf",
+    "title": "White Bean & Pecorino Salad",
+    "why": "PDF prints Cook Time 30 minutes for a no-cook salad (the steps only combine, dress and let it stand 5 minutes).",
+    "cook_minutes": 0
+  },
+  {
+    "pdf": "Mediterranean_20251219.pdf",
+    "title": "Baked Farro with Winter Vegetables & Almonds",
+    "why": "PDF prints the side dish's blurb (Warm Spinach Salad with Garlic & Pine Nuts) at the end of this main's description; removed it.",
+    "description": "This hearty casserole celebrates winter’s root vegetables baked with nutty farro, sweet raisins, and crunchy almonds—a complete meal that’s deeply satisfying."
+  },
+  {
+    "pdf": "Mediterranean_20251219.pdf",
+    "title": "Braised Swiss Chard with Chickpeas & Cumin",
+    "why": "PDF prints the side dish's blurb (Roasted Red Peppers with Garlic & Breadcrumbs) at the end of this main's description; removed it.",
+    "description": "A deeply satisfying one-pan dish that showcases Seville’s Moorish-influenced vegetable cookery. Rainbow chard wilts into a fragrant chickpea stew scented with cumin and finished with lemon."
+  },
+  {
+    "pdf": "Mediterranean_20251219.pdf",
+    "title": "Chicken Braised with Seville Oranges, Olives & Artichokes",
+    "why": "PDF prints the side dish's blurb (Fava Bean & Potato Mash) at the end of this main's description; removed it.",
+    "description": "This elegant braise showcases Seville’s beloved winter trinity: tender chicken, artichoke hearts, and bitter oranges in a savory sauce enriched with green olives. “Pollo con Alcachofas” is iconic Andalusian comfort food."
+  },
+  {
+    "pdf": "Mediterranean_20251219.pdf",
+    "title": "Mushroom Escabeche with Sherry Vinegar & Raisins",
+    "why": "PDF prints the side dish's blurb (Seville Orange & Fennel Salad, incl. \"Extra pine nuts boost protein.\") at the end of this main's description; removed it.",
+    "description": "Meaty mushrooms take beautifully to the escabeche treatment, absorbing the sweet-tart marinade while maintaining their substantial texture. White beans add protein and creaminess."
+  },
+  {
+    "pdf": "Mediterranean_20251219.pdf",
+    "title": "Pan-seared Sardines with Sherry Vinegar & Raisins",
+    "why": "PDF prints the side dish's blurb (Seville Orange & Fennel Salad) at the end of this main's description; removed it.",
+    "description": "This dish showcases Andalusia’s Moorish heritage, combining sardines with the sweet-tart agrodolce of raisins and vinegar. Seville’s cooks have perfected this balance over centuries."
+  },
+  {
+    "pdf": "Mediterranean_20251219.pdf",
+    "title": "White Beans Braised with Oranges, Olives & Artichokes",
+    "why": "PDF prints the side dish's blurb (Fava Bean & Potato Mash) at the end of this main's description; removed it.",
+    "description": "Creamy white beans absorb the bright, complex flavors of Seville oranges, briny olives, and tender artichoke hearts in this satisfying vegetarian braise that celebrates winter’s bounty."
+  },
+  {
+    "pdf": "Mediterranean_20260109.pdf",
+    "title": "Chicken Cacciatore Ligure",
+    "why": "PDF step 8 stirs in parsley but the ingredient list omits it (the shopping list buys parsley for Thursday). Amount not printed: used 3 Tablespoons, like every other parsley line in this kit.",
+    "add_ingredients": [
+      "3 Tablespoons fresh parsley, chopped"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260123.pdf",
+    "title": "Chickpea & Winter Vegetable Tian",
+    "why": "PDF prints an implausible '1-3 large eggplant' (parsed as 3 for one 9x13 tian); the week's shopping list buys only 3 large eggplants for this tian and the Friday gratin (2-3), and the per-serving nutrition (318-365 kcal, 14-15 g fiber) fits 1.",
+    "remove_ingredients": [
+      "large eggplant"
+    ],
+    "add_ingredients": [
+      "1 large eggplant, sliced ¼-½-inch rounds"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260123.pdf",
+    "title": "Garlic Breadcrumb-crusted Tomatoes",
+    "why": "Steps 1 and 4 give oven temperatures/times for a 'vegetarian' and a 'seafood' version (the two weekly menus sharing this side) that the recipe never introduces; rewritten as one bake (400°F, 15 min) with the 375°F/22 min alternative.",
+    "steps": [
+      "Preheat oven to 400°F (or 375°F). Arrange tomato halves cut-side up on baking sheet.",
+      "Mix breadcrumbs, garlic, parsley, thyme, oregano, 2 tablespoons oil, salt, and pepper.",
+      "Drizzle tomatoes with remaining oil, season with salt and pepper. Press breadcrumb mixture firmly onto each half.",
+      "Bake 15 minutes at 400°F (or 22 minutes at 375°F) until breadcrumbs are golden and tomatoes are tender.",
+      "Serve warm as a bright, acidic contrast to rich dishes."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260206.pdf",
+    "title": "Sautéed Spinach with Garlic, Lemon & Walnuts",
+    "why": "List gives 3 TB olive oil but the steps only use 2 TB (step 2) and never mention the rest; the per-serving nutrition (17 g fat, 190 kcal) fits 2 TB.",
+    "remove_ingredients": [
+      "extra virgin olive oil"
+    ],
+    "add_ingredients": [
+      "2 TB extra virgin olive oil"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260213.pdf",
+    "title": "Chicken with Leeks, Olives & White Wine",
+    "why": "Step 3 ends with a prep tip (wash leeks between layers to remove sand) after the leeks are already in the hot pot; moved to step 1 (wording from the chef's tip) so they are washed before cooking.",
+    "steps": [
+      "Preheat oven to 375°F. Rinse sliced leeks in a bowl of water, separating rings to remove sand; drain well. Pat chicken completely dry. Season both sides with salt and pepper.",
+      "Heat oil in large oven-safe Dutch oven over medium-high heat. Place chicken skin-side down. Sear 6-7 minutes without moving until deeply golden and crispy. Flip. Sear 3 minutes. Transfer to plate.",
+      "Reduce heat to medium. Add leeks to same pot. Cook 5-6 minutes, stirring occasionally, until softened.",
+      "Add garlic. Cook 1 minute until fragrant.",
+      "Add wine. Simmer 2 minutes, scraping up browned bits from bottom.",
+      "Add broth, olives, bay leaves, and thyme. Bring to simmer.",
+      "Return chicken to pot, nestling among leeks skin-side up. Cover and transfer to oven.",
+      "Braise 30 minutes until chicken reaches 165°F internal temperature.",
+      "Remove bay leaves. Garnish with parsley. Serve with lemon wedges."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260227.pdf",
+    "title": "Warm Beetroot Salad with Pine Nuts",
+    "why": "Steps toss 'warm beets' and serve 'while warm', but the beets are bought pre-roasted and refrigerated (shopping list, tips) and no step warms them; added a warming step in the pine-nut skillet (4-5 min is a conventional time, not from the PDF). Cook time 0 contradicted the toasting and warming steps (about 9 min).",
+    "cook_minutes": 10,
+    "steps": [
+      "In a dry skillet over medium heat, toast pine nuts 3-4 minutes, stirring frequently, until golden. Set aside.",
+      "In a small bowl, whisk together olive oil, red wine vinegar, honey, garlic, salt, and pepper.",
+      "Add beets to the same skillet and warm over medium heat 4-5 minutes, stirring occasionally, until heated through.",
+      "In a large bowl, toss warm beets with dressing. Add toasted pine nuts and mint, tossing gently.",
+      "Transfer to serving plates, top with feta, and serve immediately while warm."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260306.pdf",
+    "title": "Ceci Al Forno Con Salvia E Finocchio",
+    "why": "PDF prints two ingredients on one line ('1 sprig fresh rosemary ½ oz Pecorino Romano, shaved, for serving'); split them (the vegetarian shopping list has exactly ½ oz more Pecorino Romano than the regular one).",
+    "remove_ingredients": [
+      "sprig fresh rosemary ½ oz Pecorino Romano"
+    ],
+    "add_ingredients": [
+      "1 sprig fresh rosemary",
+      "½ oz Pecorino Romano, shaved, for serving"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260313.pdf",
+    "title": "Fregola Al Forno Con Cavolo Nero",
+    "why": "Description says the dish is layered with fennel, but the recipe has none (it uses zucchini and kale; the vegetarian shopping list has zucchini, not fennel, for Thursday); swapped fennel for zucchini.",
+    "description": "Fregola al forno con cavolo nero brings together two of Sardinia’s most iconic ingredients — the island’s own toasted semolina pasta and the dark, mineral-rich lacinato kale found in every Sardinian winter garden. Layered with zucchini, tomatoes, and shaved Pecorino Sardo, then baked until golden in a single casserole dish, this is the hearty, unhurried cooking of the Sardinian countryside that has sustained generations through the cold months."
+  },
+  {
+    "pdf": "Mediterranean_20260320.pdf",
+    "title": "Farro with Roasted Spring Vegetables & Romesco",
+    "why": "PDF says 'see Tuesday recipe' (step 4) and 'from Tuesday recipe' (romesco ingredient); name the recipe that holds the romesco, Pan-seared Monkfish with Romesco Sauce.",
+    "steps": [
+      "Preheat oven to 425°F.",
+      "Cook farro: bring broth to a boil in a medium saucepan. Add farro and ½ teaspoon sea salt. Simmer uncovered 20–25 minutes until tender but chewy. Drain any excess liquid.",
+      "Meanwhile, toss asparagus and zucchini with 2 Tbsp olive oil, sea salt, black pepper, and smoked paprika on a large rimmed baking sheet. Roast 18 minutes until tender and lightly charred.",
+      "While farro and vegetables cook, make romesco if not already prepared (see the Pan-seared Monkfish with Romesco Sauce recipe).",
+      "In a large bowl, toss warm farro with remaining 2 Tablespoons olive oil, lemon juice, lemon zest, sea salt, black pepper, and red pepper flakes.",
+      "Add roasted vegetables and fresh parsley. Toss gently to combine. Spread onto a large platter. Spoon romesco in generous dollops over the top. Serve warm or at room temperature."
+    ],
+    "remove_ingredients": [
+      "romesco sauce"
+    ],
+    "add_ingredients": [
+      "1 cup romesco sauce (from the Pan-seared Monkfish with Romesco Sauce recipe)"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260320.pdf",
+    "title": "Grilled Halloumi with Romesco Sauce",
+    "why": "PDF sends the cook to 'the Tuesday Seafood main recipe above' (step 1 and the romesco ingredient note); the romesco method is in Pan-seared Monkfish with Romesco Sauce, so name that recipe.",
+    "steps": [
+      "Prepare romesco sauce as described in the Pan-seared Monkfish with Romesco Sauce recipe.",
+      "Pat halloumi slabs completely dry with paper towels.",
+      "Preheat grill or grill pan to high heat. Brush grates with oil.",
+      "Brush halloumi slabs on both sides with olive oil and season with black pepper and red pepper flakes.",
+      "Grill halloumi 2–3 minutes per side without moving until deep golden grill marks form and cheese is warmed through.",
+      "Spoon romesco generously onto each plate. Lay grilled halloumi slabs over sauce.",
+      "Scatter fresh parsley over top. Serve immediately with lemon wedges."
+    ],
+    "remove_ingredients": [
+      "romesco sauce"
+    ],
+    "add_ingredients": [
+      "romesco sauce (same recipe as in Pan-seared Monkfish with Romesco Sauce)"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260417.pdf",
+    "title": "Grilled Mackerel with Chermoula & Spring Onions",
+    "why": "Step 8 serves with lemon wedges but the PDF lists no lemon for them (both lemons are juiced and zested for the chermoula; the shopping list's 8 lemons cover only those); 1 large lemon is a conventional amount, not from the PDF.",
+    "add_ingredients": [
+      "1 large lemon, cut into wedges"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260417.pdf",
+    "title": "Halloumi with Chermoula & Spring Onions",
+    "why": "Step 8 serves with lemon wedges but the PDF lists no lemon for them (both lemons are juiced and zested for the chermoula; the shopping list's 8 lemons cover only those); 1 large lemon is a conventional amount, not from the PDF.",
+    "add_ingredients": [
+      "1 large lemon, cut into wedges"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260424.pdf",
+    "title": "Chicken Souvlaki with Spring Herb Marinade",
+    "why": "Step 7 squeezes 'remaining lemon juice' and garnishes with lemon wedges, but step 1 puts all the juice of both lemons into the marinade and no lemon for wedges is listed; added 1 large lemon (conventional amount, not from the PDF) and squeeze its wedges instead.",
+    "steps": [
+      "Make marinade: whisk together olive oil, lemon juice, lemon zest, garlic, fresh oregano, fresh thyme, dried oregano, sea salt, black pepper, and red pepper flakes in a large bowl.",
+      "Add chicken pieces to marinade and toss to coat thoroughly. Marinate at room temperature 20 minutes (or refrigerate up to 4 hours).",
+      "Thread chicken pieces onto 8 metal or pre-soaked wooden skewers, pressing pieces together snugly.",
+      "Preheat grill or grill pan to high heat. Brush grates with oil.",
+      "Grill skewers 7–8 minutes per side until deeply charred on the outside and cooked through to 165°F internal temperature.",
+      "Rest skewers 3 minutes.",
+      "Transfer to a platter. Squeeze a few lemon wedges over top and garnish with fresh parsley and the remaining lemon wedges. Serve immediately."
+    ],
+    "add_ingredients": [
+      "1 large lemon, cut into wedges"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260424.pdf",
+    "title": "Halloumi Souvlaki with Spring Herb Marinade",
+    "why": "Step 6 squeezes lemon juice over the skewers and garnishes with lemon wedges, but step 1 puts all the juice of both lemons into the marinade and no lemon for wedges is listed; added 1 large lemon (conventional amount, not from the PDF) and squeeze its wedges instead.",
+    "steps": [
+      "Make marinade: whisk together olive oil, lemon juice, lemon zest, garlic, fresh oregano, fresh thyme, dried oregano, black pepper, and red pepper flakes. Do not add salt — halloumi is sufficiently salty.",
+      "Add halloumi cubes to marinade and toss gently. Marinate 15 minutes at room temperature.",
+      "Thread halloumi cubes onto 8 metal or pre-soaked wooden skewers.",
+      "Preheat grill or grill pan to high heat. Brush grates with oil.",
+      "Grill skewers 3–4 minutes per side without moving until deep golden grill marks form and cheese is warmed and caramelized throughout.",
+      "Transfer to a platter immediately. Squeeze a few lemon wedges over top and garnish with fresh parsley and the remaining lemon wedges.",
+      "Serve immediately — halloumi must be eaten hot."
+    ],
+    "add_ingredients": [
+      "1 large lemon, cut into wedges"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260508.pdf",
+    "title": "Chicken Shawarma-style with Spring Onions & Yogurt",
+    "why": "Step 7 serves the chicken with lemon wedges, but the PDF lists no lemon for them (both lemons are juiced and zested for the marinade); no amount is printed, so 1 lemon is a conventional amount.",
+    "add_ingredients": [
+      "1 large lemon, cut into wedges"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260515.pdf",
+    "title": "Cannellini Beans with Fennel, Olives & Orange",
+    "why": "Both description sentences are ungrammatical in the PDF: the first has no verb ('combination that this dish so distinctly Toulonnais') and the second fuses two clauses ('...in the same pan is the mark of a great sauce...').",
+    "description": "The fennel, olive, and orange combination makes this dish so distinctly Toulonnais — the legumes absorbing the orange-scented braising liquid with the same eagerness that makes bean dishes throughout Provence so satisfying. Cooked slowly until creamy and deeply flavored, with the fennel caramelizing alongside in the same pan, the beans prove that a great sauce and a great flavor combination belong to no single protein."
+  },
+  {
+    "pdf": "Mediterranean_20260515.pdf",
+    "title": "Grilled Halloumi with Olive Tapenade & Roasted Peppers",
+    "why": "Vegetarian dish, but the PDF keeps the tuna version's optional anchovy fillets in the tapenade; it also prints '3 Tablespoons fresh parsley, chopped' and '1 large lemon, cut into wedges' twice (main list and ROASTED PEPPERS), though step 7 uses them once as a garnish.",
+    "remove_ingredients": [
+      "anchovy fillets",
+      "fresh parsley",
+      "large lemon"
+    ],
+    "add_ingredients": [
+      "1 large lemon, juiced (3 Tablespoons)",
+      "3 Tablespoons fresh parsley, chopped",
+      "1 large lemon, cut into wedges"
+    ],
+    "steps": [
+      "Make tapenade: pulse Kalamata olives, capers, garlic, lemon juice, fresh thyme, black pepper, and olive oil in a food processor to a coarse, textured paste. Do not over-process. Set aside.",
+      "Roast peppers: place red bell pepper halves cut-side down on a foil-lined baking sheet. Broil 10–12 minutes until skins are charred. Steam in a covered bowl 10 minutes, then peel and slice into strips.",
+      "Pat halloumi slabs completely dry. Brush both sides with olive oil and season lightly with black pepper only — no salt, as halloumi is sufficiently salty.",
+      "Heat a large grill pan or cast iron skillet over high heat until very hot.",
+      "Sear halloumi 2–3 minutes per side without moving until deep golden grill marks form.",
+      "Transfer to plates. Spoon tapenade generously over each slab. Arrange roasted pepper strips alongside.",
+      "Scatter fresh parsley over top and serve immediately with lemon wedges."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260529.pdf",
+    "title": "Endive & Orange Salad with Parmigiano",
+    "why": "No-cook salad (whisk, arrange, drizzle, shave, scatter), but the PDF prints 'Cook Time: 30 minutes', copied from the main it is paired with (Baked Eggs with Cannellini, Spinach & Rosemary).",
+    "cook_minutes": 0
+  },
+  {
+    "pdf": "Mediterranean_20260529.pdf",
+    "title": "Zucchini & Ricotta Fritters with Capers & Lemon",
+    "why": "Step 6 serves the fritters with lemon wedges, but both lemons in the PDF are juiced (fritters and caper-lemon sauce); the PDF gives no amount for wedges, so 1 lemon is a conventional amount.",
+    "add_ingredients": [
+      "1 large lemon, cut into wedges"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260605.pdf",
+    "title": "Baked Eggs with Harissa, Roasted Peppers & Feta",
+    "why": "The PDF's last sentence lost its subject, so the peppers and eggs 'provide a cool, salty counterpoint to the harissa's heat' (the feta is meant); the first sentence compares with 'Monday's tagine', another recipe of the week.",
+    "description": "The Moroccan Friday egg tradition draws from the same deep pantry of chilis, peppers, and spice that shapes the entire week's table — but where a tagine is patient and slow, Friday's baked eggs are direct and fast. Roasted red peppers are braised with harissa, garlic, and tomato paste until sweet and fiery, eggs are nested into the sauce and baked until just set, and crumbled feta provides a cool, salty counterpoint to the harissa's heat."
+  },
+  {
+    "pdf": "Mediterranean_20260612.pdf",
+    "title": "Braised Dandelion Greens with Poached Eggs & Feta",
+    "why": "Step 9 serves with lemon wedges, but the PDF's only lemon is juiced into the greens; no wedge amount is printed (the shopping list buys lemons 'for juice and zest'), so 1 lemon is a conventional amount.",
+    "add_ingredients": [
+      "1 large lemon, cut into wedges"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260612.pdf",
+    "title": "Grilled Sardines with Capers, Lemon & Oregano",
+    "why": "The PDF serves the dish in step 7, then scatters the red onion 'just before serving' in step 8.",
+    "steps": [
+      "Preheat grill or grill pan to high heat.",
+      "Pat sardines completely dry with paper towels.",
+      "Rub sardines inside and out with 2 Tablespoons olive oil, sea salt, and black pepper.",
+      "Grill sardines 3–4 minutes per side until skin is crispy and flesh pulls away from bone easily.",
+      "While sardines grill, combine capers, lemon juice, lemon zest, fresh oregano, and remaining olive oil in a small bowl.",
+      "Transfer sardines to a platter. Spoon caper-lemon mixture over top.",
+      "Scatter thinly sliced red onion over the top just before serving.",
+      "Serve immediately with lemon wedges."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260619.pdf",
+    "title": "Charred Escalivada over White Beans",
+    "why": "Step 2 ends with a note about the PDF's Sunday prep guide: '(If done Sunday, this step is already behind you.)'.",
+    "steps": [
+      "Heat the broiler. Rub the eggplant, peppers, and onion with the 2 Tablespoons roasting oil and set on a sheet pan.",
+      "Broil 6 to 8 inches from the heat, turning, until the skins blacken all over, about 20 to 25 minutes. Cool, then peel and tear into wide strips.",
+      "In a 10-inch skillet, warm the beans over medium with the garlic, bay leaf, and a splash of water until hot and the garlic is soft, about 6 minutes. Season with the salt and pepper.",
+      "Spread the beans on a platter. Pile the warm escalivada on top and pour over any roasting juices.",
+      "Spoon over the red wine vinegar, scatter the thyme and parsley, and finish with the 2 Tablespoons finishing oil."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260619.pdf",
+    "title": "Escalivada and Mahón Tartines",
+    "why": "The PDF's main ingredient is 'The reserved escalivada (eggplant and peppers) from Monday', which only makes sense after cooking Monday's recipe; its fallback for cooks who skipped Monday is printed only in the WEDNESDAY PREP notes.",
+    "remove_ingredients": [
+      "The reserved escalivada from Monday"
+    ],
+    "add_ingredients": [
+      "escalivada (charred eggplant and peppers), reserved from Charred Escalivada over White Beans, or 1 jar roasted red peppers, drained, plus 1 eggplant, quick-broiled about 10 minutes under a hot broiler"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260626.pdf",
+    "title": "Marseille Socca and Summer Pistou",
+    "why": "The pistou is a double batch: half is 'for Wednesday', the Provençal White Beans and Pistou; say so instead of naming the day.",
+    "steps": [
+      "Whisk the chickpea flour, warm water, 2 Tbsp olive oil, salt, and pepper into a smooth batter. Rest 30 minutes.",
+      "Pound the basil, garlic, and Parmesan with a pinch of salt, then work in ¼ cup olive oil until loose. If you plan to make Provençal White Beans and Pistou, set half aside in a glass jar for it.",
+      "Heat 1 Tbsp olive oil in a 10-inch cast-iron skillet over medium-high until it shimmers.",
+      "Pour in half the batter and tilt to coat. Cook 5 minutes until the edges lift and the underside is browned, then flip and cook 2 minutes more. Repeat with the remaining oil and batter.",
+      "Tear the socca into shards and pile onto a platter. Scatter the cherry tomatoes and crumbled chèvre over the top.",
+      "Spoon the pistou across the socca and finish with 1 Tbsp olive oil. Serve warm."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260626.pdf",
+    "title": "Provençal White Beans and Pistou",
+    "why": "Uses pistou set aside in Marseille Socca and Summer Pistou; the PDF's Wednesday prep gives the fallback, pounding a fresh batch.",
+    "remove_ingredients": [
+      "reserved basil pistou"
+    ],
+    "add_ingredients": [
+      "reserved basil pistou (set aside from Marseille Socca and Summer Pistou, or pound a fresh batch the same way)"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260703.pdf",
+    "title": "Kalamata Bulgur Bowl with Charred Peppers & Olives",
+    "why": "PDF lists '1 cup bulgur, cooked' and peppers 'charred and sliced' but only its weekly prep guide cooks the bulgur (1 cup dry in 1½ cups vegetable broth, not listed) and chars the peppers; cook time was 0.",
+    "cook_minutes": 20,
+    "steps": [
+      "Bring the bulgur and broth to a boil in a saucepan. Cover, remove from heat, and let steam 15 minutes, then fluff and spread on a sheet pan to cool.",
+      "Meanwhile, char the peppers directly over a gas flame or under the broiler, turning until blackened on all sides, about 8 minutes. Seal in a bowl covered with a plate for 10 minutes, then peel, seed, and slice into strips.",
+      "In a large bowl, toss the cooked bulgur with 2 Tbsp olive oil, lemon juice, red wine vinegar, oregano, salt, and pepper until evenly coated.",
+      "Fold in the charred pepper strips, cherry tomatoes, olives, and sliced red onion. Taste and adjust salt and lemon.",
+      "Arrange all the white beans on top. Drizzle with the finishing 1 Tbsp olive oil.",
+      "Serve at room temperature directly from the bowl, family style."
+    ],
+    "remove_ingredients": [
+      "bulgur"
+    ],
+    "add_ingredients": [
+      "1 cup bulgur, dry",
+      "1½ cups organic vegetable broth"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260703.pdf",
+    "title": "Kalamata Chickpeas with Olives and Feta",
+    "why": "PDF lists 3 oz feta but step 4 and the Thursday prep crumble 1 oz over each of four plates (4 oz).",
+    "remove_ingredients": [
+      "feta"
+    ],
+    "add_ingredients": [
+      "4 ounces feta, crumbled"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260703.pdf",
+    "title": "Kolokythokeftedes Zucchini and Feta Fritters",
+    "why": "PDF lists '2 garlic cloves, minced and divided' plus '1 garlic clove' under a 'For the tzatziki:' heading the app drops, but the steps use only 2 cloves (1 in the batter, 1 in the tzatziki).",
+    "remove_ingredients": [
+      "garlic clove"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260703.pdf",
+    "title": "Pan-seared Sea Bream over Smoky Eggplant",
+    "why": "PDF lists salt and pepper as divided but the steps never season the fish (only the Tuesday prep box does), so the remaining ¼ tsp salt and ⅛ tsp pepper go unused.",
+    "steps": [
+      "Heat 2 Tbsp olive oil in a 12-inch skillet over medium-high. Add eggplant cubes in a single layer. Cook undisturbed 4 minutes, then toss and cook 3 more minutes until golden and tender.",
+      "Add onion and garlic. Cook 2 minutes until softened. Stir in tomato paste, capers, and red pepper flakes. Cook 1 minute. Season with ¼ tsp salt and ⅛ tsp pepper. Remove from heat and cover to keep warm.",
+      "Wipe the skillet clean. Pat the sea bream dry and season both sides with the remaining ¼ tsp salt and ⅛ tsp pepper. Add 1 Tbsp olive oil over medium-high. When shimmering, add sea bream skin-side down. Press gently with a spatula for 10 seconds. Cook 3 to 4 minutes until skin is crisp. Flip and cook 1 to 2 minutes until fish reaches 130 to 135°F.",
+      "Spoon eggplant mixture onto four plates. Rest a piece of fish on top. Drizzle with lemon juice and finishing 1 Tbsp olive oil. Scatter parsley over."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260710.pdf",
+    "title": "Ligurian Borlotti Beans and Pesto",
+    "why": "The pesto 'reserved from Monday' is set aside in Ligurian Trofie Al Pesto Genovese; name it.",
+    "remove_ingredients": [
+      "pesto"
+    ],
+    "add_ingredients": [
+      "1/3 cup pesto (reserved from Ligurian Trofie Al Pesto Genovese)"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260710.pdf",
+    "title": "Ligurian Trofie Al Pesto Genovese",
+    "why": "PDF reserves 1/3 cup pesto 'for Wednesday' in the last step, after all the pesto was tossed with the pasta; set it aside right after blending and name the recipe it is for.",
+    "steps": [
+      "Bring a large pot of salted water to a boil over high heat.",
+      "Add the potatoes and cook for 8 minutes, then add the green beans and cook 4 minutes more.",
+      "Add the trofie and cook until tender, about 9 to 11 minutes, then drain and save 1 cup of the water.",
+      "Blend the basil, pine nuts, pecorino, garlic, and 3 tablespoons olive oil into a loose pesto. Set aside about 1/3 cup of the pesto for Ligurian Borlotti Beans and Pesto.",
+      "Toss the hot pasta and vegetables with the pesto, loosening with a splash of the pasta water.",
+      "Finish with 1 tablespoon olive oil, the salt, and the pepper."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260814.pdf",
+    "title": "Alicante Butter Bean Tomato Tartine",
+    "why": "Beans ingredient says '* see Monday' and the canned-bean fallback is only in the prep list; the 2 Tbsp olive oil (counted in the nutrition) is never used by the steps.",
+    "steps": [
+      "Toast bread slices until golden, about 3 minutes per side.",
+      "Rub warm bread with a cut garlic clove, then brush with 2 Tbsp olive oil.",
+      "Warm the reserved butter beans in a small skillet over medium, 3 minutes.",
+      "Mash beans lightly with a fork and spread over the toasted bread.",
+      "Top with sliced tomato, Manchego, salt, and pepper.",
+      "Drizzle with 1 Tbsp olive oil and scatter parsley."
+    ],
+    "remove_ingredients": [
+      "reserved butter beans with sauce"
+    ],
+    "add_ingredients": [
+      "1½ cups reserved butter beans with sauce, from Alicante Charred Pepper Butter Beans, or one 15-ounce can butter beans warmed with a pinch of smoked paprika"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260814.pdf",
+    "title": "Alicante Charred Pepper Butter Beans",
+    "why": "Step 7 reserves beans 'for Wednesday' (weekly plan); they are for Alicante Butter Bean Tomato Tartine, and the step is optional when this recipe is cooked alone.",
+    "steps": [
+      "Heat 2 Tbsp olive oil in a 5-quart Dutch oven over medium.",
+      "Add onion and bell peppers. Cook 6 minutes until soft.",
+      "Add garlic, smoked paprika, oregano, and red pepper flakes. Cook 1 minute.",
+      "Add cherry tomatoes. Cook 4 minutes until they start to break down.",
+      "Add all 3 cans butter beans and vegetable broth. Simmer 12 minutes.",
+      "Season with salt and pepper.",
+      "If you plan to make Alicante Butter Bean Tomato Tartine, spoon 1½ cups beans with sauce into a glass container. Cool and refrigerate.",
+      "Off heat, stir parsley into the remaining beans.",
+      "Finish with 1 Tbsp olive oil and serve."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20260814.pdf",
+    "title": "Sheet-pan Lemon-herb Chicken Thighs",
+    "why": "Misprinted page heading: the menu (Friday side) and the page's own nutrition label name this watermelon side 'Chilled Watermelon and Mint Salad', so its printed nutrition was never matched.",
+    "rename": "Chilled Watermelon and Mint Salad",
+    "nutrition": {
+      "calories_kcal": 70,
+      "protein_g": 1,
+      "carbs_g": 17,
+      "fat_g": 0,
+      "saturated_fat_g": 0,
+      "cholesterol_mg": 0,
+      "fiber_g": 1,
+      "sugar_g": 13,
+      "sodium_mg": 20,
+      "calcium_pct": 1,
+      "iron_pct": 2
+    }
+  },
+  {
+    "pdf": "Mediterranean_20261009.pdf",
+    "title": "Crispy Chickpeas over Farro and Radicchio",
+    "why": "The farro 'reserved from Monday' comes from Ligurian Farro and Kale Braise; name it.",
+    "remove_ingredients": [
+      "farro"
+    ],
+    "add_ingredients": [
+      "1½ cups farro (cooked, reserved from Ligurian Farro and Kale Braise)"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261009.pdf",
+    "title": "Ligurian Farro and Kale Braise",
+    "why": "'Sunday' is the PDF's weekly prep day; 'ahead' reads on its own. The farro set aside 'for Wednesday' is for Crispy Chickpeas over Farro and Radicchio.",
+    "steps": [
+      "If you cooked the farro ahead, skip to step 3. Otherwise, bring the broth to a boil in a 3-quart saucepan. Add farro, cover, reduce to medium-low, and simmer 25 minutes until tender. Drain any remaining broth.",
+      "If you plan to make Crispy Chickpeas over Farro and Radicchio, set aside 1½ cups cooked farro, covered, and refrigerate.",
+      "Heat 2 Tbsp olive oil in a 5-quart Dutch oven over medium.",
+      "Add onion. Cook 5 minutes until soft.",
+      "Add garlic and rosemary. Cook 1 minute until fragrant.",
+      "Stir in the crushed tomatoes and the remaining cooked farro. Simmer 8 minutes.",
+      "Add kale in batches, stirring until wilted, about 5 minutes. Season with salt, pepper, and red pepper flakes.",
+      "Off heat, stir in remaining 1 Tbsp olive oil. Top with grated pecorino before serving."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261009.pdf",
+    "title": "Roasted Ligurian Branzino and Chard",
+    "why": "The PDF line '1 lemon, thinly sliced, plus 1 lemon, juiced (about 2 Tablespoons)' became one lemon; the recipe needs one sliced lemon (step 5) and one juiced lemon (step 7).",
+    "remove_ingredients": [
+      "lemon"
+    ],
+    "add_ingredients": [
+      "1 lemon, thinly sliced",
+      "1 lemon, juiced (about 2 Tablespoons)"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261016.pdf",
+    "title": "Gnocchi Niçois and Roasted Squash",
+    "why": "The squash line only says 'see Monday for recipe': it is the 1 pound set aside in Tian de Courge Niçois Squash Gratin, and the PDF prints its frozen-squash fallback only in the Wednesday prep list.",
+    "remove_ingredients": [
+      "roasted butternut squash"
+    ],
+    "add_ingredients": [
+      "1 pound roasted butternut squash (set aside from Tian de Courge Niçois Squash Gratin; or microwave 1 pound frozen butternut squash cubes for 5 minutes and brown them with the gnocchi)"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261016.pdf",
+    "title": "Riviera Lemon Chicken and Braised Leeks",
+    "why": "Step 6 spoons the leeks 'over the farro', which is the paired side (Warm Épeautre Farro with Parsley and Lemon), not part of this recipe. 'Wednesday night' refers to the weekly plan; 'the night before' reads on its own.",
+    "steps": [
+      "Season chicken on both sides with salt, pepper, and thyme. Skip this step if you dry-brined it the night before.",
+      "Warm 2 Tbsp olive oil in a 12-inch braiser or deep skillet over medium-high. Sear chicken 4 minutes per side until browned and transfer to a plate.",
+      "Reduce heat to medium. Add leeks and garlic and cook 6 minutes until soft.",
+      "Add broth, bay leaf, lemon zest, and olives. Return the chicken, cover, and simmer over medium 18 minutes until it reaches 165°F.",
+      "Stir lemon juice into the leeks and discard the bay leaf.",
+      "Spoon leeks onto plates (over Warm Épeautre Farro with Parsley and Lemon, if serving), set the chicken on top, and finish with parsley and 1 Tbsp olive oil."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261016.pdf",
+    "title": "Riviera Lemon Leeks and Warm Chèvre",
+    "why": "Step 5 spoons the leeks and chèvre 'over the farro', which is the paired side (Warm Épeautre Farro with Parsley and Lemon), not part of this recipe.",
+    "steps": [
+      "Warm 2 Tbsp olive oil in a 12-inch ovenproof braiser or deep skillet over medium. Cook leeks, garlic, salt, pepper, and thyme 8 minutes until soft.",
+      "Add broth, bay leaf, lemon zest, and olives. Cover and simmer over medium 12 minutes until the leeks are silky.",
+      "Stir in lemon juice, discard the bay leaf, and heat the broiler to high.",
+      "Set the chèvre rounds over the leeks and broil 3 to 4 minutes until warm and lightly browned.",
+      "Spoon the leeks and chèvre onto plates (over Warm Épeautre Farro with Parsley and Lemon, if serving) and finish with parsley and 1 Tbsp olive oil."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261016.pdf",
+    "title": "Tian de Courge Niçois Squash Gratin",
+    "why": "The squash set aside 'for Wednesday' is for Gnocchi Niçois and Roasted Squash.",
+    "steps": [
+      "Heat oven to 425°F. Toss squash with 3 Tbsp olive oil and ½ tsp salt and spread on 2 large, rimmed baking sheets.",
+      "Roast 25 minutes, flipping once, until tender and browned at the edges. Reduce oven to 375°F.",
+      "If you plan to make Gnocchi Niçois and Roasted Squash, transfer 1 pound roasted squash (about 3 cups) to a glass or silicone container and refrigerate up to 4 days.",
+      "Warm 1 Tbsp olive oil in a 10-inch skillet over medium. Cook onion 6 minutes until soft, add garlic, and cook 1 minute.",
+      "Lightly mash the remaining squash in a large bowl, leaving some pieces whole.",
+      "Whisk in eggs, Parmesan, sage, remaining ½ tsp salt, and pepper, then fold in the onion.",
+      "Spread into a parchment-lined 2-quart baking dish and bake at 375°F for 25 minutes until set in the center and golden on top.",
+      "Rest 5 minutes, drizzle with 1 Tbsp olive oil, and serve warm from the dish."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261023.pdf",
+    "title": "Mallorcan Eggs in Sofrito and Mushrooms",
+    "why": "The sofrito line only says 'see Monday for recipe': it is the half set aside in Sopes Mallorquines Chickpea Bread Soup, and the PDF prints its fallback only in the Wednesday prep list.",
+    "remove_ingredients": [
+      "Mallorcan sofrito"
+    ],
+    "add_ingredients": [
+      "2 cups Mallorcan sofrito (set aside from Sopes Mallorquines Chickpea Bread Soup; or simmer one 14.5-ounce can crushed tomatoes with 1 diced jarred roasted red pepper and 1 teaspoon smoked paprika for 5 minutes)"
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261023.pdf",
+    "title": "Pebres Torrats Roasted Pepper Salad",
+    "why": "Step 1 says to broil the peppers 'before heating the oven for the cod', which belongs to the paired main (Peix a la Mallorquina Baked Cod); the vegetarian menu pairs this salad with the butter beans. 'Sunday' is the PDF's weekly prep day; 'ahead' reads on its own.",
+    "steps": [
+      "If you roasted the peppers ahead, skip to step 4. Otherwise, heat broiler on high. Broil peppers on a rimmed baking sheet 6 inches from the heat for 15 minutes, turning every 5 minutes, until blackened on all sides.",
+      "Transfer to a bowl, cover, and steam 10 minutes.",
+      "Peel, seed, and slice the peppers into ½-inch strips over the bowl to catch the juices.",
+      "Toss peppers and juices with olive oil, garlic, vinegar, and salt. Rest 10 minutes at room temperature.",
+      "Top with capers and parsley before serving."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261023.pdf",
+    "title": "Sopes Mallorquines Chickpea Bread Soup",
+    "why": "The sofrito set aside 'for Wednesday' is for Mallorcan Eggs in Sofrito and Mushrooms.",
+    "steps": [
+      "Heat 2 Tbsp olive oil in a 5-quart Dutch oven over medium. Add onions and red peppers and cook 12 minutes, stirring often, until soft and sweet.",
+      "Add garlic and smoked paprika and cook 1 minute. Add tomatoes and salt and simmer 10 minutes until thick.",
+      "If you plan to make Mallorcan Eggs in Sofrito and Mushrooms, transfer half the sofrito (about 2 cups) to a glass container, cool, and refrigerate up to 4 days.",
+      "Add leeks and chard stems to the pot and cook over medium 5 minutes until the leeks soften.",
+      "Add chickpeas, broth, bay leaf, thyme, and pepper. Bring to a boil, then simmer over medium 12 minutes.",
+      "Stir in chard leaves and simmer 3 minutes until wilted. Remove the bay leaf.",
+      "Divide the dried bread among four wide bowls and ladle the soup over it. Rest 2 minutes so the bread softens.",
+      "Top with parsley and drizzle with 1 Tbsp olive oil, for finishing."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261023.pdf",
+    "title": "Spinach Pear and Toasted Almond Salad",
+    "why": "'Sunday' is the PDF's weekly prep day; 'ahead' reads on its own.",
+    "steps": [
+      "If you toasted the almonds ahead, just chop them. Otherwise, toast almonds in a 10-inch skillet over medium 5 minutes, shaking the pan. Cool and roughly chop.",
+      "Whisk vinegar, salt, and pepper in a large bowl, then whisk in olive oil.",
+      "Add spinach and pear and toss to coat.",
+      "Top with Manchego and almonds and serve right away."
+    ]
+  },
+  {
+    "pdf": "Mediterranean_20261030.pdf",
+    "title": "Patates Lemonates Greek Lemon Potatoes",
+    "why": "Step 4 ends with 'Slide the sfougato in for the last 15 minutes', a step of the paired main (Leek and Mushroom Sfougato Baked Omelet).",
+    "steps": [
+      "Heat oven to 400°F.",
+      "Toss potatoes with oil, lemon zest and juice, garlic, oregano, salt, and pepper in a 9-by-13-inch baking dish. Tuck in rosemary.",
+      "Pour broth around the potatoes.",
+      "Roast at 400°F 45 minutes, turning once at 25 minutes, until the liquid is absorbed and the edges are browned.",
+      "Spoon pan juices over the potatoes and serve."
+    ]
+  }
+]

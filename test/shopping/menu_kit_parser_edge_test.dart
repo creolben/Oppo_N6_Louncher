@@ -483,6 +483,307 @@ void main() {
       );
       expect(kit.recipes, isEmpty);
     });
+
+    test('reads the times and the numbered steps', () {
+      final recipe = recipePage(<String>[
+        'Serves: 4 | Prep Time: 15 minutes | Marinate: 1 hour | '
+            'Cook Time: 20-25 minutes',
+        'INGREDIENTS\tINSTRUCTIONS',
+        'a spilled ingredient tail\t1.Heat the oven to 350°F. Bake',
+        '2 Tablespoons olive oil\tabout 20 minutes.',
+        '1 lemon 2. Squeeze the lemon over.',
+        '\t3. Serve.',
+        'COMMON SUBSTITUTIONS',
+      ]).recipes.single;
+      expect(recipe.prepMinutes, 15);
+      expect(recipe.cookMinutes, 25);
+      expect(recipe.restMinutes, 60);
+      expect(recipe.steps, <String>[
+        'Heat the oven to 350°F. Bake about 20 minutes.',
+        'Squeeze the lemon over.',
+        'Serve.',
+      ]);
+    });
+
+    test('a step starts only where a line begins with its number', () {
+      final recipe = recipePage(<String>[
+        'Serves: 4',
+        'INGREDIENTS\tINSTRUCTIONS',
+        '3 cups broth\t1. If you cooked the farro Sunday, skip to step 3. '
+            'Otherwise,',
+        '1½ cups farro\tsimmer the farro in the broth 25 minutes. Drain.',
+        '1 onion\t2.Set aside half the farro.',
+        '\t3.Cook the onion over medium-',
+        '\thigh heat until browned..',
+        'COMMON SUBSTITUTIONS',
+      ]).recipes.single;
+      expect(recipe.steps, <String>[
+        'If you cooked the farro Sunday, skip to step 3. Otherwise, simmer '
+            'the farro in the broth 25 minutes. Drain.',
+        'Set aside half the farro.',
+        'Cook the onion over medium-high heat until browned.',
+      ]);
+    });
+
+    test('a sub-recipe numbers its own steps', () {
+      final recipe = recipePage(<String>[
+        'INGREDIENTS\tINSTRUCTIONS',
+        '4 cups broth\t1.Simmer the broth.',
+        '2 bay leaves\t2.Top with herbs',
+        '1 lemon\t3. just before serving.',
+        'Herb Butter:\tFor herb butter:',
+        '4 Tablespoons butter\t1.Mix the butter with herbs.',
+        '\t2.Spread on toast.',
+        'COMMON SUBSTITUTIONS',
+      ]).recipes.single;
+      expect(recipe.steps, <String>[
+        'Simmer the broth.',
+        'Top with herbs just before serving.',
+        'For herb butter: Mix the butter with herbs.',
+        'Spread on toast.',
+      ]);
+      expect(recipe.ingredients.map((ParsedIngredient i) => i.name), <String>[
+        'broth',
+        'bay leaves',
+        'lemon',
+        'butter',
+      ]);
+    });
+
+    test('the last step can end on the line of the next heading', () {
+      final recipe = recipePage(<String>[
+        'INGREDIENTS\tINSTRUCTIONS',
+        '1 pound beets\t1.Roast the beets.',
+        '2 Tablespoons vinegar\t2.Drizzle with vinegar and',
+        'CHEF’S TIPS:\tserve warm.',
+        'Roast the beets a day ahead.',
+      ]).recipes.single;
+      expect(recipe.steps.last, 'Drizzle with vinegar and serve warm.');
+    });
+
+    test('a note printed across both columns after the last step is '
+        'dropped', () {
+      final recipe = recipePage(<String>[
+        'INGREDIENTS\tINSTRUCTIONS',
+        '1 pound beets\t1.Roast the beets.',
+        '2 Tablespoons vinegar\t2.Serve at room temperature.',
+        'Pre-roasted beets save time; if roasting fresh,\tadd 45 minutes',
+        'COMMON SUBSTITUTIONS',
+      ]).recipes.single;
+      expect(recipe.steps, <String>[
+        'Roast the beets.',
+        'Serve at room temperature.',
+      ]);
+      expect(recipe.ingredients.map((ParsedIngredient i) => i.name), <String>[
+        'beets',
+        'vinegar',
+      ]);
+    });
+
+    test('ingredient lines: one-space indents start a new one, wrapped '
+        'lines, sizes and notes carry on, dish titles are skipped', () {
+      final recipe = recipePage(<String>[
+        'INGREDIENTS\tINSTRUCTIONS',
+        '3 Tablespoons olive oil\t1. Cook.',
+        ' 1 medium onion, chopped',
+        ' 4 ounces bread, torn into rough',
+        '1½-inch chunks',
+        '1 bunch chard, stemmed and',
+        '   chopped, stems kept separate',
+        '¼ teaspoon sea salt',
+        'black pepper to taste',
+        '¼ teaspoon saffron, dissolved in 2',
+        'Tablespoons warm water',
+        '4 ounces graviera, grated',
+        '(about 1 cup)',
+        ' TOMATO & FENNEL SALAD',
+        'COMMON SUBSTITUTIONS',
+      ]).recipes.single;
+      final byName = <String, ParsedIngredient>{
+        for (final i in recipe.ingredients) i.name: i,
+      };
+      expect(byName.keys, <String>[
+        'olive oil',
+        'medium onion',
+        'bread',
+        'bunch chard',
+        'sea salt',
+        'black pepper to taste',
+        'saffron',
+        'graviera',
+      ]);
+      expect(byName['bread']!.note, 'torn into rough 1½-inch chunks');
+      expect(
+        byName['bunch chard']!.note,
+        'stemmed and chopped, stems kept separate',
+      );
+      expect(byName['saffron']!.note, 'dissolved in 2 Tablespoons warm water');
+      expect(byName['graviera']!.note, 'about 1 cup; grated');
+    });
+
+    test('ingredient lines: headings, lists, cross-references, '
+        'substitutions and names in capitals', () {
+      final recipe = recipePage(<String>[
+        'INGREDIENTS\tINSTRUCTIONS',
+        '8 bone-in, skin-on chicken thighs (about 3 lbs)\t1. Cook.',
+        '16 sardine fillets (about 1 pound).',
+        'Sub Mackerel',
+        ' Herb Butter:',
+        '4 TB butter, softened',
+        'FOR PISTOU: 3 Tbsp basil, 2 cloves garlic, 1 oz Parmesan',
+        '2 cups Mallorcan sofrito * see Monday for recipe',
+        'ROMESCO SAUCE (same recipe as Tuesday',
+        'Seafood main)',
+        'Juice of 1 lemon',
+        'COMMON SUBSTITUTIONS',
+      ]).recipes.single;
+      final byName = <String, ParsedIngredient>{
+        for (final i in recipe.ingredients) i.name: i,
+      };
+      expect(byName.keys, <String>[
+        'bone-in skin-on chicken thighs',
+        'sardine fillets',
+        'butter',
+        'basil',
+        'garlic',
+        'Parmesan',
+        'Mallorcan sofrito',
+        'romesco sauce',
+        'lemon',
+      ]);
+      expect(byName['sardine fillets']!.note, 'about 1 pound; Sub Mackerel');
+      expect(byName['butter']!.quantity, const Quantity(4, Unit.tablespoon));
+      expect(byName['garlic']!.quantity, const Quantity(2, Unit.clove));
+      expect(byName['Mallorcan sofrito']!.note, 'see Monday for recipe');
+      expect(
+        byName['romesco sauce']!.note,
+        'same recipe as Tuesday Seafood main',
+      );
+      expect(byName['lemon']!.quantity, const Quantity(1, Unit.piece));
+      expect(byName['lemon']!.note, 'juice');
+    });
+
+    test('the paragraph under the title describes the dish', () {
+      final recipe = recipePage(<String>[
+        'A slow bake of giant beans and sun-',
+        'dried tomatoes, the island’s Sunday dish.',
+        'TUESDAY PREP',
+        'Soak the beans.',
+        'Serves: 4',
+        'INGREDIENTS\tINSTRUCTIONS',
+        '1 lemon\t1. Juice it.',
+        'COMMON SUBSTITUTIONS',
+      ]).recipes.single;
+      expect(
+        recipe.description,
+        'A slow bake of giant beans and sun-dried tomatoes, the island’s '
+        'Sunday dish.',
+      );
+    });
+
+    test('the day’s prep list is not a description', () {
+      final recipe = recipePage(<String>[
+        'MONDAY PREP',
+        'Dice the cucumber into ¼-inch pieces',
+        'Serves: 4',
+        'INGREDIENTS\tINSTRUCTIONS',
+        '1 cucumber\t1. Toss it.',
+        'COMMON SUBSTITUTIONS',
+      ]).recipes.single;
+      expect(recipe.description, isNull);
+    });
+
+    test('a page without a servings line has no times', () {
+      final recipe = recipePage(<String>[
+        'INGREDIENTS\tINSTRUCTIONS',
+        '1 lemon\tJuice it.',
+        'COMMON SUBSTITUTIONS',
+      ]).recipes.single;
+      expect(recipe.prepMinutes, isNull);
+      expect(recipe.cookMinutes, isNull);
+      expect(recipe.restMinutes, isNull);
+      expect(recipe.steps, <String>['Juice it.']);
+    });
+
+    test('reads the nutrition printed under the dish name', () {
+      final recipe = recipePage(<String>[
+        'Serves: 4',
+        'INGREDIENTS\tINSTRUCTIONS',
+        '1 lemon\t1. Juice it.',
+        'COMMON SUBSTITUTIONS',
+        'This dish is vegan.',
+        'BEAN PLAKI Nutritional Information (per serving): Calories: 300-350 '
+            'kcal | Protein:',
+        '12g | Sat Fat: 1.5g | Sodium: 1,200mg | Iron: 15%',
+      ]).recipes.single;
+      expect(recipe.nutrition, <String, double>{
+        'calories_kcal': 325,
+        'protein_g': 12,
+        'saturated_fat_g': 1.5,
+        'sodium_mg': 1200,
+        'iron_pct': 15,
+      });
+    });
+
+    test('a daily page gives its main and side their own times and '
+        'nutrition', () {
+      final kit = _parse(
+        <String>[
+          _list(<String>['M Fennel 2 - \$3.00']),
+          'MEDITERRANEAN | MONDAY JUNE 16',
+          'WARM PISTOU LENTILS',
+          'ASPARAGUS SALAD',
+          'Serves: 4 | Prep Time: 15 minutes | Cook Time: 25 minutes',
+          'MAIN: INGREDIENTS\tINSTRUCTIONS',
+          '1 cup lentils\t1.Cook the lentils.',
+          'Serves: 2 | Prep Time: 5 minutes | Cook Time: 4 minutes',
+          'SIDE: INGREDIENTS\tINSTRUCTIONS',
+          '1 pound asparagus\t1.Steam the asparagus.',
+          'Main: Warm Lentils with Pistou Nutritional Information '
+              '(per serving):',
+          'Calories: 349 kcal | Protein: 18.8g',
+          'Side: Asparagus Salad Nutritional Information (per serving):',
+          '134 kcal | Carbohydrates: 12.4g',
+        ].join('\n'),
+      );
+      final [main, side] = kit.recipes;
+      expect((main.servings, main.prepMinutes, main.cookMinutes), (4, 15, 25));
+      expect(main.steps, <String>['Cook the lentils.']);
+      expect(main.nutrition, <String, double>{
+        'calories_kcal': 349,
+        'protein_g': 18.8,
+      });
+      expect((side.servings, side.prepMinutes, side.cookMinutes), (2, 5, 4));
+      expect(side.steps, <String>['Steam the asparagus.']);
+      expect(side.nutrition, <String, double>{
+        'calories_kcal': 134,
+        'carbs_g': 12.4,
+      });
+    });
+
+    test('nutrition goes to the dish its label names, or to nothing', () {
+      final kit = _parse(
+        <String>[
+          _list(<String>['M Fennel 2 - \$3.00']),
+          'MEDITERRANEAN | MONDAY',
+          'GRILLED SARDINES W/ LEMON-OREGANO',
+          'TOMATO-CUCUMBER SALAD WITH FETA',
+          'Serves: 4',
+          'MAIN: INGREDIENTS\tINSTRUCTIONS',
+          '1 pound sardines\t1.Grill.',
+          'SIDE: INGREDIENTS\tINSTRUCTIONS',
+          '2 tomatoes\t1.Slice.',
+          'Grilled Sardines with Lemon-Oregano Dressing: Nutritional '
+              'Information (per serving):',
+          'Calories: 451 kcal',
+          'Chilled Watermelon Salad: Nutritional Information (per serving):',
+          'Calories: 90 kcal',
+        ].join('\n'),
+      );
+      final [main, side] = kit.recipes;
+      expect(main.nutrition, <String, double>{'calories_kcal': 451});
+      expect(side.nutrition, isEmpty);
+    });
   });
 
   group('similarNames', () {

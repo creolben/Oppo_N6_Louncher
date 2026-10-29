@@ -1,3 +1,5 @@
+import 'dart:math' show min;
+
 import '../models/quantity.dart';
 import '../models/shopping_item.dart';
 import '../models/shopping_list.dart';
@@ -98,12 +100,35 @@ class MenuKitRecipe {
   /// [MenuVariant.vegetarian] or both.
   final Set<MenuVariant> variants;
 
+  /// The paragraph that introduces the dish, or null when none is printed.
+  final String? description;
+
+  /// The times on the `Serves:` line, in minutes; null when not printed.
+  /// Rest covers marinating and resting.
+  final int? prepMinutes;
+  final int? cookMinutes;
+  final int? restMinutes;
+
+  /// The numbered instructions, in order, without their numbers.
+  final List<String> steps;
+
+  /// Per-serving nutrition as printed, keyed by nutrient and unit
+  /// (`calories_kcal`, `protein_g`, `sodium_mg`, `iron_pct`); empty when the
+  /// page prints none.
+  final Map<String, double> nutrition;
+
   const MenuKitRecipe({
     required this.title,
     required this.servings,
     required this.ingredients,
     this.side = false,
     this.variants = const <MenuVariant>{MenuVariant.regular},
+    this.description,
+    this.prepMinutes,
+    this.cookMinutes,
+    this.restMinutes,
+    this.steps = const <String>[],
+    this.nutrition = const <String, double>{},
   });
 
   @override
@@ -354,7 +379,8 @@ class MenuKitParser {
     _Mode mode = _Mode.none;
     _RecipePage? page;
     String? dailySideTitle;
-    int? dailySideServings;
+    // The side's `Serves:` line, printed before the side's ingredients.
+    String? dailySideServes;
     var dailyVegetarian = false;
     var pendingVegetarianList = false;
     String? pendingVariant;
@@ -409,7 +435,7 @@ class MenuKitParser {
         closeDay();
         closeRecipe();
         title ??= _titleCase(header.group(2)!);
-        week ??= _titleCase(header.group(3)!);
+        week ??= _titleCase(header.group(3)!.replaceFirst(' ,', ','));
         mode = _Mode.none;
         // Any page can be a recipe; it only counts once an ingredient
         // heading follows. The title is the first line under the header.
@@ -449,7 +475,13 @@ class MenuKitParser {
             continue;
           }
           if (!_isHeading(raw)) break;
-          if (raw != 'SIDE DISH' && raw != 'MAIN DISH') rawTitles.add(raw);
+          // `SERVE WITH MEDITERRANEAN EGGPLANT` under a side's title pairs it
+          // with a main; it is not part of the name.
+          if (raw != 'SIDE DISH' &&
+              raw != 'MAIN DISH' &&
+              !raw.startsWith(RegExp(r'SERVED? WITH\b'))) {
+            rawTitles.add(raw);
+          }
           j++;
         }
         var heading = '';
@@ -484,7 +516,7 @@ class MenuKitParser {
           dailySideTitle = !sideHeading && titles.length > 1
               ? _titleCase(titles[1])
               : null;
-          dailySideServings = null;
+          dailySideServes = null;
           mode = _Mode.dailyIntro;
         }
         continue;
@@ -599,13 +631,35 @@ class MenuKitParser {
         mode = _Mode.table;
       }
 
+      // `<dish> Nutritional Information (per serving):`, then the values on
+      // the same line or the next ones. It ends the recipe it describes.
+      final nutritionAt = line.indexOf('Nutritional Information');
+      if (nutritionAt >= 0) {
+        closeRecipe();
+        mode = _Mode.none;
+        var end = i + 1;
+        while (end < lines.length &&
+            (lines[end].trim().isEmpty ||
+                _nutrientLine.hasMatch(lines[end].trim()))) {
+          end++;
+        }
+        final described = _nutritionPage(pages, line.substring(0, nutritionAt));
+        described?.nutrition = _nutrition(
+          <String>[
+            line.substring(nutritionAt),
+            ...lines.sublist(i + 1, end),
+          ].join(' '),
+        );
+        i = end - 1;
+        continue;
+      }
+
       switch (mode) {
         case _Mode.none:
           break;
         case _Mode.recipeIntro:
-          final serves = _serves.firstMatch(line);
-          if (serves != null) {
-            page?.servings = int.parse(serves.group(1)!);
+          if (_serves.hasMatch(line)) {
+            page?.readServes(line);
           } else if (line.toUpperCase().startsWith('INGREDIENTS')) {
             // Without the extractor's column tabs the ingredient and
             // instruction columns cannot be told apart; skip the recipe
@@ -616,11 +670,12 @@ class MenuKitParser {
               page = null;
               mode = _Mode.none;
             }
+          } else {
+            page?.addIntroLine(line);
           }
         case _Mode.dailyIntro:
-          final serves = _serves.firstMatch(line);
-          if (serves != null) {
-            page?.servings = int.parse(serves.group(1)!);
+          if (_serves.hasMatch(line)) {
+            page?.readServes(line);
           } else if (line.toUpperCase().startsWith('MAIN: INGREDIENTS') ||
               line.toUpperCase().startsWith('SIDE: INGREDIENTS')) {
             if (line.toUpperCase().startsWith('SIDE:')) page?.side = true;
@@ -630,45 +685,45 @@ class MenuKitParser {
               page = null;
               mode = _Mode.none;
             }
+          } else {
+            page?.addIntroLine(line);
           }
         case _Mode.dailyIngredients:
           final upper = line.toUpperCase();
           if (upper.startsWith('SERVES:')) {
-            final sideServes = _serves.firstMatch(line);
-            dailySideServings = sideServes == null
-                ? null
-                : int.parse(sideServes.group(1)!);
+            dailySideServes = _serves.hasMatch(line) ? line : null;
           } else if (upper.startsWith('SIDE: INGREDIENTS')) {
             final open = page;
+            final sideServes = dailySideServes;
             if (open != null && open.lines.isEmpty) {
               // A page of its own, headed by the side's title.
               open.side = true;
-              open.servings = dailySideServings ?? open.servings;
+              if (sideServes != null) open.readServes(sideServes);
             } else {
               final mainServings = open?.servings;
               closeRecipe();
-              page = _RecipePage(
+              final side = _RecipePage(
                 title: dailySideTitle ?? 'Side dish',
                 side: true,
                 vegetarianPage: dailyVegetarian,
-              )..servings = dailySideServings ?? mainServings;
+              )..servings = mainServings;
+              if (sideServes != null) side.readServes(sideServes);
+              page = side;
               dailySideTitle = null;
-              dailySideServings = null;
+              dailySideServes = null;
             }
           } else if (upper.startsWith('MAIN: INGREDIENTS')) {
             // Repeated heading; nothing to add.
-          } else if (upper.startsWith('COMMON SUBSTITUTIONS') ||
-              upper.startsWith('INGREDIENT SWAPS') ||
-              upper.startsWith('QUICK ASSEMBLY') ||
-              line.contains('Nutritional Information')) {
+          } else if (_endsRecipe(line)) {
+            page?.addClosingLine(lines[i]);
             closeRecipe();
             mode = _Mode.none;
           } else {
             page?.addLine(lines[i]);
           }
         case _Mode.recipeIngredients:
-          if (line.toUpperCase().startsWith('COMMON SUBSTITUTIONS') ||
-              line.contains('Nutritional Information')) {
+          if (_endsRecipe(line)) {
+            page?.addClosingLine(lines[i]);
             closeRecipe();
             mode = _Mode.none;
             continue;
@@ -748,6 +803,14 @@ class MenuKitParser {
               vegetarianDishes,
               hasVegetarianPages: hasVegetarianPages,
             ),
+            description: recipe.description,
+            prepMinutes: recipe.prepMinutes,
+            cookMinutes: recipe.cookMinutes,
+            restMinutes: recipe.restMinutes,
+            steps: List<String>.unmodifiable(recipe.steps),
+            nutrition: Map<String, double>.unmodifiable(
+              recipe.nutrition ?? const <String, double>{},
+            ),
           ),
       ],
     );
@@ -770,6 +833,112 @@ class MenuKitParser {
       if (shared) MenuVariant.vegetarian,
     };
   }
+
+  /// The notes that follow a recipe's ingredients; the ingredient block ends
+  /// there.
+  static bool _endsRecipe(String line) =>
+      line.contains('Nutritional Information') || _recipeStop.hasMatch(line);
+
+  static final RegExp _recipeStop = RegExp(
+    r"^(?:COMMON SUBSTITUTIONS|CHEF[’']?S TIPS?|SERVING SUGGESTIONS?"
+    r'|INGREDIENT SWAPS|QUICK ASSEMBLY|NOTES?|TIPS?)',
+    caseSensitive: false,
+  );
+
+  /// The page a nutrition [label] describes, among the last two read. A
+  /// `Main:`/`Side:` label (the daily layout prints both after the side)
+  /// names its course, and an unlabeled block describes the day's main. Any
+  /// other label names the dish, often longer or shorter than the page title
+  /// (`Grilled Sardines with Lemon-Oregano Dressing` for `GRILLED SARDINES
+  /// W/ LEMON-OREGANO`): the page sharing the most words with it, at least
+  /// half of the shorter name's.
+  static _RecipePage? _nutritionPage(List<_RecipePage> pages, String label) {
+    final open = pages
+        .skip(pages.length > 2 ? pages.length - 2 : 0)
+        .toList()
+        .reversed
+        .where((_RecipePage page) => page.nutrition == null);
+    final course = RegExp(
+      r'^\s*(Main|Side)\s*:',
+      caseSensitive: false,
+    ).firstMatch(label);
+    final dish = label.replaceFirst(RegExp(r':\s*$'), '').trim();
+    if (course != null || dish.isEmpty) {
+      final side = course?.group(1)!.toLowerCase() == 'side';
+      return open.where((_RecipePage page) => page.side == side).firstOrNull;
+    }
+    final words = _words(dish);
+    _RecipePage? best;
+    var bestShared = 0;
+    for (final page in open) {
+      final title = _words(page.title);
+      final shared = title.intersection(words).length;
+      // A lone common word (`salad`) is not the same dish.
+      if (shared * 2 < min(title.length, words.length)) continue;
+      if (shared > bestShared) {
+        best = page;
+        bestShared = shared;
+      }
+    }
+    return best;
+  }
+
+  /// The distinctive words of a dish name, lower-cased.
+  static Set<String> _words(String name) => <String>{
+    for (final match in RegExp(
+      r'\p{L}{4,}',
+      unicode: true,
+    ).allMatches(name.toLowerCase()))
+      if (match[0] != 'with') match[0]!,
+  };
+
+  /// `Calories: 349 kcal | Protein: 18.8g | … | Iron: 35%` as
+  /// `{calories_kcal: 349, protein_g: 18.8, …, iron_pct: 35}`. A range
+  /// (`300-350 kcal`) counts as its middle; a bare `521 kcal` as calories.
+  static Map<String, double> _nutrition(String text) {
+    final values = <String, double>{};
+    final flat = text.replaceAll(RegExp(r'\s+'), ' ');
+    for (final match in _nutrient.allMatches(flat)) {
+      final unit = match.group(4)!;
+      var name = match.group(1)?.trim().toLowerCase();
+      if (name == null && unit == 'kcal') name = 'calories';
+      if (name == null) continue;
+      name = _nutrientNames[name] ?? name;
+      final low = double.parse(match.group(2)!.replaceAll(',', ''));
+      final high = match.group(3) == null
+          ? low
+          : double.parse(match.group(3)!.replaceAll(',', ''));
+      values['${name.replaceAll(' ', '_')}_${_nutrientUnits[unit] ?? unit}'] =
+          (low + high) / 2;
+    }
+    return values;
+  }
+
+  static const String _amount =
+      r'(\d[\d,]*(?:\.\d+)?)(?:\s*[-–]\s*(\d[\d,]*(?:\.\d+)?))?\s*'
+      r'(kcal|mcg|mg|g|%|IU)(?![A-Za-z])';
+
+  /// One printed nutrient: `Sat Fat: 3.6g`, `Calories: 300-350 kcal`.
+  static final RegExp _nutrient = RegExp(
+    '(?:([A-Za-z][A-Za-z ]*):\\s*)?$_amount',
+  );
+
+  /// A line that only carries on the nutrient values.
+  static final RegExp _nutrientLine = RegExp(
+    '^(?:[A-Za-z][A-Za-z ]*:\\s*)?$_amount',
+  );
+
+  static const Map<String, String> _nutrientNames = <String, String>{
+    'sat fat': 'saturated fat',
+    'carbohydrates': 'carbs',
+    'fibre': 'fiber',
+    'sugars': 'sugar',
+  };
+
+  static const Map<String, String> _nutrientUnits = <String, String>{
+    '%': 'pct',
+    'IU': 'iu',
+  };
 
   /// Up to [count] non-empty, whitespace-collapsed lines from [start].
   static List<String> _nextLines(List<String> lines, int start, int count) {
@@ -795,7 +964,7 @@ class MenuKitParser {
           (previous.endsWith(',') ||
               previous.endsWith('-') ||
               previous.endsWith('&') ||
-              RegExp(r'^(?:WITH|AND|&)\b').hasMatch(title))) {
+              RegExp(r'^(?:WITH\b|AND\b|&)').hasMatch(title))) {
         joined.last = '$previous $title';
       } else {
         joined.add(title);
@@ -842,6 +1011,7 @@ class MenuKitParser {
           current.endsWith(',') ||
           current.endsWith('-') ||
           current.endsWith('&') ||
+          RegExp(r'^(?:WITH\b|AND\b|&)').hasMatch(line) ||
           isDish;
       if (current.isNotEmpty && !continues) {
         titles.add(current);
@@ -1111,7 +1281,7 @@ class MenuKitParser {
 
   /// `MEDITERRANEAN | FALL | OCTOBER 2ND, 2026` — cuisine, season, week.
   static final RegExp _pageHeader = RegExp(
-    r'^(?:(VEGETARIAN|VEGAN)\s*\|\s*)?([A-Z][A-Z &\-]+?)\s*\|\s*[A-Z]+\s*\|\s*([A-Z]+ \d{1,2}(?:ST|ND|RD|TH)?,? \d{4})$',
+    r'^(?:(VEGETARIAN|VEGAN)\s*\|\s*)?([A-Z][A-Z &\-]+?)\s*\|\s*[A-Z]+\s*\|\s*([A-Z]+ \d{1,2}(?:ST|ND|RD|TH)?\s?,? \d{4})$',
   );
 
   /// Any other all-caps running header (`MEDITERRANEAN | FALL | PATRAS,
@@ -1257,7 +1427,23 @@ class _RecipePage {
 
   /// The left-column text of each ingredient, wrapped lines rejoined.
   final List<String> lines = <String>[];
+
+  /// The [lines] that hold a whole list (`FOR PISTOU: 3 Tbsp basil, 2 cloves
+  /// garlic, …`), one ingredient per comma.
+  final Set<int> _listLines = <int>{};
   int? servings;
+  int? prepMinutes;
+  int? cookMinutes;
+  int? restMinutes;
+  Map<String, double>? nutrition;
+
+  /// The instructions column, one entry per printed line, step numbers
+  /// included.
+  final List<String> _instructions = <String>[];
+
+  /// The paragraph printed under the dish title, one entry per line.
+  final List<String> _intro = <String>[];
+  var _introClosed = false;
 
   _RecipePage({
     required this.title,
@@ -1265,10 +1451,160 @@ class _RecipePage {
     required this.vegetarianPage,
   });
 
-  List<ParsedIngredient> get ingredients =>
-      <ParsedIngredient>[for (final line in lines) _parse(line)]
-          .where((ParsedIngredient parsed) => parsed.name.isNotEmpty)
-          .toList();
+  /// The paragraph printed under the dish title, or null when there is none.
+  String? get description {
+    final text = _joinLines(_intro);
+    return text.isEmpty ? null : text;
+  }
+
+  /// Takes one line of the page's opening: the paragraph that introduces the
+  /// dish, between its title and the next heading. The day's prep list
+  /// (`TUESDAY PREP`) is never part of it, even on a page without a paragraph.
+  void addIntroLine(String line) {
+    if (_introClosed) return;
+    if (MenuKitParser._isHeading(line)) {
+      _introClosed = _intro.isNotEmpty || _prepHeading.hasMatch(line);
+    } else {
+      _intro.add(line);
+    }
+  }
+
+  static final RegExp _prepHeading = RegExp(r'\bPREP\b');
+
+  /// Reads the servings and times of a `Serves: 4 | Prep Time: 15 minutes |
+  /// Cook Time: 25 minutes` line.
+  void readServes(String line) {
+    final serves = MenuKitParser._serves.firstMatch(line);
+    if (serves != null) servings = int.parse(serves.group(1)!);
+    prepMinutes = _minutes(_prep, line);
+    cookMinutes = _minutes(_cook, line);
+    restMinutes = _minutes(_rest, line) ?? _minutes(_restNote, line);
+  }
+
+  /// The numbered instructions, without their numbers.
+  ///
+  /// A step starts on a line that begins with the next number (`1.Cook`,
+  /// `2. Toss`), so a number inside a sentence (`skip to step 3.`) never
+  /// splits one. A sub-recipe heading (`For herb butter:`) followed by a
+  /// fresh `1.` starts its own steps, the heading kept in front. Text before
+  /// step 1 is a spilled ingredient; unnumbered instructions are one step.
+  List<String> get steps {
+    if (!_instructions.any(_stepStart.hasMatch)) {
+      final text = _joinLines(_instructions);
+      return text.isEmpty ? const <String>[] : <String>[text];
+    }
+    final steps = <List<String>>[];
+    var last = 0;
+    String? heading;
+    for (final line in _instructions) {
+      final number = _stepStart.firstMatch(line);
+      final n = number == null ? null : int.parse(number.group(1)!);
+      if (n != null &&
+          ((n > last && n <= last + 3) || (n == 1 && heading != null))) {
+        final text = line.substring(number!.end);
+        // A number printed before the end of a sentence (`5. just before
+        // serving.`) carries on the step above.
+        if (heading == null && steps.isNotEmpty && _lowerStart.hasMatch(text)) {
+          steps.last.add(text);
+        } else {
+          steps.add(<String>[?heading, text]);
+        }
+        heading = null;
+        last = n;
+        continue;
+      }
+      if (heading != null) steps.last.add(heading);
+      heading = null;
+      if (last == 0) continue;
+      if (_subRecipe.hasMatch(line)) {
+        heading = line;
+      } else {
+        steps.last.add(line);
+      }
+    }
+    if (heading != null) steps.last.add(heading);
+    return <String>[
+      for (final step in steps)
+        if (_joinLines(step) case final text when text.isNotEmpty) text,
+    ];
+  }
+
+  /// Joins printed lines into one text: a word broken at a hyphen
+  /// (`medium-` / `high`) is rejoined, a doubled period (`bread..`) undone.
+  static String _joinLines(List<String> lines) {
+    final text = StringBuffer();
+    for (final line in lines) {
+      final part = line.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (part.isEmpty) continue;
+      if (text.isNotEmpty && !_brokenWord.hasMatch(text.toString())) {
+        text.write(' ');
+      }
+      text.write(part);
+    }
+    return text
+        .toString()
+        .replaceAll(RegExp(r'(?<!\.)\.\.(?!\.)'), '.')
+        .replaceAllMapped(RegExp(r' +([,.;:!?])'), (Match m) => m[1]!)
+        .trim();
+  }
+
+  /// A line ending in a word broken at its hyphen: `medium-`, `1½-`, `2–`.
+  static final RegExp _brokenWord = RegExp(
+    r'[\p{L}\d½¼¾⅓⅔⅛][-–]$',
+    unicode: true,
+  );
+
+  /// A line that starts a numbered step: `1.Cook`, `2. Toss`, not `1.5 oz`.
+  static final RegExp _stepStart = RegExp(r'^(\d{1,2})\.(?!\d)\s*');
+
+  static final RegExp _lowerStart = RegExp(r'^[a-z]');
+
+  /// A sub-recipe heading in the instructions: `For herb butter:`.
+  static final RegExp _subRecipe = RegExp(r'^[A-Za-z][^.!?]{0,40}:$');
+
+  /// The minutes [pattern] finds in [line]: hours converted, the top of a
+  /// range (`4-5 minutes`), and a bare number taken as minutes.
+  static int? _minutes(RegExp pattern, String line) {
+    final match = pattern.firstMatch(line);
+    if (match == null) return null;
+    final amount = int.parse(match.group(2) ?? match.group(1)!);
+    final hours = match.group(3)?.toLowerCase().startsWith('h') ?? false;
+    return hours ? amount * 60 : amount;
+  }
+
+  static const String _duration =
+      r'(\d+)(?:\s*[-–]\s*(\d+))?\s*(hours?|hrs?|minutes?|mins?)?';
+  static final RegExp _prep = RegExp(
+    'Prep\\s*Time:\\s*$_duration',
+    caseSensitive: false,
+  );
+  static final RegExp _cook = RegExp(
+    '(?:Cook|Grill|Toast|Bake|Roast)\\s*Time:\\s*$_duration',
+    caseSensitive: false,
+  );
+  static final RegExp _rest = RegExp(
+    '(?:Marinat(?:e|ing)|Rest(?:ing)?|Chill(?:ing)?)(?:\\s*Time)?:\\s*'
+    '$_duration',
+    caseSensitive: false,
+  );
+
+  /// A rest written into another time: `(plus 2 hours resting)`, `+ 30 min
+  /// rest`.
+  static final RegExp _restNote = RegExp(
+    '(?:plus|\\+)\\s*$_duration\\s*(?:of\\s*)?'
+    '(?:rest|resting|marinating|chilling)',
+    caseSensitive: false,
+  );
+
+  List<ParsedIngredient> get ingredients => <ParsedIngredient>[
+    for (final (index, line) in lines.indexed)
+      for (final item
+          in _listLines.contains(index) ? line.split(_listItem) : [line])
+        _parse(item),
+  ].where((ParsedIngredient parsed) => parsed.name.isNotEmpty).toList();
+
+  /// Where a list line starts its next ingredient: a comma before an amount.
+  static final RegExp _listItem = RegExp(r',\s+(?=[\d½¼¾⅓⅔⅛])');
 
   /// Words a recipe lists before the ingredient itself, comma-separated
   /// (`boneless, skinless chicken thighs`).
@@ -1280,13 +1616,19 @@ class _RecipePage {
     'medium',
     'small',
     'ripe',
+    'bone-in',
+    'skin-on',
   };
 
   /// Parses [line], keeping a leading `boneless, skinless` with the name it
-  /// describes instead of letting the comma end the name.
+  /// describes instead of letting the comma end the name, and writing a name
+  /// printed in capitals (`ROMESCO SAUCE`) in lower case.
   static ParsedIngredient _parse(String line) {
     const parser = IngredientParser();
     final parsed = parser.parseLine(line);
+    if (MenuKitParser._isHeading(parsed.name) && parsed.name.length > 1) {
+      return _parse(line.replaceFirst(parsed.name, parsed.name.toLowerCase()));
+    }
     if (!_descriptors.contains(parsed.name.toLowerCase())) return parsed;
     final comma = line.indexOf(',');
     if (comma < 0) return parsed;
@@ -1297,35 +1639,132 @@ class _RecipePage {
 
   /// Takes one raw line of the two-column ingredient block.
   ///
-  /// The ingredient is the text left of the column tab. A line that starts
-  /// with a tab only continues the instructions; one indented with spaces
-  /// continues the ingredient above it. When a long ingredient runs so close
-  /// to the instructions that no tab was written, the cell ends at the first
-  /// numbered step (`7.Drizzle`) or sentence break (`. Heat`).
+  /// The ingredient is the text left of the column tab, the instructions the
+  /// text right of it. A line that starts with a tab only continues the
+  /// instructions. When a long ingredient runs so close to the instructions
+  /// that no tab was written, the cell ends at the first numbered step
+  /// (`7.Drizzle`) or sentence break (`. Heat`).
   void addLine(String raw) {
-    if (raw.replaceFirst(RegExp(r'^ +'), '').startsWith('\t')) return;
-    var cell = raw.split('\t').first;
-    if (!raw.contains('\t')) {
-      final cut = _glued.firstMatch(cell);
-      if (cut != null) cell = cell.substring(0, cut.start);
+    final cells = raw.split('\t');
+    // The instructions start at the first tab, or further right when a later
+    // cell opens a step: what comes before it ends the ingredient
+    // (`… ribbons with` / `a` / `1.Lay the ribbons`).
+    var split = 1;
+    for (var k = 1; k < cells.length; k++) {
+      if (_stepStart.hasMatch(cells[k].trim())) {
+        split = k;
+        break;
+      }
     }
-    cell = cell.trim().replaceAll(RegExp(r'\s+'), ' ');
-    if (cell.isEmpty || _step.hasMatch(cell)) return;
-    if (lines.isNotEmpty && (raw.startsWith(' ') || _continues(cell))) {
-      lines.last = '${lines.last} $cell';
+    var cell = cells.take(split).join(' ');
+    if (cells.length > 1) {
+      final right = _collapse(cells.skip(split).join(' '));
+      // A note printed across both columns after the last step (`… if
+      // roasting fresh,` / `add 45 minutes to cook time`) is neither an
+      // ingredient nor a step.
+      if (_afterLastSentence(right)) return;
+      if (right.isNotEmpty) _instructions.add(right);
     } else {
+      final cut = _glued.firstMatch(cell);
+      if (cut != null) {
+        _instructions.add(
+          cell.substring(cut.start).replaceFirst(RegExp(r'^[.\s]+'), ''),
+        );
+        cell = cell.substring(0, cut.start);
+      }
+    }
+    // A sub-recipe heading (`Herb Butter:`, `FOR PISTOU: 3 Tbsp basil`) or a
+    // dish title printed in the column (`TOMATO & FENNEL SALAD`) is not an
+    // ingredient; what follows its colon is.
+    cell = _collapse(cell);
+    final heading = _ingredientHeading.firstMatch(cell);
+    if (heading != null) cell = cell.substring(heading.end);
+    // A cross-reference (`Mallorcan sofrito * see Monday for recipe`) is a note.
+    cell = cell.replaceFirstMapped(_seeAlso, (Match m) => ' (${m[1]})').trim();
+    if (cell.isEmpty || _isTitle(cell)) return;
+    if (_step.hasMatch(cell)) {
+      _instructions.add(cell);
+      return;
+    }
+    if (lines.isNotEmpty && _substitute.hasMatch(cell)) {
+      // `Sub Mackerel` under the sardines: a note on the ingredient above.
+      lines.last = '${lines.last.replaceFirst(RegExp(r'\.$'), '')}, $cell';
+    } else if (lines.isNotEmpty && (raw.startsWith('  ') || _continues(cell))) {
+      lines.last = _joinLines(<String>[lines.last, cell]);
+    } else {
+      if (heading != null && _listItem.hasMatch(cell)) {
+        _listLines.add(lines.length);
+      }
       lines.add(cell);
     }
   }
 
-  /// Whether [cell] carries on the ingredient above: it starts in lower case
-  /// (`pieces, cook to 165°F`) or the line above stopped mid-phrase.
-  bool _continues(String cell) {
-    if (RegExp(r'^[a-z]').hasMatch(cell)) return true;
-    final previous = lines.last;
-    if (previous.endsWith(',') || previous.endsWith('-')) return true;
-    return '('.allMatches(previous).length > ')'.allMatches(previous).length;
+  /// Takes the instructions printed on the line of the heading that ends the
+  /// ingredients (`CHEF’S TIPS:<tab>serve warm.`): the end of the last step.
+  void addClosingLine(String raw) {
+    final tab = raw.indexOf('\t');
+    if (tab < 0) return;
+    final right = _collapse(raw.substring(tab + 1));
+    if (right.isEmpty || MenuKitParser._recipeStop.hasMatch(right)) return;
+    if (!_afterLastSentence(right)) _instructions.add(right);
   }
+
+  /// Whether [text] starts in lower case though the instructions so far end a
+  /// sentence: the wrapped end of a note, not a step.
+  bool _afterLastSentence(String text) =>
+      RegExp(r'^[a-z]').hasMatch(text) &&
+      _instructions.isNotEmpty &&
+      RegExp(r'[.!?]["”)]?$').hasMatch(_instructions.last);
+
+  /// Whether [cell] carries on the ingredient above: the line above stopped
+  /// mid-phrase (`cut into` / `1-inch cubes`, `dissolved in 2`, an open
+  /// parenthesis), or [cell] is the size of a cut (`1½-inch chunks`) or a note
+  /// (`(about 1 cup)`). A lower-case line carries on one that wrapped at the
+  /// column's edge; after a short, complete line (`¼ teaspoon sea salt`) it
+  /// is a new ingredient (`black pepper to taste`). Lines indented by two
+  /// spaces or more carry on too; one space is how some weeks indent every
+  /// ingredient.
+  bool _continues(String cell) {
+    final previous = lines.last;
+    if (_openEnd.hasMatch(previous) ||
+        '('.allMatches(previous).length > ')'.allMatches(previous).length) {
+      return true;
+    }
+    if (_continuation.hasMatch(cell)) return true;
+    return RegExp(r'^[a-z]').hasMatch(cell) && previous.length >= 30;
+  }
+
+  static final RegExp _continuation = RegExp(r'^(?:\(|\d+[½¼¾⅓⅔]?-inch\b)');
+
+  static final RegExp _openEnd = RegExp(
+    r'(?:[,\-–\d]|\b(?:and|or|of|into|with|plus|about|to|for|in|from))$',
+    caseSensitive: false,
+  );
+
+  /// `Sub Mackerel`: a substitution for the ingredient above.
+  static final RegExp _substitute = RegExp(
+    r'^sub(?:stitute)?\b',
+    caseSensitive: false,
+  );
+
+  /// `* see Monday for recipe` after an ingredient.
+  static final RegExp _seeAlso = RegExp(
+    r'\s*\*\s*(see\b[^()]*)$',
+    caseSensitive: false,
+  );
+
+  /// A dish title in capitals, without an amount or a note.
+  static bool _isTitle(String cell) =>
+      MenuKitParser._isHeading(cell) && !RegExp(r'[\d(]').hasMatch(cell);
+
+  /// `Herb Butter:`, `FOR PISTOU:`, `Tapenade:` at the start of a cell.
+  static final RegExp _ingredientHeading = RegExp(
+    r"^(?:for\s+)?[A-Za-z][A-Za-z '’&-]{0,30}:\s*",
+    caseSensitive: false,
+  );
+
+  static String _collapse(String text) =>
+      text.replaceAll(RegExp(r'\s+'), ' ').trim();
 
   /// A numbered instruction (`1. Heat`, `2.Toss`), not an amount (`1.5 oz`).
   static final RegExp _step = RegExp(r'^\d+\.(?!\d)\s?[A-Za-z]');

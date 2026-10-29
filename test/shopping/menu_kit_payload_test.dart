@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mylauncher/features/shopping/parsing/ingredient_parser.dart';
 import 'package:mylauncher/features/shopping/parsing/menu_kit_parser.dart';
 
+import '../../tool/menu_kit/corrections.dart';
 import '../../tool/menu_kit/payload.dart';
 import 'menu_kit_fixture.dart';
 
@@ -123,6 +124,23 @@ void main() {
       });
     });
 
+    test('stores recipe descriptions, times, steps and nutrition', () {
+      final recipes = listOf('recipes');
+      final cod = recipes.first;
+      expect(cod['description'], 'A short story about the dish.');
+      expect(cod['prep_minutes'], 10);
+      expect(cod['cook_minutes'], 20);
+      expect(cod['rest_minutes'], null);
+      expect((cod['steps']! as List<String>).first, 'Heat oven to 400°F.');
+      expect(cod['nutrition'], <String, double>{
+        'calories_kcal': 300,
+        'protein_g': 24,
+        'carbs_g': 8,
+      });
+      // The halloumi page prints no nutrition.
+      expect(recipes[1]['nutrition'], null);
+    });
+
     test('is plain JSON', () {
       final decoded = jsonDecode(jsonEncode(payload)) as Map<String, Object?>;
       expect(decoded['title'], 'Mediterranean');
@@ -159,6 +177,74 @@ void main() {
           .cast<Map<String, Object?>>();
       expect(recipes, hasLength(1));
       expect(recipes.single['variants'], <String>['regular', 'vegetarian']);
+    });
+  });
+
+  group('applyCorrections', () {
+    const String pdf = 'Mediterranean_October2.pdf';
+    const String cod = 'Patra Baked Cod and Roasted Fennel';
+    List<Map<String, Object?>> ingredientsOf(Map<String, Object?> recipe) =>
+        (recipe['ingredients']! as List<Object?>).cast<Map<String, Object?>>();
+
+    test('renames and replaces what the correction gives', () {
+      applyCorrections(payload, <Map<String, Object?>>[
+        <String, Object?>{
+          'pdf': pdf,
+          'title': cod,
+          'why': 'The PDF serves lemon wedges it never lists.',
+          'rename': 'Patra Cod',
+          'cook_minutes': 25,
+          'steps': <String>['Bake the cod.'],
+          'nutrition': null,
+          'remove_ingredients': <String>['medium fennel bulb'],
+          'add_ingredients': <String>['1 lemon, cut into wedges'],
+        },
+      ]);
+      final recipe = listOf('recipes').first;
+      expect(recipe['title'], 'Patra Cod');
+      expect(recipe['cook_minutes'], 25);
+      expect(recipe['steps'], <String>['Bake the cod.']);
+      expect(recipe['nutrition'], isNull);
+      final ingredients = ingredientsOf(recipe);
+      expect(
+        ingredients.map((Map<String, Object?> i) => i['name']),
+        isNot(contains('medium fennel bulb')),
+      );
+      expect(ingredients.last, <String, Object?>{
+        'name': 'lemon',
+        'quantity_amount': 1.0,
+        'quantity_unit': 'pc',
+        'note': 'cut into wedges',
+      });
+    });
+
+    test('skips other PDFs and refuses stale or unexplained corrections', () {
+      applyCorrections(payload, <Map<String, Object?>>[
+        <String, Object?>{'pdf': 'Other.pdf', 'title': 'Gone', 'why': 'x'},
+      ]);
+      expect(
+        () => applyCorrections(payload, <Map<String, Object?>>[
+          <String, Object?>{'pdf': pdf, 'title': 'Gone', 'why': 'x'},
+        ]),
+        throwsStateError,
+      );
+      expect(
+        () => applyCorrections(payload, <Map<String, Object?>>[
+          <String, Object?>{
+            'pdf': pdf,
+            'title': cod,
+            'why': 'x',
+            'remove_ingredients': <String>['saffron'],
+          },
+        ]),
+        throwsStateError,
+      );
+      expect(
+        () => applyCorrections(payload, <Map<String, Object?>>[
+          <String, Object?>{'pdf': pdf, 'title': cod, 'step': <String>[]},
+        ]),
+        throwsFormatException,
+      );
     });
   });
 }

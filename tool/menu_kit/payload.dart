@@ -69,13 +69,15 @@ List<Map<String, Object?>> _recipes(MenuKit kit) {
         'servings': recipe.servings,
         'side': recipe.side,
         'variants': variants,
+        'description': recipe.description,
+        'prep_minutes': recipe.prepMinutes,
+        'cook_minutes': recipe.cookMinutes,
+        'rest_minutes': recipe.restMinutes,
+        'steps': recipe.steps,
+        'nutrition': recipe.nutrition.isEmpty ? null : recipe.nutrition,
         'ingredients': <Map<String, Object?>>[
           for (final ParsedIngredient ingredient in recipe.ingredients)
-            <String, Object?>{
-              'name': ingredient.name,
-              ..._quantity(ingredient.quantity),
-              'note': ingredient.note,
-            },
+            ingredientPayload(ingredient),
         ],
       };
     } else {
@@ -91,6 +93,14 @@ List<Map<String, Object?>> _recipes(MenuKit kit) {
   }
   return merged.values.toList();
 }
+
+/// One recipe ingredient as `ingest_menu_kit()` stores it.
+Map<String, Object?> ingredientPayload(ParsedIngredient ingredient) =>
+    <String, Object?>{
+      'name': ingredient.name,
+      ..._quantity(ingredient.quantity),
+      'note': ingredient.note,
+    };
 
 const List<MenuVariant> _printed = <MenuVariant>[
   MenuVariant.regular,

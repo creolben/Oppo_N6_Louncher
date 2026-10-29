@@ -3,7 +3,8 @@
 // recipe) through the ingest_menu_kit() database function.
 //
 // Uses the same MenuKitParser as the app, on text extracted exactly as the
-// app extracts it (tool/pdf_text, needs java and curl).
+// app extracts it (tool/pdf_text, needs java and curl). Mistakes printed in
+// the PDFs themselves are fixed by tool/menu_kit/corrections.json.
 //
 //   dart run tool/menu_kit_ingest.dart ~/Documents/Recipes --dry-run
 //   dart run tool/menu_kit_ingest.dart ~/Documents/Recipes --out kits.json
@@ -18,6 +19,7 @@ import 'dart:io';
 
 import 'package:mylauncher/features/shopping/parsing/menu_kit_parser.dart';
 
+import 'menu_kit/corrections.dart';
 import 'menu_kit/payload.dart';
 
 const String _bucket = 'menu-kits';
@@ -59,6 +61,10 @@ Future<void> main(List<String> args) async {
     );
   }
 
+  final corrections = (jsonDecode(
+    File.fromUri(Platform.script.resolve('menu_kit/corrections.json'))
+        .readAsStringSync(),
+  ) as List<Object?>).cast<Map<String, Object?>>();
   final texts = await _extract(pdfs);
   final payloads = <Map<String, Object?>>[];
   var failures = 0;
@@ -78,6 +84,7 @@ Future<void> main(List<String> args) async {
       pdfPath: '$sha.pdf',
       startOverride: _dateFromName(name),
     );
+    applyCorrections(payload, corrections);
     payloads.add(payload);
     final summary =
         '${kit.listName(MenuVariant.regular)}: '
