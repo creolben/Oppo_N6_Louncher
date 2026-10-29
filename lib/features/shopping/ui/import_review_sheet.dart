@@ -15,10 +15,14 @@ class ImportReviewSheet extends StatefulWidget {
   final ParsedDocument document;
   final void Function(List<int> selectedIndices) onConfirm;
 
+  /// Which system the muted approximation beside each amount uses.
+  final bool preferImperial;
+
   const ImportReviewSheet({
     super.key,
     required this.document,
     required this.onConfirm,
+    this.preferImperial = false,
   });
 
   @override
@@ -148,6 +152,7 @@ class _ImportReviewSheetState extends State<ImportReviewSheet> {
                 itemBuilder: (BuildContext context, int index) {
                   return _ImportRow(
                     ingredient: document.items[index],
+                    preferImperial: widget.preferImperial,
                     selected: _selected[index],
                     onTap: () => setState(
                       () => _selected[index] = !_selected[index],
@@ -159,9 +164,11 @@ class _ImportReviewSheetState extends State<ImportReviewSheet> {
             const SizedBox(height: LuminousHomeTheme.space12),
             GroceryActionButton(
               icon: Icons.download_rounded,
-              label: _selectedCount == 1
-                  ? 'Import 1 item'
-                  : 'Import $_selectedCount items',
+              label: document.isRecipe
+                  ? 'Save recipe'
+                  : _selectedCount == 1
+                      ? 'Import 1 item'
+                      : 'Import $_selectedCount items',
               onTap: _selectedCount == 0 ? null : _confirm,
             ),
           ],
@@ -186,18 +193,23 @@ class _ImportReviewSheetState extends State<ImportReviewSheet> {
 
 class _ImportRow extends StatelessWidget {
   final ParsedIngredient ingredient;
+  final bool preferImperial;
   final bool selected;
   final VoidCallback onTap;
 
   const _ImportRow({
     required this.ingredient,
+    required this.preferImperial,
     required this.selected,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final String quantity = ingredient.quantity?.format() ?? '';
+    // As entered, like a list row, with the other system as a muted aside.
+    final String quantity = ingredient.quantity?.formatAsEntered() ?? '';
+    final String? approx =
+        ingredient.quantity?.approxIn(preferImperial: preferImperial);
     return Semantics(
       container: true,
       button: true,
@@ -246,11 +258,24 @@ class _ImportRow extends StatelessWidget {
                   ),
                   if (quantity.isNotEmpty) ...<Widget>[
                     const SizedBox(width: LuminousHomeTheme.space12),
-                    Text(
-                      quantity,
-                      style: LuminousHomeTheme.caption.copyWith(
-                        color: LuminousHomeTheme.groceryAccent,
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text(
+                          quantity,
+                          style: LuminousHomeTheme.caption.copyWith(
+                            color: LuminousHomeTheme.groceryAccent,
+                          ),
+                        ),
+                        if (approx != null)
+                          Text(
+                            approx,
+                            style: LuminousHomeTheme.caption.copyWith(
+                              color: LuminousHomeTheme.textMuted,
+                            ),
+                          ),
+                      ],
                     ),
                   ],
                 ],
@@ -268,6 +293,7 @@ Future<void> showImportReviewSheet(
   BuildContext context, {
   required ParsedDocument document,
   required void Function(List<int> selectedIndices) onConfirm,
+  bool preferImperial = false,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -277,6 +303,7 @@ Future<void> showImportReviewSheet(
     builder: (BuildContext sheetContext) => ImportReviewSheet(
       document: document,
       onConfirm: onConfirm,
+      preferImperial: preferImperial,
     ),
   );
 }

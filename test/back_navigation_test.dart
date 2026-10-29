@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mylauncher/main.dart';
+import 'package:mylauncher/canvas/galaxy_interactive_canvas.dart';
 import 'package:mylauncher/ui/widgets/comet_search_surface.dart';
 
 void main() {
@@ -26,6 +27,31 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.byType(CometSearchSurface), findsNothing);
+    expect(find.byType(ChronoFoldHomeScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('system Back on the bare home surface leaves the galaxy alone',
+      (tester) async {
+    await tester.pumpWidget(
+      ChronoFoldApp(isKeyguardLocked: () async => false),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Pan the galaxy away from its resting view.
+    final GalaxyInteractiveCanvas canvas = tester
+        .widget<GalaxyInteractiveCanvas>(find.byType(GalaxyInteractiveCanvas));
+    canvas.camera.applyPan(const Offset(160, -90));
+    await tester.pump();
+    final Offset panned = canvas.camera.translation;
+
+    // A native home ignores Back on its own surface: nothing recenters.
+    await tester.binding.handlePopRoute();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(canvas.camera.translation, panned);
     expect(find.byType(ChronoFoldHomeScreen), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

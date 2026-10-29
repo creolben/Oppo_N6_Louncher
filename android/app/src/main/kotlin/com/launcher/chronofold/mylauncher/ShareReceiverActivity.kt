@@ -39,9 +39,14 @@ class ShareReceiverActivity : Activity() {
          * Copies [uri]'s stream into the app's imports cache and returns the
          * absolute path, or null when the stream cannot be opened or crosses
          * [MAX_BYTES]. Shared by the share receiver and the in-app picker so
-         * both import paths behave identically.
+         * both import paths behave identically; [onTooLarge] fires (on the
+         * copying thread) when the null is because of the size cap.
          */
-        fun copyToImports(context: Context, uri: Uri): String? {
+        fun copyToImports(
+            context: Context,
+            uri: Uri,
+            onTooLarge: (() -> Unit)? = null,
+        ): String? {
             val dir = importsDir(context)
             if (!dir.exists() && !dir.mkdirs()) return null
             val target = File(dir, "${System.currentTimeMillis()}.pdf")
@@ -60,6 +65,7 @@ class ShareReceiverActivity : Activity() {
                                 output.close()
                                 target.delete()
                                 Log.w(TAG, "CF_PDF: rejected a PDF over 25 MB")
+                                onTooLarge?.invoke()
                                 return null
                             }
                             output.write(buffer, 0, read)
@@ -110,12 +116,13 @@ class ShareReceiverActivity : Activity() {
         // on the main thread. The activity stays alive until it finishes,
         // because the URI read grant only lasts as long as this activity.
         Thread({
-            val path = copyToImports(this@ShareReceiverActivity, uri)
-            runOnUiThread { deliver(path) }
+            var tooLarge = false
+            val path = copyToImports(this@ShareReceiverActivity, uri) { tooLarge = true }
+            runOnUiThread { deliver(path, tooLarge) }
         }, "cf-pdf-share").start()
     }
 
-    private fun deliver(path: String?) {
+    private fun deliver(path: String?, tooLarge: Boolean) {
         if (isDestroyed) return
         if (path != null) {
             // An explicit component start; deliberately no ACTION_MAIN /
@@ -128,8 +135,12 @@ class ShareReceiverActivity : Activity() {
                 putExtra(EXTRA_SHARED_PDF_PATH, path)
             }
             startActivity(launch)
+        } else if (tooLarge) {
+            // There is no Dart channel to tell from here, so the oversized
+            // share is dropped as before; the log records why.
+            Log.w(TAG, "CF_PDF: shared PDF dropped: over the 25 MB import cap")
         } else {
-            Log.w(TAG, "CF_PDF: no readable PDF URI in the share intent")
+            Log.w(TAG, "CF_PDF: shared PDF could not be copied into the cache")
         }
         finish()
     }

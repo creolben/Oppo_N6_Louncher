@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/app_entry.dart';
@@ -30,7 +30,7 @@ abstract final class CoverStyle {
   static Color get accent => LuminousHomeTheme.accent;
   static const Color secondaryAccent = LuminousHomeTheme.cobalt;
   static const Color tertiaryAccent = LuminousHomeTheme.orchid;
-  static const Color hairline = LuminousHomeTheme.hairline;
+  static Color get hairline => LuminousHomeTheme.hairline;
   static const Color label = LuminousHomeTheme.textSecondary;
   static const Color labelMuted = LuminousHomeTheme.textMuted;
 
@@ -211,7 +211,9 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     final selectedConstellation = _selectedConstellation;
 
     return Scaffold(
-      backgroundColor: CoverStyle.page,
+      // Transparent: the system wallpaper shows through the window, as it
+      // does behind every other ColorOS home surface on the cover display.
+      backgroundColor: Colors.transparent,
       // The detector wraps the whole cover with translucent hit testing, so it
       // receives the taps no interactive child claimed — the empty space the
       // sleep gesture lives on. It only listens for taps; dragging and scrolling
@@ -220,167 +222,112 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
         behavior: HitTestBehavior.translucent,
         onTapUp: _handleCoverTapUp,
         child: Stack(
-        children: [
-          // 1. Luminous Horizon atmosphere: an ink-blue OLED field with a
-          // low cobalt horizon and restrained aqua/orchid light.
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Stack(
-                fit: StackFit.expand,
+          children: [
+            // 1. The field is the system wallpaper itself; nothing is painted
+            // behind the stardust any more. The legibility scrims live one
+            // level up (see `WallpaperScrim`), under every posture's chrome.
+
+            // 2. Ambient Stardust Starfield Background. The boundary keeps the
+            // breathing pulse repainting this layer only, instead of dragging
+            // the whole cover subtree (including the scrollable body) with it.
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: _CoverStardustPainter(animation: _pulseController),
+                ),
+              ),
+            ),
+
+            // 3. Main Scrollable Cover Screen Content
+            SafeArea(
+              bottom: false,
+              child: Column(
                 children: [
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          CoverStyle.pageTop,
-                          CoverStyle.page,
-                          CoverStyle.pageDeep,
-                        ],
-                        stops: [0.0, 0.58, 1.0],
+                  // Top Header: Chrono Clock & Date + Quick Posture Badge
+                  _buildChronoHeader(),
+
+                  // Quick Search Bar Pill
+                  _buildSearchPill(),
+
+                  // Scrollable Body (Essentials + Sector Browser)
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(
+                        CoverStyle.gutter,
+                        4.0,
+                        CoverStyle.gutter,
+                        CoverStyle.dockClearance,
                       ),
-                    ),
-                  ),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: const Alignment(-0.9, -0.62),
-                        radius: 0.9,
-                        colors: [
-                          CoverStyle.accent.withValues(alpha: 0.13),
-                          Colors.transparent,
-                        ],
-                      ),
-                    ),
-                  ),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: const Alignment(0.95, 0.02),
-                        radius: 0.82,
-                        colors: [
-                          CoverStyle.tertiaryAccent.withValues(alpha: 0.11),
-                          Colors.transparent,
-                        ],
-                      ),
-                    ),
-                  ),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: const Alignment(0.08, 1.16),
-                        radius: 0.8,
-                        colors: [
-                          CoverStyle.secondaryAccent.withValues(alpha: 0.2),
-                          Colors.transparent,
-                        ],
-                        stops: const [0.0, 1.0],
-                      ),
+                      physics: const ClampingScrollPhysics(),
+                      children: [
+                        // Essentials (Core) Launchpad Shelf
+                        _buildEssentialsShelf(coreConstellation),
+
+                        const SizedBox(height: 18),
+
+                        // Constellation Sector Tabs Bar
+                        _buildSectorTabBar(otherConstellations),
+
+                        const SizedBox(height: 12),
+
+                        // Active Sector Grid
+                        if (selectedConstellation != null)
+                          _SectorCrossFade(
+                            sectorId: selectedConstellation.id,
+                            child: _buildSectorAppCard(selectedConstellation),
+                          ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
-          ),
 
-          // 2. Ambient Stardust Starfield Background. The boundary keeps the
-          // breathing pulse repainting this layer only, instead of dragging
-          // the whole cover subtree (including the scrollable body) with it.
-          Positioned.fill(
-            child: RepaintBoundary(
-              child: CustomPaint(
-                painter: _CoverStardustPainter(animation: _pulseController),
-              ),
-            ),
-          ),
-
-          // 3. Main Scrollable Cover Screen Content
-          SafeArea(
-            bottom: false,
-            child: Column(
-              children: [
-                // Top Header: Chrono Clock & Date + Quick Posture Badge
-                _buildChronoHeader(),
-
-                // Quick Search Bar Pill
-                _buildSearchPill(),
-
-                // Scrollable Body (Essentials + Sector Browser)
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(
-                      CoverStyle.gutter,
-                      4.0,
-                      CoverStyle.gutter,
-                      CoverStyle.dockClearance,
-                    ),
-                    physics: const ClampingScrollPhysics(),
-                    children: [
-                      // Essentials (Core) Launchpad Shelf
-                      _buildEssentialsShelf(coreConstellation),
-
-                      const SizedBox(height: 18),
-
-                      // Constellation Sector Tabs Bar
-                      _buildSectorTabBar(otherConstellations),
-
-                      const SizedBox(height: 12),
-
-                      // Active Sector Grid
-                      if (selectedConstellation != null)
-                        _SectorCrossFade(
-                          sectorId: selectedConstellation.id,
-                          child: _buildSectorAppCard(selectedConstellation),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // 4. Scrim so the scrolling body dissolves under the floating dock
-          // instead of colliding with it.
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 150,
-            child: IgnorePointer(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      CoverStyle.page.withValues(alpha: 0.0),
-                      CoverStyle.page.withValues(alpha: 0.86),
-                      CoverStyle.page,
-                    ],
-                    stops: const [0.0, 0.55, 1.0],
-                  ),
-                ),
-              ),
-            ),
-          ),
-
-          // 5. Ergonomic Bottom Cockpit Bar for Narrow Cover
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _buildCoverCockpitBar(),
-          ),
-
-          // 6. Fold Simulator Popup Drawer (if toggled)
-          if (_showFoldControls)
+            // 4. Scrim so the scrolling body dissolves under the floating dock
+            // instead of colliding with it. It never goes opaque: the
+            // wallpaper stays visible under the dock, as it does under the
+            // ColorOS dock.
             Positioned(
-              left: CoverStyle.gutter,
-              right: CoverStyle.gutter,
-              bottom: 92,
-              child: _buildFoldControlsSheet(),
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 150,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        // Stacks on the home-level bottom scrim, so it stays
+                        // light; together they never go opaque.
+                        LuminousHomeTheme.wallpaperScrim.withValues(alpha: 0.0),
+                        LuminousHomeTheme.wallpaperScrim.withValues(alpha: 0.3),
+                        LuminousHomeTheme.wallpaperScrim.withValues(alpha: 0.4),
+                      ],
+                      stops: const [0.0, 0.55, 1.0],
+                    ),
+                  ),
+                ),
+              ),
             ),
+
+            // 5. Ergonomic Bottom Cockpit Bar for Narrow Cover
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _buildCoverCockpitBar(),
+            ),
+
+            // 6. Fold Simulator Popup Drawer (if toggled)
+            if (kDebugMode && _showFoldControls)
+              Positioned(
+                left: CoverStyle.gutter,
+                right: CoverStyle.gutter,
+                bottom: 92,
+                child: _buildFoldControlsSheet(),
+              ),
           ],
         ),
       ),
@@ -423,26 +370,13 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 FittedBox(
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerLeft,
-                  child: Text(
-                    timeString,
-                    style: const TextStyle(
-                      color: LuminousHomeTheme.textPrimary,
-                      fontSize: 38,
-                      fontWeight: FontWeight.w300,
-                      letterSpacing: -1.2,
-                      height: 1.05,
-                      // Tabular figures keep the clock from shifting
-                      // width as the minute rolls over.
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
+                  child: Text(timeString, style: LuminousHomeTheme.clock),
                 ),
                 const SizedBox(height: 3),
                 Text(
                   dateString,
-                  style: const TextStyle(
+                  style: LuminousHomeTheme.caption.copyWith(
                     color: CoverStyle.labelMuted,
-                    fontSize: 11,
                     fontWeight: FontWeight.w500,
                     letterSpacing: 0.3,
                   ),
@@ -451,72 +385,66 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             ),
           ),
 
-          // Cover Mode Posture Telemetry Badge (tappable to toggle simulator)
-          Semantics(
-            button: true,
-            label: _showFoldControls
-                ? 'Hide posture controls'
-                : 'Show posture controls',
-            child: GestureDetector(
-              onTap: () {
-                LauncherHaptics.tick();
-                setState(() => _showFoldControls = !_showFoldControls);
-              },
-              behavior: HitTestBehavior.opaque,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                constraints: const BoxConstraints(
-                  minHeight: CoverStyle.touchTarget,
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 11),
-                decoration: BoxDecoration(
-                  color: _showFoldControls
-                      ? LuminousHomeTheme.softTint(CoverStyle.accent, 0.16)
-                      : LuminousHomeTheme.glass,
-                  borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
-                  border: Border.all(
-                    color: _showFoldControls
-                        ? LuminousHomeTheme.hairlineStrong
-                        : CoverStyle.hairline,
-                    width: 0.8,
+          // Posture badge that toggles the fold simulator. Developer tooling:
+          // release builds never draw it.
+          if (kDebugMode)
+            Semantics(
+              button: true,
+              label: _showFoldControls
+                  ? 'Hide posture controls'
+                  : 'Show posture controls',
+              child: GestureDetector(
+                onTap: () {
+                  LauncherHaptics.tick();
+                  setState(() => _showFoldControls = !_showFoldControls);
+                },
+                behavior: HitTestBehavior.opaque,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
+                  constraints: const BoxConstraints(
+                    minHeight: CoverStyle.touchTarget,
                   ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: CoverStyle.accent,
-                      ),
-                      child: SizedBox(width: 7, height: 7),
-                    ),
-                    const SizedBox(width: 7),
-                    const Text(
-                      'COVER',
-                      style: TextStyle(
-                        color: LuminousHomeTheme.textSecondary,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(
-                      _showFoldControls
-                          ? Icons.keyboard_arrow_down_rounded
-                          : Icons.keyboard_arrow_up_rounded,
-                      size: 15,
+                  padding: const EdgeInsets.symmetric(horizontal: 11),
+                  decoration: BoxDecoration(
+                    color: _showFoldControls
+                        ? LuminousHomeTheme.softTint(CoverStyle.accent, 0.16)
+                        : LuminousHomeTheme.glass,
+                    borderRadius: BorderRadius.circular(CoverStyle.chipRadius),
+                    border: Border.all(
                       color: _showFoldControls
-                          ? CoverStyle.accent
-                          : LuminousHomeTheme.textMuted,
+                          ? LuminousHomeTheme.hairlineStrong
+                          : CoverStyle.hairline,
+                      width: 0.8,
                     ),
-                  ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: CoverStyle.accent,
+                        ),
+                        child: SizedBox(width: 7, height: 7),
+                      ),
+                      const SizedBox(width: 7),
+                      Text('COVER', style: LuminousHomeTheme.caption),
+                      const SizedBox(width: 2),
+                      Icon(
+                        _showFoldControls
+                            ? Icons.keyboard_arrow_down_rounded
+                            : Icons.keyboard_arrow_up_rounded,
+                        size: 15,
+                        color: _showFoldControls
+                            ? CoverStyle.accent
+                            : LuminousHomeTheme.textMuted,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -551,26 +479,25 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 ),
                 boxShadow: LuminousHomeTheme.floatingShadow,
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.search_rounded,
                     color: LuminousHomeTheme.textSecondary,
                     size: 19,
                   ),
-                  SizedBox(width: 10),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'Search apps or cosmos...',
-                      style: TextStyle(
+                      style: LuminousHomeTheme.label.copyWith(
                         color: LuminousHomeTheme.textMuted,
-                        fontSize: 13,
                         fontWeight: FontWeight.w400,
                         letterSpacing: 0.1,
                       ),
                     ),
                   ),
-                  Icon(
+                  const Icon(
                     Icons.auto_awesome_rounded,
                     color: LuminousHomeTheme.textMuted,
                     size: 16,
@@ -612,7 +539,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     required IconData icon,
     required String title,
     required Color color,
-    required int starCount,
+    required int appCount,
     Widget? action,
   }) {
     return Row(
@@ -624,23 +551,13 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             title.toUpperCase(),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: LuminousHomeTheme.textPrimary,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.1,
-            ),
+            style: LuminousHomeTheme.label.copyWith(letterSpacing: 0.1),
           ),
         ),
         const SizedBox(width: 8),
         Text(
-          starCount == 1 ? '1 star' : '$starCount stars',
-          style: const TextStyle(
-            color: LuminousHomeTheme.textMuted,
-            fontSize: 10,
-            fontWeight: FontWeight.w500,
-            letterSpacing: 0.1,
-          ),
+          appCount == 1 ? '1 app' : '$appCount apps',
+          style: LuminousHomeTheme.micro.copyWith(letterSpacing: 0.1),
         ),
         if (action != null) ...[const Spacer(), action],
       ],
@@ -657,7 +574,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             icon: core.emblemIcon,
             title: 'Essentials',
             color: core.primaryColor,
-            starCount: core.apps.length,
+            appCount: core.apps.length,
             action: widget.onEditCore == null
                 ? null
                 : _cardAction(
@@ -705,9 +622,8 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
       padding: const EdgeInsets.only(left: 4.0),
       child: Text(
         text.toUpperCase(),
-        style: const TextStyle(
+        style: LuminousHomeTheme.micro.copyWith(
           color: CoverStyle.labelMuted,
-          fontSize: 10,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.7,
         ),
@@ -736,7 +652,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionLabel('Sectors'),
+        _sectionLabel('Groups'),
         const SizedBox(height: 8),
         FadingHorizontalScroll(
           fadeColor: CoverStyle.page,
@@ -751,7 +667,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
       padding: const EdgeInsets.only(right: 6.0),
       child: Semantics(
         button: true,
-        label: 'Create a new sector',
+        label: 'Create a new group',
         child: Material(
           color: Colors.transparent,
           child: InkWell(
@@ -769,12 +685,11 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.add_rounded, size: 15, color: CoverStyle.accent),
-                  SizedBox(width: 5),
+                  const SizedBox(width: 5),
                   Text(
-                    'Sector',
-                    style: TextStyle(
+                    'Group',
+                    style: LuminousHomeTheme.chipLabel.copyWith(
                       color: CoverStyle.accent,
-                      fontSize: 11.5,
                       fontWeight: FontWeight.w600,
                       letterSpacing: 0.2,
                     ),
@@ -800,7 +715,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
       child: Semantics(
         button: true,
         selected: isSelected,
-        label: '$label sector',
+        label: '$label group',
         child: Material(
           color: Colors.transparent,
           child: InkWell(
@@ -834,11 +749,10 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                   const SizedBox(width: 6),
                   Text(
                     label,
-                    style: TextStyle(
+                    style: LuminousHomeTheme.chipLabel.copyWith(
                       color: isSelected
                           ? LuminousHomeTheme.textPrimary
                           : LuminousHomeTheme.textSecondary,
-                      fontSize: 11.5,
                       fontWeight: isSelected
                           ? FontWeight.w700
                           : FontWeight.w500,
@@ -864,10 +778,10 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             icon: constellation.emblemIcon,
             title: constellation.name,
             color: constellation.primaryColor,
-            starCount: constellation.apps.length,
+            appCount: constellation.apps.length,
             action: _cardAction(
               icon: Icons.tune_rounded,
-              tooltip: 'Edit Constellation',
+              tooltip: 'Edit group',
               onPressed: () =>
                   widget.onConstellationLongPressed?.call(constellation),
             ),
@@ -883,8 +797,8 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                 children: [
                   const _ShelfEmptyState(
                     icon: Icons.star_outline_rounded,
-                    title: 'This sector is empty',
-                    hint: 'Add apps to bring it into orbit.',
+                    title: 'No apps here',
+                    hint: 'Add apps to this group to see them here.',
                   ),
                   const SizedBox(height: 14),
                   OutlinedButton.icon(
@@ -892,7 +806,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                       foregroundColor: constellation.primaryColor,
                       backgroundColor: LuminousHomeTheme.glass,
                       minimumSize: const Size(0, CoverStyle.touchTarget),
-                      side: const BorderSide(
+                      side: BorderSide(
                         color: LuminousHomeTheme.hairline,
                         width: 0.8,
                       ),
@@ -902,9 +816,11 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                       padding: const EdgeInsets.symmetric(horizontal: 14),
                     ),
                     icon: const Icon(Icons.add_rounded, size: 16),
-                    label: const Text(
-                      'Add Apps',
-                      style: TextStyle(fontSize: 11),
+                    label: Text(
+                      'Add apps',
+                      style: LuminousHomeTheme.caption.copyWith(
+                        color: constellation.primaryColor,
+                      ),
                     ),
                     onPressed: () {
                       widget.onConstellationLongPressed?.call(constellation);
@@ -979,44 +895,40 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(CoverStyle.dockRadius),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(
-              sigmaX: LuminousHomeTheme.glassBlur,
-              sigmaY: LuminousHomeTheme.glassBlur,
+          // No BackdropFilter: the stardust behind the dock pulses every frame,
+          // and the near-opaque glassOpaque fill already hides it, so the blur
+          // was a per-frame cost with no visible result.
+          child: Container(
+            height: 60,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: LuminousHomeTheme.glassOpaque,
+              borderRadius: BorderRadius.circular(CoverStyle.dockRadius),
+              border: Border.all(color: LuminousHomeTheme.hairline, width: 0.8),
+              boxShadow: LuminousHomeTheme.floatingShadow,
             ),
-            child: Container(
-              height: 60,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: LuminousHomeTheme.glassOpaque,
-                borderRadius: BorderRadius.circular(CoverStyle.dockRadius),
-                border: Border.all(
-                  color: LuminousHomeTheme.hairline,
-                  width: 0.8,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                // Search
+                _dockIconButton(
+                  icon: Icons.search_rounded,
+                  color: CoverStyle.accent,
+                  tooltip: 'Search Apps',
+                  onTap: widget.onOpenSearch,
                 ),
-                boxShadow: LuminousHomeTheme.floatingShadow,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  // Search
+
+                // Shopping list
+                if (widget.onOpenShopping != null)
                   _dockIconButton(
-                    icon: Icons.search_rounded,
-                    color: CoverStyle.accent,
-                    tooltip: 'Search Apps',
-                    onTap: widget.onOpenSearch,
+                    icon: Icons.shopping_cart_rounded,
+                    color: LuminousHomeTheme.groceryAccent,
+                    tooltip: 'Shopping list',
+                    onTap: widget.onOpenShopping!,
                   ),
 
-                  // Shopping list
-                  if (widget.onOpenShopping != null)
-                    _dockIconButton(
-                      icon: Icons.shopping_cart_rounded,
-                      color: LuminousHomeTheme.groceryAccent,
-                      tooltip: 'Shopping list',
-                      onTap: widget.onOpenShopping!,
-                    ),
-
-                  // Fold Simulator Toggle
+                // Fold simulator toggle: developer tooling only.
+                if (kDebugMode)
                   _dockIconButton(
                     icon: Icons.splitscreen_rounded,
                     color: _showFoldControls
@@ -1030,32 +942,31 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                     },
                   ),
 
-                  // Lock Screen
+                // Lock Screen
+                _dockIconButton(
+                  icon: Icons.lock_outline_rounded,
+                  color: LuminousHomeTheme.textSecondary,
+                  tooltip: 'Lock Screen',
+                  onTap: widget.onLock,
+                ),
+
+                // Gestures
+                if (widget.onOpenGestures != null)
                   _dockIconButton(
-                    icon: Icons.lock_outline_rounded,
+                    icon: Icons.touch_app_rounded,
                     color: LuminousHomeTheme.textSecondary,
-                    tooltip: 'Lock Screen',
-                    onTap: widget.onLock,
+                    tooltip: 'Gestures',
+                    onTap: widget.onOpenGestures!,
                   ),
 
-                  // Gestures
-                  if (widget.onOpenGestures != null)
-                    _dockIconButton(
-                      icon: Icons.touch_app_rounded,
-                      color: LuminousHomeTheme.textSecondary,
-                      tooltip: 'Gestures',
-                      onTap: widget.onOpenGestures!,
-                    ),
-
-                  // Settings
-                  _dockIconButton(
-                    icon: Icons.settings_outlined,
-                    color: LuminousHomeTheme.textSecondary,
-                    tooltip: 'Launcher Settings',
-                    onTap: widget.onOpenSettings,
-                  ),
-                ],
-              ),
+                // Settings
+                _dockIconButton(
+                  icon: Icons.settings_outlined,
+                  color: LuminousHomeTheme.textSecondary,
+                  tooltip: 'Settings',
+                  onTap: widget.onOpenSettings,
+                ),
+              ],
             ),
           ),
         ),
@@ -1131,11 +1042,8 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                       child: Text(
                         'Posture: ${posture.name} (${angle.toStringAsFixed(0)}°)',
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: LuminousHomeTheme.caption.copyWith(
                           color: LuminousHomeTheme.textPrimary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.2,
                         ),
                       ),
                     ),
@@ -1143,7 +1051,7 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
                       const SizedBox(width: 6),
                       FoldableSimulationChip(
                         foldable: widget.foldable,
-                        fontSize: 9,
+                        fontSize: 10,
                       ),
                     ],
                   ],
@@ -1227,12 +1135,12 @@ class _FoldedCoverScreenState extends State<FoldedCoverScreen>
             textAlign: TextAlign.center,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
+            style: LuminousHomeTheme.micro.copyWith(
               color: isSelected
                   ? CoverStyle.accent
                   : LuminousHomeTheme.textSecondary,
-              fontSize: 10,
               fontWeight: FontWeight.w600,
+              letterSpacing: 0,
             ),
           ),
         ),
@@ -1365,6 +1273,8 @@ class _CoverAppTileState extends State<_CoverAppTile> {
   @override
   Widget build(BuildContext context) {
     final app = widget.app;
+    final int iconCacheExtent = (48 * MediaQuery.devicePixelRatioOf(context))
+        .round();
     return Semantics(
       button: true,
       label: app.notificationCount > 0
@@ -1420,7 +1330,9 @@ class _CoverAppTileState extends State<_CoverAppTile> {
                               LuminousHomeTheme.glassStrong,
                             )
                           : LuminousHomeTheme.glassStrong,
-                      borderRadius: BorderRadius.circular(CoverStyle.tileRadius),
+                      borderRadius: BorderRadius.circular(
+                        CoverStyle.tileRadius,
+                      ),
                       boxShadow: [
                         BoxShadow(
                           color: LuminousHomeTheme.shadow.withValues(
@@ -1432,16 +1344,25 @@ class _CoverAppTileState extends State<_CoverAppTile> {
                       ],
                     ),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(CoverStyle.tileRadius),
+                      borderRadius: BorderRadius.circular(
+                        CoverStyle.tileRadius,
+                      ),
                       child: app.iconBytes != null
                           ? Image.memory(
                               app.iconBytes!,
                               fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) => Icon(
-                                app.fallbackIcon,
-                                color: app.accentColor,
-                                size: 24,
-                              ),
+                              // Decode at the tile's physical size, not the
+                              // source bitmap's, and keep the last frame up
+                              // while a refreshed icon decodes.
+                              cacheWidth: iconCacheExtent,
+                              cacheHeight: iconCacheExtent,
+                              gaplessPlayback: true,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  Icon(
+                                    app.fallbackIcon,
+                                    color: app.accentColor,
+                                    size: 24,
+                                  ),
                             )
                           : Icon(
                               app.fallbackIcon,
@@ -1465,11 +1386,9 @@ class _CoverAppTileState extends State<_CoverAppTile> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: LuminousHomeTheme.caption.copyWith(
                   color: LuminousHomeTheme.textPrimary,
-                  fontSize: 10.5,
                   fontWeight: FontWeight.w500,
-                  letterSpacing: 0.2,
                 ),
               ),
             ],
@@ -1502,9 +1421,7 @@ class _ShelfEmptyState extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             title,
-            style: const TextStyle(
-              color: LuminousHomeTheme.textSecondary,
-              fontSize: 12,
+            style: LuminousHomeTheme.chipLabel.copyWith(
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -1512,9 +1429,10 @@ class _ShelfEmptyState extends StatelessWidget {
           Text(
             hint,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: LuminousHomeTheme.caption.copyWith(
               color: LuminousHomeTheme.textMuted,
-              fontSize: 11,
+              fontWeight: FontWeight.w400,
+              letterSpacing: 0,
               height: 1.3,
             ),
           ),

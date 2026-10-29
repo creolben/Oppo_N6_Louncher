@@ -24,13 +24,13 @@ class CometPalette {
   static const Color ember = LuminousHomeTheme.emberHot;
 
   /// Glass fill, matching the app-search capsule's `#141A30` family.
-  static const Color glass = LuminousHomeTheme.glassCool;
+  static Color get glass => LuminousHomeTheme.glassCool;
 
   /// Node fill, lifted from the galaxy's app nodes.
-  static const Color nodeFill = LuminousHomeTheme.nodeFill;
+  static Color get nodeFill => LuminousHomeTheme.nodeFill;
 
   /// Panel fill for the answer card.
-  static const Color panel = LuminousHomeTheme.glassPanel;
+  static Color get panel => LuminousHomeTheme.glassPanel;
 
   /// The scrim used by the app-search overlay, reused verbatim so the two
   /// palettes are visibly siblings.

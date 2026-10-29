@@ -10,11 +10,10 @@ import '../models/now_playing.dart';
 import '../models/quick_shortcut.dart';
 import '../ui/theme/luminous_home_theme.dart';
 import '../ui/theme/system_palette.dart';
+import '../ui/theme/wallpaper_tone.dart';
 
 class LauncherBridge {  static const MethodChannel _appsChannel =
       MethodChannel('com.launcher.chronofold/apps');
-  static const EventChannel _shakeChannel =
-      EventChannel('com.launcher.chronofold/shake');
   static const EventChannel _fingerprintChannel =
       EventChannel('com.launcher.chronofold/fingerprint');
   static const EventChannel _mediaChannel =
@@ -33,7 +32,6 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   static bool get _usePlatformChannels =>
       !kIsWeb && (Platform.isAndroid || debugUsePlatformChannels);
 
-  static Stream<Map<String, dynamic>>? _shakeStream;
   static Stream<NowPlaying?>? _mediaStream;
   static Stream<Map<String, dynamic>>? _badgesStream;
 
@@ -43,8 +41,10 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   static final StreamController<SystemPalette?> _systemPaletteController =
       StreamController<SystemPalette?>.broadcast();
 
-  /// Edge length icons are decoded at, matching the native side's downscale.
-  static const int _iconPixels = 96;
+  /// Broadcasts the native `onWallpaperToneChanged` pushes, one per real
+  /// wallpaper change while the launcher runs.
+  static final StreamController<WallpaperTone?> _wallpaperToneController =
+      StreamController<WallpaperTone?>.broadcast();
 
   static VoidCallback? _onLockScreenListener;
   static VoidCallback? _onPackageChangeListener;
@@ -81,6 +81,9 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
         case 'onSystemPaletteChanged':
           _systemPaletteController.add(SystemPalette.fromMap(call.arguments));
           break;
+        case 'onWallpaperToneChanged':
+          _wallpaperToneController.add(WallpaperTone.fromMap(call.arguments));
+          break;
         case 'onSharedPdf':
           final Object? args = call.arguments;
           if (args is Map) {
@@ -106,6 +109,14 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   static void setUserPresentListener(VoidCallback? onUserPresent) {
     _onUserPresentListener = onUserPresent;
     _ensureHandlerInitialized();
+  }
+
+  /// Clears the user-present listener only if it is still [owner].
+  ///
+  /// A lock panel that is being disposed must not clear the listener a newer
+  /// panel has already installed, or that panel never hears the unlock.
+  static void clearUserPresentListener(VoidCallback owner) {
+    if (_onUserPresentListener == owner) _onUserPresentListener = null;
   }
 
   @visibleForTesting
@@ -137,6 +148,12 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     _ensureHandlerInitialized();
   }
 
+  /// Clears the screen-on listener only if it is still [owner]; see
+  /// [clearUserPresentListener].
+  static void clearScreenOnListener(VoidCallback owner) {
+    if (_onScreenOnListener == owner) _onScreenOnListener = null;
+  }
+
   static void setPackageChangeListener(VoidCallback onPackageChange) {
     _onPackageChangeListener = onPackageChange;
     _ensureHandlerInitialized();
@@ -161,23 +178,15 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
   }
 
 
-  static Stream<Map<String, dynamic>> getShakeStream() {
-    if (_shakeStream == null) {
-      if (!kIsWeb && Platform.isAndroid) {
-        _shakeStream = _shakeChannel
-            .receiveBroadcastStream()
-            .map((event) => Map<String, dynamic>.from(event as Map));
-      } else {
-        _shakeStream = const Stream.empty();
-      }
-    }
-    return _shakeStream!;
-  }
 
-  /// Fetches installed apps from Android native PackageManager,
-  /// or returns rich mock apps when running on desktop / emulator without packages.
-  static Future<List<AppEntry>> getInstalledApps({bool includeIcons = true}) async {
-    if (!kIsWeb && Platform.isAndroid) {
+  /// Fetches installed apps from Android native PackageManager, or returns
+  /// rich mock apps on a non-Android host (desktop, tests).
+  ///
+  /// On Android a failed or empty scan returns null rather than the mocks:
+  /// callers keep the inventory they already have instead of showing fake apps
+  /// with fake badges to a real user.
+  static Future<List<AppEntry>?> getInstalledApps({bool includeIcons = true}) async {
+    if (_usePlatformChannels) {
       try {
         final List<dynamic>? rawApps =
             await _appsChannel.invokeMethod('getInstalledApps', {
@@ -228,9 +237,11 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
       } catch (e) {
         debugPrint('Error querying Android PackageManager: $e');
       }
+      // A scan error or an empty answer: never substitute mocks on a device.
+      return null;
     }
 
-    // Fallback to high-fidelity mock apps for simulation / desktop / non-Android
+    // High-fidelity mock apps for simulation / desktop / non-Android hosts.
     return _generateMockApps();
   }
 
@@ -268,14 +279,14 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     ]);
   }
 
+  /// Decodes an icon at the size native rasterised it: the display's own
+  /// density times the largest edge the launcher draws, so nothing is
+  /// upscaled on screen. The old fixed 96 px decode left every icon soft at
+  /// 520 dpi.
   static Future<ui.Image?> _decodeIconBytes(Uint8List? bytes) async {
     if (bytes == null) return null;
     try {
-      final codec = await ui.instantiateImageCodec(
-        bytes,
-        targetWidth: _iconPixels,
-        targetHeight: _iconPixels,
-      );
+      final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
       return frame.image;
     } catch (e) {
@@ -735,17 +746,59 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     return false;
   }
 
-  /// Tells Android that Flutter has produced a new launcher frame after a
-  /// foreground return. The native return bridge remains opaque until this
-  /// acknowledgement, preventing the system task compositor from flashing
-  /// ColorOS content between the external app and the cover screen.
-  static Future<void> notifyLauncherFrameReady() async {
-    if (!kIsWeb && Platform.isAndroid) {
-      try {
-        await _appsChannel.invokeMethod('launcherFrameReady');
-      } catch (e) {
-        debugPrint('Could not acknowledge launcher frame: $e');
-      }
+  /// The system wallpaper's colour verdict, or null when the platform has
+  /// none. Null on a non-Android host, where there is no wallpaper.
+  static Future<WallpaperTone?> getWallpaperTone() async {
+    _ensureHandlerInitialized();
+    if (!_usePlatformChannels) return null;
+    try {
+      final Map<dynamic, dynamic>? raw =
+          await _appsChannel.invokeMethod<Map<dynamic, dynamic>>(
+        'getWallpaperTone',
+      );
+      return WallpaperTone.fromMap(raw);
+    } catch (e) {
+      debugPrint('CF_WALLPAPER: reading the wallpaper colours failed: $e');
+      return null;
+    }
+  }
+
+  /// Wallpaper-colour pushes from native, one per change while the launcher
+  /// runs. Empty on a host without the platform channel.
+  static Stream<WallpaperTone?> get wallpaperToneChanges {
+    _ensureHandlerInitialized();
+    return _wallpaperToneController.stream;
+  }
+
+  /// Reports where the launcher is scrolled to, in wallpaper fractions, so the
+  /// system wallpaper pans with the galaxy the way it pans with a paged home.
+  /// Both axes are 0..1 with 0.5 at rest. A no-op off Android.
+  static Future<void> setWallpaperOffsets(double x, double y) async {
+    if (!_usePlatformChannels) return;
+    try {
+      await _appsChannel.invokeMethod('setWallpaperOffsets', {
+        'x': x.clamp(0.0, 1.0),
+        'y': y.clamp(0.0, 1.0),
+      });
+    } catch (e) {
+      debugPrint('CF_WALLPAPER: wallpaper offsets refused: $e');
+    }
+  }
+
+  /// Blurs the wallpaper behind the launcher window while a full-screen
+  /// surface is up, or clears the blur. Answers whether the blur is in effect:
+  /// false on a platform or build that has no window blur, in which case the
+  /// surface's own scrim is all there is.
+  static Future<bool> setWindowBlur(bool enabled) async {
+    if (!_usePlatformChannels) return false;
+    try {
+      return await _appsChannel.invokeMethod<bool>('setWindowBlur', {
+            'enabled': enabled,
+          }) ??
+          false;
+    } catch (e) {
+      debugPrint('CF_WALLPAPER: window blur refused: $e');
+      return false;
     }
   }
 
@@ -978,6 +1031,21 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     }
   }
 
+  /// Whether ChronoFold's galaxy is the system live wallpaper — the surface
+  /// ColorOS shows behind a closing app before the launcher can draw. False
+  /// off Android or when the platform cannot say.
+  static Future<bool> isCosmicWallpaperActive() async {
+    if (kIsWeb || !Platform.isAndroid) return false;
+    try {
+      final bool? active =
+          await _appsChannel.invokeMethod<bool>('isCosmicWallpaperActive');
+      return active ?? false;
+    } catch (e) {
+      debugPrint('Reading the live wallpaper failed: $e');
+      return false;
+    }
+  }
+
   /// Opens Android's live-wallpaper chooser for ChronoFold's optional ambient
   /// layer. The system—not the launcher—owns selection, preview, and apply.
   static Future<bool> openCosmicLiveWallpaperPreview() async {
@@ -1057,6 +1125,12 @@ class LauncherBridge {  static const MethodChannel _appsChannel =
     if (!kIsWeb && Platform.isAndroid) {
       try {
         return await _appsChannel.invokeMethod<String>('pickPdf');
+      } on PlatformException catch (e) {
+        // A file over the native size cap is not a cancel: let the import
+        // service tell the user why nothing happened.
+        if (e.code == 'PDF_TOO_LARGE') rethrow;
+        debugPrint('CF_PDF: pickPdf failed: $e');
+        return null;
       } catch (e) {
         debugPrint('CF_PDF: pickPdf failed: $e');
         return null;

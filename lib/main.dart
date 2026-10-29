@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -16,6 +16,8 @@ import 'ui/widgets/foldable_cockpit_bar.dart';
 import 'ui/widgets/search_overlay.dart';
 import 'ui/widgets/comet_search_surface.dart';
 import 'ui/widgets/ambient_wallpaper_sheet.dart';
+import 'ui/widgets/wallpaper_scrim.dart';
+import 'ui/theme/wallpaper_tone.dart';
 import 'core/search_coordinator.dart';
 import 'core/search_providers/fixture_search_provider.dart';
 import 'core/system_gestures.dart';
@@ -24,13 +26,15 @@ import 'ui/widgets/native_panel_transition.dart';
 import 'ui/widgets/constellation_editor_modal.dart';
 import 'ui/widgets/create_constellation_modal.dart';
 import 'ui/widgets/gestures_sheet.dart';
+import 'ui/widgets/first_run_hint_card.dart';
+import 'ui/widgets/launcher_settings_sheet.dart';
 import 'core/galaxy_storage_service.dart';
 import 'features/lockscreen/cosmic_lock_screen.dart';
 import 'features/shopping/parsing/document_parser.dart';
 import 'features/shopping/parsing/pdf_text_import.dart';
 import 'features/shopping/shopping_controller.dart';
 import 'features/shopping/ui/grocery_chrome.dart';
-import 'features/shopping/ui/import_review_sheet.dart';
+import 'features/shopping/ui/menu_kit_sheet.dart';
 import 'features/shopping/ui/shopping_surface.dart';
 import 'ui/format/clock_format.dart';
 import 'ui/screens/folded_cover_screen.dart';
@@ -38,21 +42,43 @@ import 'ui/screens/tabletop_cockpit_view.dart';
 import 'ui/theme/luminous_home_theme.dart';
 import 'ui/theme/system_palette.dart';
 
-// The lock activity runs its own engine on the `lockMain` entry point, which
-// lives in its own library. Re-exporting it keeps that entry point in this
-// kernel, so AOT tree-shaking cannot drop the second surface's entry point.
-export 'lock_main.dart' show lockMain;
+import 'lock_main.dart' as lock_surface;
+
+/// The lock activity's engine entry point, declared in the root library.
+///
+/// `LockActivity` names `lockMain` and leaves the library to the engine's
+/// default, the root library — this file. An AOT release build resolves an
+/// entry point only as a real, `vm:entry-point`-annotated function of the
+/// library it is asked to search: a re-export is not one, and looking it up
+/// in `lock_main.dart` by URI was measured to fail too on the CPH2765
+/// ("Could not resolve main entrypoint function"), so the lock engine never
+/// ran Dart, never drew, and the first-frame watchdog handed every
+/// screen-off over another app (YouTube playing, say) to the ColorOS
+/// keyguard. A real function here is the documented custom-entrypoint shape.
+@pragma('vm:entry-point')
+Future<void> lockMain() => lock_surface.lockMain();
+
+/// The transparent, edge-to-edge system chrome, with its icons dark or light.
+///
+/// The home screen picks [darkIcons] from the wallpaper's own colour verdict
+/// (`WallpaperTone.isLight`), the way ColorOS flips its status bar on a light
+/// wallpaper, and goes back to light icons under a dark scrim or the lock
+/// panel. Exposed so tests can check the choice.
+SystemUiOverlayStyle homeOverlayStyle({required bool darkIcons}) {
+  final Brightness icons = darkIcons ? Brightness.dark : Brightness.light;
+  return SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: icons,
+    statusBarBrightness: darkIcons ? Brightness.light : Brightness.dark,
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarIconBrightness: icons,
+    systemNavigationBarContrastEnforced: false,
+  );
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Colors.transparent,
-      systemNavigationBarIconBrightness: Brightness.light,
-    ),
-  );
+  SystemChrome.setSystemUIOverlayStyle(homeOverlayStyle(darkIcons: false));
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   // The accent has to be settled before the first frame, or the launcher would
@@ -85,6 +111,9 @@ class ChronoFoldApp extends StatelessWidget {
   final bool? doubleTapToSleep;
   final String? swipeDownAction;
 
+  /// Test seam for the persisted first-run hint flag. Null in production.
+  final bool? firstRunHintDismissed;
+
   const ChronoFoldApp({
     super.key,
     this.isKeyguardLocked,
@@ -94,6 +123,7 @@ class ChronoFoldApp extends StatelessWidget {
     this.badgesStream,
     this.doubleTapToSleep,
     this.swipeDownAction,
+    this.firstRunHintDismissed,
   });
 
   @override
@@ -120,6 +150,7 @@ class ChronoFoldApp extends StatelessWidget {
             badgesStream: badgesStream,
             doubleTapToSleep: doubleTapToSleep,
             swipeDownAction: swipeDownAction,
+            firstRunHintDismissed: firstRunHintDismissed,
           ),
         );
       },
@@ -151,6 +182,9 @@ class ChronoFoldHomeScreen extends StatefulWidget {
   final bool? doubleTapToSleep;
   final String? swipeDownAction;
 
+  /// Test seam for the persisted first-run hint flag. Null in production.
+  final bool? firstRunHintDismissed;
+
   const ChronoFoldHomeScreen({
     super.key,
     this.isKeyguardLocked,
@@ -160,6 +194,7 @@ class ChronoFoldHomeScreen extends StatefulWidget {
     this.badgesStream,
     this.doubleTapToSleep,
     this.swipeDownAction,
+    this.firstRunHintDismissed,
   });
 
   @override
@@ -187,6 +222,28 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
 
   bool _isCockpitMode = false;
 
+  /// The platform's verdict on the system wallpaper's colours, or null until
+  /// it has answered (and on hosts with no wallpaper). Decides the chrome
+  /// icon brightness and the strength of the home scrims.
+  WallpaperTone? _wallpaperTone;
+  StreamSubscription<WallpaperTone?>? _wallpaperToneSubscription;
+
+  /// What the status and navigation bar icons were last set to, so a rebuild
+  /// only touches the platform when the choice changes.
+  bool? _darkChromeIcons;
+
+  /// Whether the wallpaper is currently blurred behind the window.
+  bool _windowBlurOn = false;
+
+  /// Wallpaper-offset reporting, coalesced to one report per frame.
+  bool _wallpaperOffsetScheduled = false;
+  Offset? _lastWallpaperOffset;
+
+  /// How far the wallpaper travels across the galaxy's full pan range: a
+  /// quarter of its own width, so it moves a little slower than the field in
+  /// front of it, the way a paged home's wallpaper lags its pages.
+  static const double _wallpaperParallax = 0.25;
+
   /// Whether ColorOS owns the lock screen instead of ChronoFold's Cosmic
   /// surface.
   ///
@@ -195,7 +252,17 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   /// this default in [_loadApplications]. Authentication still delegates to the
   /// platform keyguard before the Cosmic surface reveals or launches anything.
   bool _nativeMode = false;
-  bool _isDefaultLauncher = true;
+
+  /// Whether ChronoFold holds Android's HOME role. A notifier so the Settings
+  /// sheet, which stays open across a trip to Android's picker, sees the
+  /// answer the resume re-check brings back.
+  final ValueNotifier<bool> _defaultLauncher = ValueNotifier<bool>(true);
+  bool get _isDefaultLauncher => _defaultLauncher.value;
+
+  /// Whether the one-time "Getting started" card has been dismissed. Read from
+  /// `galaxy_settings.json` on the first load; a file written before the card
+  /// existed has no key, which reads as "not yet".
+  bool _firstRunHintDismissed = false;
 
   /// The two persisted gesture preferences.
   ///
@@ -231,10 +298,13 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     _foldable = FoldableController();
     _camera = CameraController();
     _layoutEngine = GalaxyLayoutEngine();
-    // Fixture-backed for now. Registering an HTTP provider here is the only
-    // change needed to make inline answers live; the surface is provider-blind.
+    // No live inline provider exists yet. Registering an HTTP provider here is
+    // the only change needed to make inline answers live; the surface is
+    // provider-blind. The fixture is debug-only: a release build must never
+    // stream canned "answers" to a real user, so there the coordinator runs
+    // handoff-only and the surface offers the native web-search handoff.
     _searchCoordinator = SearchCoordinator(
-      providers: [FixtureSearchProvider()],
+      providers: [if (kDebugMode) FixtureSearchProvider()],
     );
     _shoppingController = ShoppingController();
     unawaited(_shoppingController.load());
@@ -257,7 +327,9 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     });
 
     LauncherBridge.setHomeButtonListener(() {
-      if (mounted) {
+      // While the lock panel is up, Home belongs to the keyguard: the surfaces
+      // under the panel must stay exactly as the user left them.
+      if (mounted && !_isLocked) {
         if (_isSearchOpen) {
           setState(() => _isSearchOpen = false);
         }
@@ -274,7 +346,78 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       }
     });
 
+    _camera.addListener(_scheduleWallpaperOffsets);
+    _foldable.addListener(_scheduleWallpaperOffsets);
+    unawaited(_readWallpaperTone());
+    _wallpaperToneSubscription =
+        LauncherBridge.wallpaperToneChanges.listen(_applyWallpaperTone);
+
     _loadApplications();
+  }
+
+  /// Asks the platform what it knows about the wallpaper's colours.
+  Future<void> _readWallpaperTone() async {
+    final WallpaperTone? tone = await LauncherBridge.getWallpaperTone();
+    if (mounted) _applyWallpaperTone(tone);
+  }
+
+  void _applyWallpaperTone(WallpaperTone? tone) {
+    if (!mounted || tone == _wallpaperTone) return;
+    setState(() => _wallpaperTone = tone);
+  }
+
+  /// Whether a surface that covers the whole home is up (search, the comet,
+  /// shopping). The lock panel is tracked separately.
+  bool get _fullScreenSurfaceUp =>
+      _isSearchOpen || _isCometSearchOpen || _isShoppingOpen;
+
+  /// Keeps the system chrome and the wallpaper blur in step with the screen.
+  ///
+  /// Called from [build], because every state that matters here is also what
+  /// drives a rebuild; both platform calls are made only on a real change, so
+  /// the common rebuild costs two comparisons. Icons go dark only over a
+  /// light wallpaper with nothing drawn across it; a full-screen surface
+  /// brings its own dark scrim and the lock panel its own field.
+  void _syncWallpaperChrome() {
+    final bool overlayUp = _fullScreenSurfaceUp;
+    final bool darkIcons =
+        (_wallpaperTone?.isLight ?? false) && !overlayUp && !_isLocked;
+    if (_darkChromeIcons != darkIcons) {
+      _darkChromeIcons = darkIcons;
+      SystemChrome.setSystemUIOverlayStyle(
+        homeOverlayStyle(darkIcons: darkIcons),
+      );
+    }
+    final bool blur = overlayUp && !_isLocked;
+    if (_windowBlurOn != blur) {
+      _windowBlurOn = blur;
+      unawaited(LauncherBridge.setWindowBlur(blur));
+    }
+  }
+
+  /// Reports the camera's pan to the system wallpaper once per frame.
+  void _scheduleWallpaperOffsets() {
+    if (_wallpaperOffsetScheduled) return;
+    _wallpaperOffsetScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _wallpaperOffsetScheduled = false;
+      if (mounted) _reportWallpaperOffsets();
+    });
+  }
+
+  void _reportWallpaperOffsets() {
+    Offset target = const Offset(0.5, 0.5);
+    if (!_foldable.isFolded) {
+      final Offset pan = _camera.panFraction;
+      target = Offset(
+        0.5 - pan.dx * _wallpaperParallax,
+        0.5 - pan.dy * _wallpaperParallax,
+      );
+    }
+    final Offset? last = _lastWallpaperOffset;
+    if (last != null && (last - target).distance < 0.002) return;
+    _lastWallpaperOffset = target;
+    unawaited(LauncherBridge.setWallpaperOffsets(target.dx, target.dy));
   }
 
   /// A new badge map arrived: fold it into the app entries and rebuild so every
@@ -297,7 +440,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   Future<void> _checkDefaultLauncherStatus() async {
     final isDefault = await LauncherBridge.isDefaultLauncher();
     if (mounted) {
-      setState(() => _isDefaultLauncher = isDefault);
+      setState(() => _defaultLauncher.value = isDefault);
     }
   }
 
@@ -334,10 +477,12 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     );
   }
 
-  Future<void> _toggleNativeMode() async {
-    final newMode = !_nativeMode;
+  /// Switches the lock surface between Cosmic and ColorOS (native) and
+  /// persists the choice. The Settings sheet confirms with the user first.
+  Future<void> _setNativeMode(bool native) async {
+    if (native == _nativeMode) return;
     setState(() {
-      _nativeMode = newMode;
+      _nativeMode = native;
       if (_nativeMode) {
         _isLocked = false;
       }
@@ -351,6 +496,62 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       nativeLauncherMode: _nativeMode,
     );
   }
+
+  /// The "Default home app" row: asks for the HOME role while ChronoFold does
+  /// not hold it, and otherwise opens Android's default-home picker. This row
+  /// is the only way into that system page.
+  void _openDefaultHomeSetting() {
+    if (_isDefaultLauncher) {
+      unawaited(LauncherBridge.openHomeSettings());
+    } else {
+      unawaited(_requestDefaultLauncher());
+    }
+  }
+
+  /// Opens ChronoFold's own Settings sheet, the target of every gear button.
+  void _openSettings() {
+    // Never over the lock panel: settings include the lock surface itself.
+    if (_isLocked) return;
+    unawaited(
+      showLauncherSettingsSheet(
+        context,
+        isDefaultLauncher: _defaultLauncher,
+        onDefaultHomeTap: _openDefaultHomeSetting,
+        nativeLockMode: _nativeMode,
+        onLockModeChanged: _setNativeMode,
+        onOpenAmbientWallpaper: () =>
+            unawaited(_openCosmicLiveWallpaperPreview()),
+        onOpenGestures: () => unawaited(_openGesturesSheet()),
+        hasMediaAccess: LauncherBridge.hasMediaAccess,
+        isGalaxyWallpaperActive: LauncherBridge.isCosmicWallpaperActive,
+        onRequestMediaAccess: () async {
+          await LauncherBridge.requestMediaAccess();
+        },
+      ),
+    );
+  }
+
+  /// Hides the first-run card for good. Same save path and queue as every
+  /// other setting; only the new key is added to the merge.
+  void _dismissFirstRunHint() {
+    setState(() => _firstRunHintDismissed = true);
+    unawaited(
+      GalaxyStorageService.saveConfig(
+        coreAppPackageNames: _layoutEngine.corePackageNames,
+        customConstellations: _layoutEngine.customConstellations,
+        constellationAppOverrides: _layoutEngine.constellationAppOverrides,
+        hiddenPackageNames: _layoutEngine.hiddenPackageNames,
+        firstRunHintDismissed: true,
+      ),
+    );
+  }
+
+  bool get _showFirstRunHint =>
+      !_firstRunHintDismissed &&
+      !_isLocked &&
+      !_isSearchOpen &&
+      !_isCometSearchOpen &&
+      !_isShoppingOpen;
 
   /// Opens the comet surface, optionally seeded with a query the user already
   /// typed in app search, so escalating never costs them a retype.
@@ -382,21 +583,29 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     setState(() => _isShoppingOpen = false);
   }
 
+  /// Forces the shopping store's debounced save to disk now. Only once the
+  /// store has loaded, so an early flush can never overwrite saved lists with
+  /// the empty pre-load state.
+  void _flushShopping() {
+    if (_shoppingController.isLoaded) {
+      unawaited(_shoppingController.flush());
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _flushShopping();
+    }
     if (state == AppLifecycleState.resumed) {
       _checkDefaultLauncherStatus();
-      if (mounted) {
-        // Force a new root frame, then tell Android it is safe to remove the
-        // native return bridge. The bridge hides with a short fade, so Flutter
-        // is already visibly presenting the launcher beneath it.
-        setState(() {});
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            unawaited(LauncherBridge.notifyLauncherFrameReady());
-          }
-        });
-      }
+      // The wallpaper may have changed while the user was away. The colour
+      // listener covers a change during the session; this covers the gap.
+      unawaited(_readWallpaperTone());
+      // Another wallpaper target may have scrolled the wallpaper meanwhile;
+      // re-report this window's position on the next frame.
+      _lastWallpaperOffset = null;
+      _scheduleWallpaperOffsets();
     }
     // In Native Launcher Mode, switching or opening apps never locks the launcher.
   }
@@ -418,7 +627,11 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   /// `reconcileOnMount` on the panel), so it appears only for a lock that
   /// still exists.
   void _lockForScreenOff() {
-    if (!mounted || _nativeMode) return;
+    if (!mounted) return;
+    // Persist any pending shopping edit before the device sleeps, whichever
+    // surface owns the lock.
+    _flushShopping();
+    if (_nativeMode) return;
     // Re-assert the window flag BEFORE the early-out rather than after it.
     // The flag is cleared by every lock-screen app launch, so a screen-off
     // that landed on a panel mounted by the lock buttons used to skip this
@@ -427,12 +640,22 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
     // surface depending on launch history. Pushing first keeps the
     // invariant — panel mounted ⟺ overlay enabled — in Cosmic mode.
     unawaited(LauncherBridge.setLockScreenOverlayEnabled(true));
+    // The shopping surface holds FLAG_KEEP_SCREEN_ON in store mode. Release it
+    // directly: with the panel off, the frame that disposes the surface (and
+    // releases the flag itself) may not run until the next wake.
+    if (_isShoppingOpen) {
+      unawaited(LauncherBridge.setKeepScreenOn(false));
+    }
     if (_isLocked) {
+      if (_isShoppingOpen) setState(() => _isShoppingOpen = false);
       debugPrint('CF_LOCK: screen-off with panel already up');
       return;
     }
     debugPrint('CF_LOCK: overlay re-asserted for screen-off lock');
-    setState(() => _isLocked = true);
+    setState(() {
+      _isLocked = true;
+      _isShoppingOpen = false;
+    });
   }
 
   /// Locks the device through the optional accessibility service.
@@ -551,60 +774,87 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   /// the first load a broadcast only refreshes the app list.
   bool _storedConfigApplied = false;
 
+  /// Bumped per [_loadApplications] call. Package-change broadcasts can start
+  /// overlapping reloads; only the newest may apply its scan.
+  int _loadGen = 0;
+
+  /// Retries a device scan that failed before any inventory existed, so a
+  /// transient PackageManager error does not leave an empty galaxy until the
+  /// next package change. Bounded; cancelled on dispose.
+  Timer? _scanRetryTimer;
+  int _scanRetries = 0;
+  static const int _maxScanRetries = 3;
+
   Future<void> _loadApplications() async {
-    final apps = await LauncherBridge.getInstalledApps();
+    final gen = ++_loadGen;
+    final scanned = await LauncherBridge.getInstalledApps();
+    if (gen != _loadGen || !mounted) return;
+    // A failed scan on a device returns null: keep the current inventory.
+    final List<AppEntry> apps = scanned ?? _apps;
+    if (scanned == null &&
+        apps.isEmpty &&
+        _scanRetries < _maxScanRetries) {
+      _scanRetries++;
+      _scanRetryTimer?.cancel();
+      _scanRetryTimer = Timer(const Duration(seconds: 2), () {
+        if (mounted) _loadApplications();
+      });
+    }
 
     // Load persisted galaxy configuration once, on the first load only.
     if (!_storedConfigApplied) {
       _storedConfigApplied = true;
       final config = await GalaxyStorageService.loadConfig();
+      if (!mounted) return;
+      // Deliberately not generation-checked: the config is read only once, so
+      // it must be applied even if a newer reload has overtaken this one.
       if (config.isNotEmpty) {
-        final customList =
-            (config['customConstellations'] ?? config['customGalaxies']) as List?;
-        if (customList != null) {
-          for (final raw in customList) {
-            if (raw is Map<String, dynamic>) {
-              final customConfig = CustomConstellationConfig.fromJson(raw);
-              _layoutEngine.createCustomConstellation(
-                id: customConfig.id,
-                name: customConfig.name,
-                primaryColor: Color(customConfig.primaryColorValue),
-                emblemIcon: customConfig.icon,
-                packageNames: customConfig.packageNames,
-              );
-            }
-          }
-        }
-        if (config.containsKey('coreAppPackageNames') &&
-            config['coreAppPackageNames'] is List) {
-          final corePkgs = List<String>.from(
-            config['coreAppPackageNames'] as List,
+        // Every read here tolerates a malformed value: a single bad entry in
+        // the settings file used to throw out of this load and leave the
+        // launcher on its spinner for good.
+        final customList = CustomConstellationConfig.parseList(
+          config['customConstellations'] ?? config['customGalaxies'],
+        );
+        for (final customConfig in customList) {
+          _layoutEngine.createCustomConstellation(
+            id: customConfig.id,
+            name: customConfig.name,
+            primaryColor: Color(customConfig.primaryColorValue),
+            emblemIcon: customConfig.icon,
+            packageNames: customConfig.packageNames,
           );
-          _layoutEngine.setCorePackageNames(corePkgs);
         }
-        if (config.containsKey('constellationAppOverrides') &&
-            config['constellationAppOverrides'] is Map) {
-          final rawOverrides =
-              config['constellationAppOverrides'] as Map<String, dynamic>;
+        final rawCore = config['coreAppPackageNames'];
+        if (rawCore is List) {
+          _layoutEngine.setCorePackageNames(
+            rawCore.whereType<String>().toList(),
+          );
+        }
+        final rawOverrides = config['constellationAppOverrides'];
+        if (rawOverrides is Map<String, dynamic>) {
           for (final entry in rawOverrides.entries) {
-            if (entry.value is List) {
+            final value = entry.value;
+            if (value is List) {
               _layoutEngine.constellationAppOverrides[entry.key] =
-                  List<String>.from(entry.value as List);
+                  value.whereType<String>().toList();
             }
           }
         }
-        if (config.containsKey('hiddenPackageNames') &&
-            config['hiddenPackageNames'] is List) {
-          final hiddenPkgs = List<String>.from(
-            config['hiddenPackageNames'] as List,
+        final rawHidden = config['hiddenPackageNames'];
+        if (rawHidden is List) {
+          _layoutEngine.setHiddenPackageNames(
+            rawHidden.whereType<String>().toList(),
           );
-          _layoutEngine.setHiddenPackageNames(hiddenPkgs);
         }
-        _nativeMode = config['nativeLauncherMode'] as bool? ?? false;
-        _doubleTapToSleep = config['doubleTapToSleep'] as bool? ?? false;
+        final rawNative = config['nativeLauncherMode'];
+        _nativeMode = rawNative is bool ? rawNative : false;
+        final rawSleep = config['doubleTapToSleep'];
+        _doubleTapToSleep = rawSleep is bool ? rawSleep : false;
         _swipeDownAction = SwipeDownAction.normalise(
           config['swipeDownAction'],
         );
+        final rawHint = config['firstRunHintDismissed'];
+        _firstRunHintDismissed = rawHint is bool ? rawHint : false;
       }
       // Test seams win over the stored file. Production passes neither, so this
       // is inert there.
@@ -613,6 +863,9 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       }
       if (widget.swipeDownAction != null) {
         _swipeDownAction = SwipeDownAction.normalise(widget.swipeDownAction);
+      }
+      if (widget.firstRunHintDismissed != null) {
+        _firstRunHintDismissed = widget.firstRunHintDismissed!;
       }
     }
 
@@ -644,6 +897,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       // happened to start with.
       await LauncherBridge.setLockScreenOverlayEnabled(!_nativeMode);
     }
+    if (gen != _loadGen || !mounted) return;
 
     _layoutEngine.assignApps(apps);
     if (mounted) {
@@ -713,11 +967,10 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
       _showSharedPdfError('No list items found in this PDF');
       return;
     }
-    await showImportReviewSheet(
+    await reviewImportedDocument(
       context,
+      controller: _shoppingController,
       document: document,
-      onConfirm: (List<int> indices) =>
-          _shoppingController.importParsedDocument(document, indices),
     );
   }
 
@@ -785,26 +1038,70 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _scanRetryTimer?.cancel();
+    _wallpaperToneSubscription?.cancel();
     _badgeController.removeListener(_onBadgeCountsChanged);
     _badgeController.dispose();
+    _camera.removeListener(_scheduleWallpaperOffsets);
+    _foldable.removeListener(_scheduleWallpaperOffsets);
     _foldable.dispose();
     _camera.dispose();
     _searchCoordinator.dispose();
     _shoppingController.dispose();
+    _defaultLauncher.dispose();
     super.dispose();
+  }
+
+  Widget _buildFirstRunHint(BuildContext context) {
+    // An overlay or the lock panel mutes this subtree's tickers, which would
+    // freeze an exit animation half-way; drop the card outright instead.
+    if (!_firstRunHintDismissed && !_showFirstRunHint) {
+      return const SizedBox.shrink();
+    }
+    final bool show = _showFirstRunHint;
+    return AnimatedSwitcher(
+      duration: LuminousHomeTheme.motion(
+        context,
+        LuminousHomeTheme.motionShort,
+      ),
+      switchInCurve: LuminousHomeTheme.easeStandard,
+      switchOutCurve: LuminousHomeTheme.easeExit,
+      child: show
+          ? Padding(
+              key: const ValueKey('first_run_hint'),
+              padding: const EdgeInsets.symmetric(
+                horizontal: LuminousHomeTheme.screenGutter,
+              ),
+              child: FirstRunHintCard(
+                swipeDownLabel:
+                    _swipeDownAction == SwipeDownAction.notifications
+                    ? 'Swipe down for notifications'
+                    : 'Swipe down to search',
+                onDismiss: _dismissFirstRunHint,
+                onSetDefault: _isDefaultLauncher
+                    ? null
+                    : () => unawaited(_requestDefaultLauncher()),
+              ),
+            )
+          : const SizedBox.shrink(key: ValueKey('first_run_hint_hidden')),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     _foldable.updateFromMediaQuery(context);
+    _syncWallpaperChrome();
 
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
+        // While the lock panel is up Back is consumed and does nothing: it
+        // must not close search or shopping underneath the lock.
+        if (_isLocked) return;
         // Back is consumed by the topmost surface first. The shopping surface
         // sits above the comet web-search surface and app search, so it must
-        // close before them; otherwise Back recenters the galaxy while the
+        // close before them; otherwise Back would be swallowed while the
         // shopping list stays up.
         if (_isShoppingOpen) {
           _closeShopping();
@@ -812,9 +1109,12 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
           _closeCometSearch();
         } else if (_isSearchOpen) {
           setState(() => _isSearchOpen = false);
-        } else {
-          _camera.resetView();
         }
+        // On the bare home surface Back is consumed and does nothing. A native
+        // home ignores Back on its own surface — ColorOS neither leaves HOME
+        // nor scrolls its pages — and recentering the galaxy here made the
+        // launcher the one home that visibly reacted. Home (the gesture or
+        // the button) is what recenters, through setHomeButtonListener.
       },
       child: Scaffold(
         body: _isLoading
@@ -829,6 +1129,16 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                 builder: (context, _) {
                   return Stack(
                     children: [
+                      // 0. Legibility scrims over the system wallpaper, under
+                      // every posture's chrome. The lock panel and the
+                      // full-screen surfaces cover them with their own.
+                      Positioned.fill(
+                        key: const ValueKey('wallpaper_scrim'),
+                        child: WallpaperScrim(
+                          light: _wallpaperTone?.isLight ?? false,
+                        ),
+                      ),
+
                       // Main Launcher Content (Folded Cover Screen vs Unfolded Cosmic Galaxy)
                       //
                       // The lock panel and both search surfaces cover this
@@ -860,8 +1170,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                   layoutEngine: _layoutEngine,
                                   onOpenSearch: () =>
                                       setState(() => _isSearchOpen = true),
-                                  onOpenSettings: () =>
-                                      LauncherBridge.openHomeSettings(),
+                                  onOpenSettings: _openSettings,
                                   onLock: _lockDevice,
                                   onAppLongPressed: _openAppLongPressDialog,
                                   onConstellationLongPressed:
@@ -883,8 +1192,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                   layoutEngine: _layoutEngine,
                                   onOpenSearch: () =>
                                       setState(() => _isSearchOpen = true),
-                                  onOpenSettings: () =>
-                                      LauncherBridge.openHomeSettings(),
+                                  onOpenSettings: _openSettings,
                                   onLock: _lockDevice,
                                   onAppLongPressed: _openAppLongPressDialog,
                                   onConstellationLongPressed:
@@ -920,29 +1228,32 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                       ),
                                     ),
 
-                                    // 2. Cosmic HUD Header (Clock, Date & Posture Telemetry)
+                                    // 2. Header (clock, date, primary
+                                    // nudges) with the one-time hint card
+                                    // directly beneath it, well clear of
+                                    // the dock.
                                     Positioned(
                                       top: 0,
                                       left: 0,
                                       right: 0,
-                                      child: CosmicHeaderHud(
-                                        foldable: _foldable,
-                                        isDefaultLauncher: _isDefaultLauncher,
-                                        onSetDefaultLauncher:
-                                            _requestDefaultLauncher,
-                                        onOpenLiveWallpaper: () {
-                                          unawaited(
-                                            _openCosmicLiveWallpaperPreview(),
-                                          );
-                                        },
-                                        nativeMode: _nativeMode,
-                                        onToggleNativeMode: _toggleNativeMode,
-                                        onLockScreen: _lockDevice,
-                                        onToggleCockpit: _foldable.isTabletop
-                                            ? () => setState(
-                                                () => _isCockpitMode = true,
-                                              )
-                                            : null,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          CosmicHeaderHud(
+                                            isDefaultLauncher:
+                                                _isDefaultLauncher,
+                                            onSetDefaultLauncher:
+                                                _requestDefaultLauncher,
+                                            onToggleCockpit: _foldable
+                                                    .isTabletop
+                                                ? () => setState(
+                                                    () => _isCockpitMode =
+                                                        true,
+                                                  )
+                                                : null,
+                                          ),
+                                          _buildFirstRunHint(context),
+                                        ],
                                       ),
                                     ),
 
@@ -960,8 +1271,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                                         ),
                                         onOpenWebSearch: () =>
                                             _openCometSearch(),
-                                        onOpenSettings: () =>
-                                            LauncherBridge.openHomeSettings(),
+                                        onOpenSettings: _openSettings,
                                         onLock: _lockDevice,
                                         onCreateConstellation:
                                             _openCreateConstellationModal,
@@ -977,8 +1287,14 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                       ),
 
                       // Fullscreen Search HUD & Categorized Celestial Library
+                      // Every overlay is keyed. Unkeyed, closing one shifted
+                      // the later siblings into its element slot, so a mounted
+                      // lock panel was rebuilt as a fresh state — and the old
+                      // state's dispose then cleared the new one's unlock
+                      // listeners, stranding the panel after an unlock.
                       if (_isSearchOpen)
                         Positioned.fill(
+                          key: const ValueKey('overlay_search'),
                           child: SearchOverlay(
                             allApps: _apps,
                             camera: _camera,
@@ -986,8 +1302,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                             onAppLongPressed: _openAppLongPressDialog,
                             onClose: () =>
                                 setState(() => _isSearchOpen = false),
-                            onOpenSettings: () =>
-                                LauncherBridge.openHomeSettings(),
+                            onOpenSettings: _openSettings,
                             onSearchWeb: _openCometSearch,
                           ),
                         ),
@@ -995,6 +1310,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                       // Comet Web Search Surface
                       if (_isCometSearchOpen)
                         Positioned.fill(
+                          key: const ValueKey('overlay_comet'),
                           child: CometSearchSurface(
                             key: ValueKey('comet_${_cometInitialQuery ?? ''}'),
                             coordinator: _searchCoordinator,
@@ -1006,6 +1322,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                       // Shopping List Surface
                       if (_isShoppingOpen)
                         Positioned.fill(
+                          key: const ValueKey('overlay_shopping'),
                           child: ShoppingSurface(
                             controller: _shoppingController,
                             foldable: _foldable,
@@ -1016,6 +1333,7 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
                       // Celestial Foldable Lock Screen
                       if (_isLocked)
                         Positioned.fill(
+                          key: const ValueKey('overlay_lock'),
                           child: CosmicLockScreen(
                             foldable: _foldable,
                             apps: _apps,
@@ -1038,26 +1356,23 @@ class _ChronoFoldHomeScreenState extends State<ChronoFoldHomeScreen>
   }
 }
 
+/// The unfolded header: clock and date, plus at most two primary nudges.
+///
+/// Wallpaper, lock-surface mode and gestures live in the Settings sheet, Lock
+/// is on the dock, and the posture readout was ornamental telemetry (PRODUCT.md
+/// principle 2), so the shelf only carries what has no other entry point: the
+/// "Set default" nudge while ChronoFold is not the home app, and the tabletop
+/// Cockpit switch.
 class CosmicHeaderHud extends StatefulWidget {
-  final FoldableController foldable;
   final VoidCallback? onToggleCockpit;
   final bool isDefaultLauncher;
   final VoidCallback? onSetDefaultLauncher;
-  final VoidCallback? onOpenLiveWallpaper;
-  final bool nativeMode;
-  final VoidCallback? onToggleNativeMode;
-  final VoidCallback? onLockScreen;
 
   const CosmicHeaderHud({
     super.key,
-    required this.foldable,
     this.onToggleCockpit,
     this.isDefaultLauncher = true,
     this.onSetDefaultLauncher,
-    this.onOpenLiveWallpaper,
-    this.nativeMode = false,
-    this.onToggleNativeMode,
-    this.onLockScreen,
   });
 
   @override
@@ -1098,6 +1413,8 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
     final timeString = formatClockTime(context, _now);
     final dateString =
         '${_weekdayName(_now.weekday)}, ${_monthName(_now.month)} ${_now.day}';
+    final bool showSetDefault =
+        !widget.isDefaultLauncher && widget.onSetDefaultLauncher != null;
 
     return SafeArea(
       child: Padding(
@@ -1140,120 +1457,77 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                 ],
               ),
             ),
-            const SizedBox(width: 14),
+            if (showSetDefault || widget.onToggleCockpit != null) ...[
+              const SizedBox(width: 14),
 
-            // Compact utility shelf; it scrolls instead of competing with time.
-            Flexible(
-              child: Align(
-                alignment: Alignment.topRight,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(
-                      LuminousHomeTheme.controlRadius + 10,
-                    ),
-                    boxShadow: LuminousHomeTheme.floatingShadow,
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(
-                      LuminousHomeTheme.controlRadius + 10,
-                    ),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(
-                        sigmaX: LuminousHomeTheme.glassBlur,
-                        sigmaY: LuminousHomeTheme.glassBlur,
+              // Compact utility shelf; it scrolls instead of competing with
+              // time.
+              Flexible(
+                child: Align(
+                  alignment: Alignment.topRight,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(
+                        LuminousHomeTheme.controlRadius + 10,
                       ),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              LuminousHomeTheme.glassStrong,
-                              LuminousHomeTheme.glass,
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(
-                            LuminousHomeTheme.controlRadius + 10,
-                          ),
-                          border: Border.all(color: LuminousHomeTheme.hairline),
-                        ),
-                        child: SizedBox(
-                          height: 56,
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            reverse: true,
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (!widget.isDefaultLauncher &&
-                                    widget.onSetDefaultLauncher != null)
-                                  _utilityButton(
-                                    icon: Icons.home_rounded,
-                                    label: 'Set default',
-                                    tooltip: 'Set as default launcher',
-                                    color: LuminousHomeTheme.accent,
-                                    emphasized: true,
-                                    onTap: widget.onSetDefaultLauncher!,
-                                  ),
-                                if (widget.onOpenLiveWallpaper != null)
-                                  _utilityButton(
-                                    icon: Icons.wallpaper_rounded,
-                                    label: 'Ambient',
-                                    tooltip: 'Choose ambient wallpaper',
-                                    color: LuminousHomeTheme.accent,
-                                    onTap: widget.onOpenLiveWallpaper!,
-                                  ),
-                                if (widget.onToggleNativeMode != null)
-                                  _utilityButton(
-                                    icon: widget.nativeMode
-                                        ? Icons.shield_outlined
-                                        : Icons.lock_outline_rounded,
-                                    label: widget.nativeMode
-                                        ? 'Native'
-                                        : 'Cosmic',
-                                    tooltip: widget.nativeMode
-                                        ? 'Use Cosmic lock screen'
-                                        : 'Use native lock screen',
-                                    color: widget.nativeMode
-                                        ? LuminousHomeTheme.mint
-                                        : LuminousHomeTheme.orchid,
-                                    emphasized: true,
-                                    onTap: widget.onToggleNativeMode!,
-                                  ),
-                                if (widget.onLockScreen != null)
-                                  _utilityButton(
-                                    icon: Icons.lock_rounded,
-                                    label: 'Lock',
-                                    tooltip: 'Lock now',
-                                    color: LuminousHomeTheme.orchid,
-                                    onTap: widget.onLockScreen!,
-                                  ),
-                                if (widget.onToggleCockpit != null)
-                                  _utilityButton(
-                                    icon: Icons.splitscreen_rounded,
-                                    label: 'Cockpit',
-                                    tooltip: 'Open tabletop cockpit',
-                                    color: LuminousHomeTheme.accent,
-                                    onTap: widget.onToggleCockpit!,
-                                  ),
-                                const SizedBox(
-                                  height: 24,
-                                  child: VerticalDivider(
-                                    width: 10,
-                                    thickness: 1,
-                                    color: LuminousHomeTheme.hairline,
-                                  ),
-                                ),
-                                ListenableBuilder(
-                                  listenable: widget.foldable,
-                                  builder: (context, _) {
-                                    return _postureStatus(
-                                      widget.foldable.posture.name,
-                                    );
-                                  },
-                                ),
+                      boxShadow: LuminousHomeTheme.floatingShadow,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(
+                        LuminousHomeTheme.controlRadius + 10,
+                      ),
+                      // An opaque fill, not a BackdropFilter: the galaxy under
+                      // the header repaints every frame and would re-run the
+                      // blur on each one (same reasoning as the dock).
+                      child: ColoredBox(
+                        color: LuminousHomeTheme.glassOpaque,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                LuminousHomeTheme.glassStrong,
+                                LuminousHomeTheme.glass,
                               ],
+                            ),
+                            borderRadius: BorderRadius.circular(
+                              LuminousHomeTheme.controlRadius + 10,
+                            ),
+                            border: Border.all(
+                              color: LuminousHomeTheme.hairline,
+                            ),
+                          ),
+                          child: SizedBox(
+                            height: 56,
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              reverse: true,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (showSetDefault)
+                                    _utilityButton(
+                                      icon: Icons.home_rounded,
+                                      label: 'Set default',
+                                      tooltip: 'Set as default launcher',
+                                      color: LuminousHomeTheme.accent,
+                                      emphasized: true,
+                                      onTap: widget.onSetDefaultLauncher!,
+                                    ),
+                                  if (widget.onToggleCockpit != null)
+                                    _utilityButton(
+                                      icon: Icons.splitscreen_rounded,
+                                      label: 'Cockpit',
+                                      tooltip: 'Open tabletop cockpit',
+                                      color: LuminousHomeTheme.accent,
+                                      onTap: widget.onToggleCockpit!,
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -1262,7 +1536,7 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                   ),
                 ),
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -1317,42 +1591,6 @@ class _CosmicHeaderHudState extends State<CosmicHeaderHud> {
                 ),
               ),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _postureStatus(String postureName) {
-    final label = postureName.isEmpty
-        ? postureName
-        : '${postureName[0].toUpperCase()}${postureName.substring(1)}';
-    return Semantics(
-      label: 'Device posture: $label',
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          minHeight: LuminousHomeTheme.minimumTouchTarget,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.screen_rotation_rounded,
-                color: LuminousHomeTheme.textMuted,
-                size: 16,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: LuminousHomeTheme.textSecondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
           ),
         ),
       ),

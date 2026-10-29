@@ -16,6 +16,23 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+    <!-- The HOME activity's window sits directly on the system wallpaper, the
+         way every ColorOS home surface does: the keyguard, the recents close
+         animation and the stock launcher's own HOME flash all compose over the
+         same picture, so the launcher no longer reads as a cut to a different
+         backdrop. With the wallpaper already visible the platform draws no
+         starting window at all, which is the native cold-start behaviour.
+         The Flutter surface is transparent (see MainActivity.getBackgroundMode)
+         and paints its stars, panels and scrims over the wallpaper. -->
+    <style name="HomeLaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">@color/cosmic_black</item>
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+    <!-- Same window as HomeLaunchTheme; Flutter switches to it on create. -->
+    <style name="HomeTheme" parent="HomeLaunchTheme" />
     <!-- The native shortcut-pin prompt. A platform dialog parent keeps it a
          system-shaped alert; no launcher colour is invented here, the platform
          theme supplies its own. -->

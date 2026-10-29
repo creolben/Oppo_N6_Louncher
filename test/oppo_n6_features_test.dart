@@ -130,11 +130,12 @@ void main() {
       // Verify GalaxyInteractiveCanvas is rendered in the top constellation viewport
       expect(find.byType(GalaxyInteractiveCanvas), findsOneWidget);
 
-      // Verify Telemetry badge
-      expect(find.textContaining('OPPO N6 FLEX MODE'), findsOneWidget);
+      // The posture badge is a plain label, not device telemetry.
+      expect(find.text('Tabletop'), findsOneWidget);
+      expect(find.textContaining('OPPO N6 FLEX MODE'), findsNothing);
 
       // Verify Search trigger in top HUD
-      expect(find.text('Search galaxy applications...'), findsOneWidget);
+      expect(find.text('Search apps'), findsOneWidget);
 
       // Verify Bottom Cockpit controls
       expect(find.text('Search'), findsOneWidget);

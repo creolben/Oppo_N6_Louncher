@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
+import '../../../core/launcher_haptics.dart';
 import '../../../ui/theme/luminous_home_theme.dart';
 import '../models/shopping_item.dart';
 import '../models/shopping_list.dart';
@@ -16,6 +19,28 @@ const double _storeRowMinHeight = 64;
 
 /// Checkbox side in store mode.
 const double _storeCheckbox = 32;
+
+/// How long a just-checked row stays in place, struck through, before it
+/// sinks into Done; long enough for the strike animation to read.
+const Duration _checkSettleDelay = Duration(milliseconds: 600);
+
+/// Removes [item] from [list] with a firm haptic and an undo snack bar.
+void _deleteWithUndo(
+  BuildContext context,
+  ShoppingController controller,
+  ShoppingList list,
+  ShoppingItem item,
+) {
+  final RemovedItem? removed = controller.removeItem(list.id, item.id);
+  if (removed == null) return;
+  LauncherHaptics.heavyClick();
+  showGrocerySnackBar(
+    context,
+    'Removed ${item.name}',
+    actionLabel: 'Undo',
+    onAction: () => controller.restoreItems(list.id, <RemovedItem>[removed]),
+  );
+}
 
 /// Clears the checked items on [list] and offers an undo snackbar.
 ///
@@ -45,14 +70,91 @@ void clearCheckedWithUndo(
 /// and carry no drag handles; in "My order" mode they form one flat,
 /// reorderable section. Indented children render directly under their parent in
 /// both. Store mode enlarges the rows and removes the reorder/delete gestures
-/// so a walk through the shop cannot lose an item by accident. The pane is a
-/// plain view over [controller]; every mutation goes back through the controller
-/// so the debounced save and the store stay the single source of truth.
-class ListPane extends StatelessWidget {
+/// so a walk through the shop cannot lose an item by accident. Every mutation
+/// goes back through [controller] so the debounced save and the store stay the
+/// single source of truth; the pane's only state is the short list of rows
+/// that were just checked and are still playing their strike-through in place
+/// before they move into Done.
+class ListPane extends StatefulWidget {
   final ShoppingController controller;
   final ShoppingList list;
 
   const ListPane({super.key, required this.controller, required this.list});
+
+  @override
+  State<ListPane> createState() => _ListPaneState();
+}
+
+class _ListPaneState extends State<ListPane> {
+  /// Rows checked by a tap whose move into Done is still pending, by item id.
+  final Map<String, Timer> _pendingChecks = <String, Timer>{};
+
+  /// The list each pending check belongs to, so a list switch still commits it.
+  final Map<String, String> _pendingListIds = <String, String>{};
+
+  ShoppingController get controller => widget.controller;
+
+  ShoppingList get list => widget.list;
+
+  @override
+  void dispose() {
+    // Commit rather than drop checks still waiting out their animation. The
+    // controller notifies its listeners, so do it after this frame's teardown.
+    final List<MapEntry<String, String>> pending = _pendingListIds.entries
+        .toList();
+    for (final Timer timer in _pendingChecks.values) {
+      timer.cancel();
+    }
+    _pendingChecks.clear();
+    _pendingListIds.clear();
+    if (pending.isNotEmpty) {
+      final ShoppingController owner = widget.controller;
+      scheduleMicrotask(() {
+        for (final MapEntry<String, String> entry in pending) {
+          _commitCheck(owner, entry.value, entry.key);
+        }
+      });
+    }
+    super.dispose();
+  }
+
+  /// Checks [itemId] unless something else already did.
+  static void _commitCheck(
+    ShoppingController owner,
+    String listId,
+    String itemId,
+  ) {
+    final ShoppingItem? item = owner.listById(listId)?.itemById(itemId);
+    if (item == null || item.checked) return;
+    owner.toggleChecked(listId, itemId);
+  }
+
+  /// Toggles [item]. Unchecking is immediate; checking strikes the row through
+  /// where it is and moves it into Done after [_checkSettleDelay] (at once
+  /// under reduced motion). Tapping a row that is still settling cancels it.
+  void _toggle(ShoppingItem item) {
+    LauncherHaptics.tick();
+    final Timer? pending = _pendingChecks.remove(item.id);
+    if (pending != null) {
+      pending.cancel();
+      _pendingListIds.remove(item.id);
+      setState(() {});
+      return;
+    }
+    if (item.checked || MediaQuery.disableAnimationsOf(context)) {
+      controller.toggleChecked(list.id, item.id);
+      return;
+    }
+    final String listId = list.id;
+    _pendingListIds[item.id] = listId;
+    _pendingChecks[item.id] = Timer(_checkSettleDelay, () {
+      _pendingChecks.remove(item.id);
+      _pendingListIds.remove(item.id);
+      if (mounted) setState(() {});
+      _commitCheck(controller, listId, item.id);
+    });
+    setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -83,16 +185,20 @@ class ListPane extends StatelessWidget {
       return parent == null || parent.parentId != null;
     }
 
-    final List<ShoppingItem> topLevel =
-        unchecked.where(isTopLevel).toList(growable: false);
-    final Set<String> topLevelIds =
-        topLevel.map((ShoppingItem item) => item.id).toSet();
+    final List<ShoppingItem> topLevel = unchecked
+        .where(isTopLevel)
+        .toList(growable: false);
+    final Set<String> topLevelIds = topLevel
+        .map((ShoppingItem item) => item.id)
+        .toSet();
     final Map<String, List<ShoppingItem>> childrenByParent =
         <String, List<ShoppingItem>>{};
     for (final ShoppingItem item in unchecked) {
       final String? parentId = item.parentId;
       if (parentId != null && topLevelIds.contains(parentId)) {
-        childrenByParent.putIfAbsent(parentId, () => <ShoppingItem>[]).add(item);
+        childrenByParent
+            .putIfAbsent(parentId, () => <ShoppingItem>[])
+            .add(item);
       }
     }
 
@@ -107,14 +213,26 @@ class ListPane extends StatelessWidget {
             groceryAisleRank(a).compareTo(groceryAisleRank(b)),
       );
 
+    final int? totalCost = list.estimatedCostCents();
+
     return CustomScrollView(
       slivers: <Widget>[
+        if (totalCost != null)
+          SliverToBoxAdapter(
+            child: _CostSummary(
+              remainingCents:
+                  list.estimatedCostCents(uncheckedOnly: true) ?? 0,
+              totalCents: totalCost,
+            ),
+          ),
         if (manualOrder)
           SliverReorderableList(
             itemCount: topLevel.length,
-            proxyDecorator:
-                (Widget child, int index, Animation<double> animation) =>
-                    _proxy(child, reduceMotion),
+            proxyDecorator: (
+              Widget child,
+              int index,
+              Animation<double> animation,
+            ) => _proxy(child, reduceMotion),
             onReorder: (int oldIndex, int newIndex) {
               if (newIndex > oldIndex) newIndex -= 1;
               controller.moveItemAcrossList(
@@ -130,6 +248,8 @@ class ListPane extends StatelessWidget {
                 child: _ItemUnit(
                   controller: controller,
                   list: list,
+                  pendingChecks: _pendingChecks.keys.toSet(),
+                  onToggle: _toggle,
                   parent: parent,
                   children:
                       childrenByParent[parent.id] ?? const <ShoppingItem>[],
@@ -151,23 +271,25 @@ class ListPane extends StatelessWidget {
               ),
             ),
             SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (BuildContext context, int index) {
-                  final ShoppingItem parent = grouped[aisle]![index];
-                  return _ItemUnit(
-                    key: ValueKey<String>('reorder_${parent.id}'),
-                    controller: controller,
-                    list: list,
-                    parent: parent,
-                    children:
-                        childrenByParent[parent.id] ?? const <ShoppingItem>[],
-                    reorderIndex: null,
-                    storeMode: storeMode,
-                    showAisleCaption: false,
-                  );
-                },
-                childCount: grouped[aisle]!.length,
-              ),
+              delegate: SliverChildBuilderDelegate((
+                BuildContext context,
+                int index,
+              ) {
+                final ShoppingItem parent = grouped[aisle]![index];
+                return _ItemUnit(
+                  key: ValueKey<String>('reorder_${parent.id}'),
+                  controller: controller,
+                  list: list,
+                  pendingChecks: _pendingChecks.keys.toSet(),
+                  onToggle: _toggle,
+                  parent: parent,
+                  children:
+                      childrenByParent[parent.id] ?? const <ShoppingItem>[],
+                  reorderIndex: null,
+                  storeMode: storeMode,
+                  showAisleCaption: false,
+                );
+              }, childCount: grouped[aisle]!.length),
             ),
           ],
         if (checked.isNotEmpty) ...<Widget>[
@@ -190,6 +312,7 @@ class ListPane extends StatelessWidget {
                   controller: controller,
                   list: list,
                   item: checked[index],
+                  onToggle: _toggle,
                   storeMode: storeMode,
                 ),
                 childCount: checked.length,
@@ -219,6 +342,8 @@ class ListPane extends StatelessWidget {
 class _ItemUnit extends StatelessWidget {
   final ShoppingController controller;
   final ShoppingList list;
+  final Set<String> pendingChecks;
+  final ValueChanged<ShoppingItem> onToggle;
   final ShoppingItem parent;
   final List<ShoppingItem> children;
   final int? reorderIndex;
@@ -229,6 +354,8 @@ class _ItemUnit extends StatelessWidget {
     super.key,
     required this.controller,
     required this.list,
+    required this.pendingChecks,
+    required this.onToggle,
     required this.parent,
     required this.children,
     required this.reorderIndex,
@@ -247,6 +374,8 @@ class _ItemUnit extends StatelessWidget {
           controller: controller,
           list: list,
           item: parent,
+          settling: pendingChecks.contains(parent.id),
+          onToggle: onToggle,
           reorderIndex: reorderIndex,
           storeMode: storeMode,
           showAisle: showAisleCaption,
@@ -257,11 +386,78 @@ class _ItemUnit extends StatelessWidget {
             controller: controller,
             list: list,
             item: child,
+            settling: pendingChecks.contains(child.id),
+            onToggle: onToggle,
             indented: true,
             storeMode: storeMode,
             showAisle: showAisleCaption,
           ),
       ],
+    );
+  }
+}
+
+/// `$12.50` from a cent count.
+String formatCents(int cents) {
+  final String sign = cents < 0 ? '-' : '';
+  final int value = cents.abs();
+  final String fraction = (value % 100).toString().padLeft(2, '0');
+  return '$sign\$${value ~/ 100}.$fraction';
+}
+
+/// The estimated spend of a list whose lines carry prices (an imported meal
+/// kit): what is still to buy, out of the whole list.
+class _CostSummary extends StatelessWidget {
+  final int remainingCents;
+  final int totalCents;
+
+  const _CostSummary({
+    required this.remainingCents,
+    required this.totalCents,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final String remaining = formatCents(remainingCents);
+    final String total = formatCents(totalCents);
+    return Semantics(
+      container: true,
+      label: 'Estimated cost: $remaining left of $total',
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          LuminousHomeTheme.screenGutter,
+          LuminousHomeTheme.space4,
+          LuminousHomeTheme.screenGutter,
+          LuminousHomeTheme.space8,
+        ),
+        child: Row(
+          children: <Widget>[
+            const Icon(
+              Icons.receipt_long_rounded,
+              size: 16,
+              color: LuminousHomeTheme.textMuted,
+            ),
+            const SizedBox(width: LuminousHomeTheme.space8),
+            Expanded(
+              child: Text(
+                'Est. $remaining left',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: LuminousHomeTheme.label.copyWith(
+                  color: LuminousHomeTheme.groceryAccent,
+                ),
+              ),
+            ),
+            Text(
+              'of $total',
+              style: LuminousHomeTheme.caption.copyWith(
+                color: LuminousHomeTheme.textMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -294,7 +490,7 @@ class _DoneHeader extends StatelessWidget {
         left: LuminousHomeTheme.space12,
         right: LuminousHomeTheme.screenGutter,
       ),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: LuminousHomeTheme.glassOpaqueStrong,
         border: Border(bottom: BorderSide(color: LuminousHomeTheme.hairline)),
       ),
@@ -369,6 +565,13 @@ class _ItemRow extends StatelessWidget {
   final ShoppingList list;
   final ShoppingItem item;
 
+  /// Whether the row was just checked and is striking through in place before
+  /// it moves into Done. It renders as checked.
+  final bool settling;
+
+  /// Toggles the row through the pane, which owns the settle delay.
+  final ValueChanged<ShoppingItem> onToggle;
+
   /// Whether this row is an indented child of the row above it.
   final bool indented;
 
@@ -388,62 +591,64 @@ class _ItemRow extends StatelessWidget {
     required this.controller,
     required this.list,
     required this.item,
+    required this.onToggle,
+    this.settling = false,
     this.indented = false,
     this.reorderIndex,
     this.storeMode = false,
     this.showAisle = false,
   });
 
-  String get _quantityText => item.quantity?.formatAsEntered() ?? '';
+  String get _quantityText => item.displayAmount;
+
+  String? get _costText =>
+      item.costCents == null ? null : formatCents(item.costCents!);
 
   /// The preferred-system approximation of the quantity, or null when the
   /// amount is already shown in the preferred system (or is a count).
   String? get _approxText =>
       item.quantity?.approxIn(preferImperial: controller.preferImperial);
 
+  /// Whether the row shows as checked: really checked, or settling.
+  bool get _checked => item.checked || settling;
+
+  /// The row's label. The checked state is announced through the semantics
+  /// `checked` flag, so it is not repeated here.
   String get _semanticLabel {
     final List<String> parts = <String>[
       if (_quantityText.isNotEmpty) _quantityText,
       ?_approxText,
       item.name,
+      if (item.days.isNotEmpty) 'for ${item.days.join(', ')}',
+      if (_costText != null) 'about $_costText',
     ];
-    return '${parts.join(' ')}, ${item.checked ? 'checked' : 'unchecked'}';
-  }
-
-  void _toggle() {
-    controller.toggleChecked(list.id, item.id);
+    return parts.join(' ');
   }
 
   void _edit(BuildContext context) {
     showItemEditSheet(context, controller: controller, list: list, item: item);
   }
 
-  void _delete(BuildContext context) {
-    final RemovedItem? removed = controller.removeItem(list.id, item.id);
-    if (removed == null) return;
-    showGrocerySnackBar(
-      context,
-      'Removed ${item.name}',
-      actionLabel: 'Undo',
-      onAction: () => controller.restoreItems(list.id, <RemovedItem>[removed]),
-    );
-  }
-
-  Map<CustomSemanticsAction, VoidCallback> _customActions() {
-    if (item.checked) return const <CustomSemanticsAction, VoidCallback>{};
+  Map<CustomSemanticsAction, VoidCallback> _customActions(
+    BuildContext context,
+  ) {
     return <CustomSemanticsAction, VoidCallback>{
-      if (controller.canIndent(list.id, item.id))
-        const CustomSemanticsAction(label: 'Indent'): () =>
-            controller.indentItem(list.id, item.id),
-      if (controller.canOutdent(list.id, item.id))
-        const CustomSemanticsAction(label: 'Unindent'): () =>
-            controller.outdentItem(list.id, item.id),
-      if (controller.canMoveUp(list.id, item.id))
-        const CustomSemanticsAction(label: 'Move up'): () =>
-            controller.moveItemUp(list.id, item.id),
-      if (controller.canMoveDown(list.id, item.id))
-        const CustomSemanticsAction(label: 'Move down'): () =>
-            controller.moveItemDown(list.id, item.id),
+      if (!item.checked) ...<CustomSemanticsAction, VoidCallback>{
+        if (controller.canIndent(list.id, item.id))
+          const CustomSemanticsAction(label: 'Indent'): () =>
+              controller.indentItem(list.id, item.id),
+        if (controller.canOutdent(list.id, item.id))
+          const CustomSemanticsAction(label: 'Unindent'): () =>
+              controller.outdentItem(list.id, item.id),
+        if (controller.canMoveUp(list.id, item.id))
+          const CustomSemanticsAction(label: 'Move up'): () =>
+              controller.moveItemUp(list.id, item.id),
+        if (controller.canMoveDown(list.id, item.id))
+          const CustomSemanticsAction(label: 'Move down'): () =>
+              controller.moveItemDown(list.id, item.id),
+      },
+      const CustomSemanticsAction(label: 'Delete'): () =>
+          _deleteWithUndo(context, controller, list, item),
     };
   }
 
@@ -453,6 +658,7 @@ class _ItemRow extends StatelessWidget {
     final Duration duration = reduceMotion
         ? Duration.zero
         : LuminousHomeTheme.motionShort;
+    final bool checked = _checked;
     final double minHeight = storeMode
         ? _storeRowMinHeight
         : LuminousHomeTheme.minimumTouchTarget;
@@ -463,157 +669,181 @@ class _ItemRow extends StatelessWidget {
           )
         : LuminousHomeTheme.title;
 
-    final Widget content = AnimatedOpacity(
-      opacity: item.checked ? 0.55 : 1.0,
-      duration: duration,
-      curve: LuminousHomeTheme.easeStandard,
-      child: Container(
-        key: ValueKey<String>('row_content_${item.id}'),
-        constraints: BoxConstraints(minHeight: minHeight),
-        padding: EdgeInsets.only(
-          left: LuminousHomeTheme.screenGutter + (indented ? _childIndent : 0),
-          right: LuminousHomeTheme.screenGutter,
-          top: LuminousHomeTheme.space8,
-          bottom: LuminousHomeTheme.space8,
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: <Widget>[
-            Expanded(
-              child: ExcludeSemantics(
-                child: Row(
-                  children: <Widget>[
-                    Icon(
-                      item.checked
-                          ? Icons.check_box_rounded
-                          : Icons.check_box_outline_blank_rounded,
-                      size: checkboxSize,
-                      color: item.checked
-                          ? LuminousHomeTheme.groceryAccent
-                          : LuminousHomeTheme.textMuted,
-                    ),
-                    const SizedBox(width: LuminousHomeTheme.space12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: <Widget>[
-                          AnimatedDefaultTextStyle(
-                            duration: duration,
-                            curve: LuminousHomeTheme.easeStandard,
-                            style: titleStyle.copyWith(
-                              color: item.checked
-                                  ? LuminousHomeTheme.textMuted
-                                  : LuminousHomeTheme.textPrimary,
-                              decoration: item.checked
-                                  ? TextDecoration.lineThrough
-                                  : TextDecoration.none,
-                              decorationColor: LuminousHomeTheme.textMuted,
-                            ),
-                            child: Text(item.name),
+    // Checked rows dim through their text colour alone; a second opacity layer
+    // on top pushed the contrast too low to read.
+    final Widget content = Container(
+      key: ValueKey<String>('row_content_${item.id}'),
+      constraints: BoxConstraints(minHeight: minHeight),
+      padding: EdgeInsets.only(
+        left: LuminousHomeTheme.screenGutter + (indented ? _childIndent : 0),
+        right: LuminousHomeTheme.screenGutter,
+        top: LuminousHomeTheme.space8,
+        bottom: LuminousHomeTheme.space8,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: <Widget>[
+          Expanded(
+            child: ExcludeSemantics(
+              child: Row(
+                children: <Widget>[
+                  Icon(
+                    checked
+                        ? Icons.check_box_rounded
+                        : Icons.check_box_outline_blank_rounded,
+                    size: checkboxSize,
+                    color: checked
+                        ? LuminousHomeTheme.groceryAccent
+                        : LuminousHomeTheme.textMuted,
+                  ),
+                  const SizedBox(width: LuminousHomeTheme.space12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        AnimatedDefaultTextStyle(
+                          duration: duration,
+                          curve: Curves.easeOutCubic,
+                          style: titleStyle.copyWith(
+                            color: checked
+                                ? LuminousHomeTheme.textMuted
+                                : LuminousHomeTheme.textPrimary,
+                            decoration: checked
+                                ? TextDecoration.lineThrough
+                                : TextDecoration.none,
+                            decorationColor: LuminousHomeTheme.textMuted,
                           ),
-                          if (item.note != null && item.note!.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Text(
-                                item.note!,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: LuminousHomeTheme.caption.copyWith(
-                                  color: LuminousHomeTheme.textMuted,
-                                ),
+                          child: Text(item.name),
+                        ),
+                        if (item.days.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              item.days.join(' · '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: LuminousHomeTheme.caption.copyWith(
+                                color: checked
+                                    ? LuminousHomeTheme.textMuted
+                                    : LuminousHomeTheme.groceryAccent,
                               ),
                             ),
-                          if (showAisle)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 2),
-                              child: Text(
-                                item.aisle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: LuminousHomeTheme.caption.copyWith(
-                                  color: LuminousHomeTheme.groceryAccent,
-                                ),
+                          ),
+                        if (item.note != null && item.note!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              item.note!,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: LuminousHomeTheme.caption.copyWith(
+                                color: LuminousHomeTheme.textMuted,
                               ),
                             ),
-                        ],
+                          ),
+                        if (showAisle)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              item.aisle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: LuminousHomeTheme.caption.copyWith(
+                                color: LuminousHomeTheme.groceryAccent,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_quantityText.isNotEmpty || _costText != null) ...<Widget>[
+            const SizedBox(width: LuminousHomeTheme.space12),
+            Flexible(
+              child: ExcludeSemantics(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Text(
+                      _quantityText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: LuminousHomeTheme.body.copyWith(
+                        color: checked
+                            ? LuminousHomeTheme.textMuted
+                            : LuminousHomeTheme.groceryAccent,
                       ),
                     ),
+                    if (_approxText != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          _approxText!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: LuminousHomeTheme.caption.copyWith(
+                            color: LuminousHomeTheme.textMuted,
+                          ),
+                        ),
+                      ),
+                    if (_costText != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          _costText!,
+                          maxLines: 1,
+                          style: LuminousHomeTheme.caption.copyWith(
+                            color: LuminousHomeTheme.textMuted,
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
             ),
-            if (_quantityText.isNotEmpty) ...<Widget>[
-              const SizedBox(width: LuminousHomeTheme.space12),
-              Flexible(
-                child: ExcludeSemantics(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(
-                        _quantityText,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: LuminousHomeTheme.body.copyWith(
-                          color: LuminousHomeTheme.groceryAccent,
-                        ),
-                      ),
-                      if (_approxText != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            _approxText!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: LuminousHomeTheme.caption.copyWith(
-                              color: LuminousHomeTheme.textMuted,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-            if (reorderIndex != null) ...<Widget>[
-              const SizedBox(width: LuminousHomeTheme.space4),
-              ReorderableDragStartListener(
-                index: reorderIndex!,
-                child: Semantics(
-                  button: true,
-                  label: 'Reorder ${item.name}',
-                  child: SizedBox.square(
-                    key: ValueKey<String>('drag_handle_${item.id}'),
-                    dimension: LuminousHomeTheme.minimumTouchTarget,
-                    child: const Center(
-                      child: Icon(
-                        Icons.drag_indicator_rounded,
-                        size: 24,
-                        color: LuminousHomeTheme.textMuted,
-                      ),
+          ],
+          if (reorderIndex != null) ...<Widget>[
+            const SizedBox(width: LuminousHomeTheme.space4),
+            ReorderableDragStartListener(
+              index: reorderIndex!,
+              child: Semantics(
+                button: true,
+                label: 'Reorder ${item.name}',
+                child: SizedBox.square(
+                  key: ValueKey<String>('drag_handle_${item.id}'),
+                  dimension: LuminousHomeTheme.minimumTouchTarget,
+                  child: const Center(
+                    child: Icon(
+                      Icons.drag_indicator_rounded,
+                      size: 24,
+                      color: LuminousHomeTheme.textMuted,
                     ),
                   ),
                 ),
               ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
     );
 
     final Widget tappable = Semantics(
       container: true,
       button: true,
-      checked: item.checked,
+      checked: checked,
       label: _semanticLabel,
-      onTap: _toggle,
+      onTap: () => onToggle(item),
       onLongPress: () => _edit(context),
-      customSemanticsActions: _customActions(),
+      customSemanticsActions: _customActions(context),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: _toggle,
+          onTap: () => onToggle(item),
           onLongPress: () => _edit(context),
           child: content,
         ),
@@ -626,18 +856,35 @@ class _ItemRow extends StatelessWidget {
 
     return Dismissible(
       key: ValueKey<String>('dismiss_${item.id}'),
-      direction: DismissDirection.endToStart,
-      background: Container(
+      direction: DismissDirection.horizontal,
+      background: const _DeleteSwipeBackground(alignment: Alignment.centerLeft),
+      secondaryBackground: const _DeleteSwipeBackground(
         alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: LuminousHomeTheme.screenGutter),
-        color: LuminousHomeTheme.danger.withValues(alpha: 0.24),
-        child: const Icon(
-          Icons.delete_outline_rounded,
-          color: LuminousHomeTheme.danger,
-        ),
       ),
-      onDismissed: (_) => _delete(context),
+      onDismissed: (_) => _deleteWithUndo(context, controller, list, item),
       child: tappable,
+    );
+  }
+}
+
+/// The red delete affordance revealed under a row swiped either way.
+class _DeleteSwipeBackground extends StatelessWidget {
+  final Alignment alignment;
+
+  const _DeleteSwipeBackground({required this.alignment});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      alignment: alignment,
+      padding: const EdgeInsets.symmetric(
+        horizontal: LuminousHomeTheme.screenGutter,
+      ),
+      color: LuminousHomeTheme.danger.withValues(alpha: 0.24),
+      child: const Icon(
+        Icons.delete_outline_rounded,
+        color: LuminousHomeTheme.danger,
+      ),
     );
   }
 }
@@ -722,7 +969,7 @@ class _AisleHeaderDelegate extends SliverPersistentHeaderDelegate {
       padding: const EdgeInsets.symmetric(
         horizontal: LuminousHomeTheme.screenGutter,
       ),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: LuminousHomeTheme.glassOpaqueStrong,
         border: Border(bottom: BorderSide(color: LuminousHomeTheme.hairline)),
       ),

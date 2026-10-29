@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/launcher_haptics.dart';
 import '../../../ui/theme/luminous_home_theme.dart';
 import '../models/measurement_converter.dart';
 import '../models/quantity.dart';
@@ -16,8 +17,10 @@ import 'unit_converter_sheet.dart';
 /// It reuses [UnitChipRow] so the unit picker behaves the same as the quick-add
 /// capsule. Aisle, including Frozen, is the single source of truth through the
 /// Aisle dropdown; there is no separate frozen flag. Nothing is written
-/// directly: saving calls [ShoppingController.updateItem], which keeps the
-/// debounced store save the single source of truth.
+/// directly: indentation, like every other field, is staged until Save, which
+/// calls [ShoppingController.updateItem] so the debounced store save stays the
+/// single source of truth. Delete removes the row with the same undo snack bar
+/// a swipe offers.
 class ItemEditSheet extends StatefulWidget {
   final ShoppingController controller;
   final ShoppingList list;
@@ -51,6 +54,10 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
   late String _aisle = widget.item.aisle;
   late String? _parentId = widget.item.parentId;
 
+  /// Where Indent would put the row, computed once from the saved list.
+  late final String? _indentTarget =
+      widget.controller.indentTargetFor(widget.list.id, widget.item.id);
+
   @override
   void dispose() {
     _name.dispose();
@@ -59,10 +66,21 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
     super.dispose();
   }
 
+  /// Whether the amount field holds text that is not a usable amount.
+  bool get _amountInvalid {
+    final String text = _amount.text.trim();
+    if (text.isEmpty) return false;
+    final double? amount = MeasurementConverter.parseAmount(text);
+    return amount == null || !amount.isFinite || amount <= 0;
+  }
+
+  /// The edited quantity. An empty amount removes the quantity, even with a
+  /// unit selected.
   Quantity? get _quantity {
+    if (_amountInvalid) return null;
     final double? amount = MeasurementConverter.parseAmount(_amount.text);
-    if (amount == null && _unit == null) return null;
-    return Quantity(amount ?? 1, _unit ?? Unit.piece);
+    if (amount == null) return null;
+    return Quantity(amount, _unit ?? Unit.piece);
   }
 
   /// Whether the unit converter can meaningfully preload this quantity.
@@ -77,21 +95,27 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
     showUnitConverterSheet(context, initial: quantity);
   }
 
-  void _indent() {
-    widget.controller.indentItem(widget.list.id, widget.item.id);
-    final ShoppingItem? updated =
-        widget.controller.listById(widget.list.id)?.itemById(widget.item.id);
-    setState(() => _parentId = updated?.parentId);
+  void _selectUnit(Unit? unit) {
+    setState(() {
+      _unit = unit;
+      // Picking a unit for an item with no amount means "one of these".
+      if (unit != null && _amount.text.trim().isEmpty) _amount.text = '1';
+    });
   }
 
-  void _outdent() {
-    widget.controller.outdentItem(widget.list.id, widget.item.id);
-    setState(() => _parentId = null);
-  }
+  bool get _canIndent => _parentId == null && _indentTarget != null;
+
+  bool get _canOutdent => _parentId != null;
+
+  void _indent() => setState(() => _parentId = _indentTarget);
+
+  void _outdent() => setState(() => _parentId = null);
+
+  bool get _canSave => _name.text.trim().isNotEmpty && !_amountInvalid;
 
   void _save() {
+    if (!_canSave) return;
     final String name = _name.text.trim();
-    if (name.isEmpty) return;
     final String note = _note.text.trim();
     widget.controller.updateItem(
       widget.list.id,
@@ -104,7 +128,27 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
         note: note.isEmpty ? null : note,
         sourceRecipeId: widget.item.sourceRecipeId,
         parentId: _parentId,
+        // A typed amount replaces the imported wording rather than hiding it.
+        amountText: _quantity == null ? widget.item.amountText : null,
+        costCents: widget.item.costCents,
+        days: widget.item.days,
       ),
+    );
+    Navigator.of(context).maybePop();
+  }
+
+  void _delete() {
+    final String listId = widget.list.id;
+    final ShoppingController controller = widget.controller;
+    final RemovedItem? removed = controller.removeItem(listId, widget.item.id);
+    if (removed == null) return;
+    LauncherHaptics.heavyClick();
+    // Shown before the pop so the sheet's context still reaches the messenger.
+    showGrocerySnackBar(
+      context,
+      'Removed ${widget.item.name}',
+      actionLabel: 'Undo',
+      onAction: () => controller.restoreItems(listId, <RemovedItem>[removed]),
     );
     Navigator.of(context).maybePop();
   }
@@ -159,6 +203,7 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
                 label: 'Name',
                 hint: 'Item name',
                 textInputAction: TextInputAction.next,
+                onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: LuminousHomeTheme.space12),
               Row(
@@ -170,10 +215,14 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
                       key: const ValueKey<String>('edit_item_amount'),
                       controller: _amount,
                       label: 'Amount',
-                      hint: '1',
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
+                      // An imported amount (`4 medium bulbs`) stays visible
+                      // until a structured one is typed over it.
+                      hint: widget.item.amountText ?? '1',
+                      // Text, not a number pad, so `1 1/2` and `½` can be
+                      // typed.
+                      keyboardType: TextInputType.text,
+                      errorText: _amountInvalid ? 'Not a number' : null,
+                      onChanged: (_) => setState(() {}),
                     ),
                   ),
                   const SizedBox(width: LuminousHomeTheme.space12),
@@ -211,7 +260,7 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
               UnitChipRow(
                 selected: _unit,
                 units: groceryPickerUnits,
-                onUnitSelected: (Unit? unit) => setState(() => _unit = unit),
+                onUnitSelected: _selectUnit,
               ),
               if (_isConvertible) ...<Widget>[
                 const SizedBox(height: LuminousHomeTheme.space12),
@@ -239,12 +288,7 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
                       key: const ValueKey<String>('item_indent'),
                       icon: Icons.subdirectory_arrow_right_rounded,
                       label: 'Indent',
-                      onTap: widget.controller.canIndent(
-                        widget.list.id,
-                        widget.item.id,
-                      )
-                          ? _indent
-                          : null,
+                      onTap: _canIndent ? _indent : null,
                     ),
                   ),
                   const SizedBox(width: LuminousHomeTheme.space12),
@@ -253,21 +297,30 @@ class _ItemEditSheetState extends State<ItemEditSheet> {
                       key: const ValueKey<String>('item_outdent'),
                       icon: Icons.subdirectory_arrow_left_rounded,
                       label: 'Unindent',
-                      onTap: widget.controller.canOutdent(
-                        widget.list.id,
-                        widget.item.id,
-                      )
-                          ? _outdent
-                          : null,
+                      onTap: _canOutdent ? _outdent : null,
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: LuminousHomeTheme.space16),
-              GroceryActionButton(
-                icon: Icons.check_rounded,
-                label: 'Save item',
-                onTap: _save,
+              Row(
+                children: <Widget>[
+                  GroceryIconButton(
+                    key: const ValueKey<String>('item_delete'),
+                    icon: Icons.delete_outline_rounded,
+                    label: 'Delete item',
+                    color: LuminousHomeTheme.danger,
+                    onTap: _delete,
+                  ),
+                  const SizedBox(width: LuminousHomeTheme.space12),
+                  Expanded(
+                    child: GroceryActionButton(
+                      icon: Icons.check_rounded,
+                      label: 'Save item',
+                      onTap: _canSave ? _save : null,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -302,6 +355,10 @@ class _Field extends StatelessWidget {
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
   final ValueChanged<String>? onSubmitted;
+  final ValueChanged<String>? onChanged;
+
+  /// Inline validation message under the field, or null when valid.
+  final String? errorText;
 
   const _Field({
     super.key,
@@ -311,6 +368,8 @@ class _Field extends StatelessWidget {
     this.keyboardType,
     this.textInputAction,
     this.onSubmitted,
+    this.onChanged,
+    this.errorText,
   });
 
   @override
@@ -331,6 +390,7 @@ class _Field extends StatelessWidget {
           keyboardType: keyboardType,
           textInputAction: textInputAction,
           onSubmitted: onSubmitted,
+          onChanged: onChanged,
           style: LuminousHomeTheme.body.copyWith(
             color: LuminousHomeTheme.textPrimary,
           ),
@@ -339,6 +399,22 @@ class _Field extends StatelessWidget {
             hintText: hint,
             hintStyle: LuminousHomeTheme.body.copyWith(
               color: LuminousHomeTheme.textMuted,
+            ),
+            errorText: errorText,
+            errorStyle: LuminousHomeTheme.caption.copyWith(
+              color: LuminousHomeTheme.danger,
+            ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(
+                LuminousHomeTheme.controlRadius,
+              ),
+              borderSide: const BorderSide(color: LuminousHomeTheme.danger),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(
+                LuminousHomeTheme.controlRadius,
+              ),
+              borderSide: const BorderSide(color: LuminousHomeTheme.danger),
             ),
             isDense: true,
             filled: true,
@@ -351,7 +427,7 @@ class _Field extends StatelessWidget {
               borderRadius: BorderRadius.circular(
                 LuminousHomeTheme.controlRadius,
               ),
-              borderSide: const BorderSide(color: LuminousHomeTheme.hairline),
+              borderSide: BorderSide(color: LuminousHomeTheme.hairline),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(

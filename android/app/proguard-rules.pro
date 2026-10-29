@@ -29,3 +29,9 @@
     public <init>(...);
 }
 -keep,allowobfuscation class com.tom_roush.pdfbox.pdmodel.documentinterchange.** { *; }
+
+# ColumnTextStripper overrides PDFTextStripper's protected writeString,
+# writeWordSeparator, writeLineSeparator and startPage hooks. Keep the pair
+# intact so optimization can never merge or strip an override PDFBox calls.
+-keep class com.launcher.chronofold.mylauncher.ColumnTextStripper { *; }
+-keep class com.tom_roush.pdfbox.text.PDFTextStripper { *; }

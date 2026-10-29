@@ -52,8 +52,10 @@ class Unit {
 
   bool get isImperial => !isMetric;
 
-  /// Name for [amount]: singular for exactly one, plural otherwise.
-  String displayName(double amount) => amount == 1 ? singular : plural;
+  /// Name for [amount]: singular for one or less (`1 cup`, `1/2 cup`), plural
+  /// otherwise. Zero reads as plural (`0 cups`).
+  String displayName(double amount) =>
+      amount > 0 && amount <= 1 ? singular : plural;
 
   // ---------------------------------------------------------------------------
   // Count units
@@ -145,6 +147,19 @@ class Unit {
     aliases: ['bag', 'bags'],
   );
 
+  /// A clove of garlic. Its own packaging-style island: `2 cloves garlic` keeps
+  /// the clove count instead of folding into pieces.
+  static const Unit clove = Unit(
+    symbol: 'clove',
+    singular: 'clove',
+    plural: 'cloves',
+    dimension: Dimension.count,
+    toBase: 1,
+    isMetric: true,
+    convertible: false,
+    aliases: ['clove', 'cloves'],
+  );
+
   // ---------------------------------------------------------------------------
   // Mass units
   // ---------------------------------------------------------------------------
@@ -230,7 +245,7 @@ class Unit {
     dimension: Dimension.volume,
     toBase: 14.7868,
     isMetric: false,
-    aliases: ['tbsp', 'tbsps', 'tbs', 'tablespoon', 'tablespoons'],
+    aliases: ['tbsp', 'tbsps', 'tbs', 'tb', 'tablespoon', 'tablespoons'],
   );
 
   static const Unit cup = Unit(
@@ -293,6 +308,7 @@ class Unit {
     bottle,
     jar,
     bag,
+    clove,
     gram,
     kilogram,
     ounce,

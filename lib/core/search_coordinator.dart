@@ -56,8 +56,11 @@ class SearchCoordinator extends ChangeNotifier {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return;
 
-    await cancel();
+    // Claim the generation before awaiting the cancel, so a search that
+    // started while this one waited supersedes it rather than racing it.
     final generation = ++_generation;
+    await cancel();
+    if (generation != _generation) return;
 
     final provider = activeProvider;
     if (provider == null) {

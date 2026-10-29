@@ -182,6 +182,15 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   late AnimationController _slideController;
   late Animation<double> _slideAnimation;
 
+  /// The curve behind the current [_slideAnimation]. Each unlock/snap-back
+  /// builds a new one, so the previous one is disposed when it is replaced.
+  CurvedAnimation? _slideCurve;
+
+  CurvedAnimation _newSlideCurve(Curve curve) {
+    _slideCurve?.dispose();
+    return _slideCurve = CurvedAnimation(parent: _slideController, curve: curve);
+  }
+
   /// How far the panel has been pulled up, by drag or by the unlock slide.
   ///
   /// A [ValueNotifier] on purpose: the only thing this value moves is a
@@ -363,6 +372,12 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   bool get _sensorSessionAllowed =>
       mounted && !_disposed && !_handedOff && !_handingOffLaunch;
 
+  /// Whether this panel may hold the fingerprint reader at all.
+  ///
+  /// Only a panel that does not stand for a keyguard (the privacy lock) can:
+  /// see [_armFingerprintSensor] for why a keyguard-backed panel never arms.
+  bool get _ownsReader => !widget.reconcileOnMount;
+
   Future<AuthOutcome> _authenticate(String? appName) async {
     final override = widget.authenticate;
     if (override != null) {
@@ -422,6 +437,11 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
           _authPhase = FingerprintPromptPhase.scanning;
         });
       }
+    } else if (!_ownsReader) {
+      // A keyguard-backed panel never arms the reader (see
+      // [_armFingerprintSensor]), so a card here could never be answered.
+      // The launch runs through the platform's single keyguard prompt.
+      _useCredentialFallback();
     } else if (_deviceSecure == false) {
       // No credential protects this device, so no fingerprint can ever be
       // enrolled to answer the panel's reader — asking for one would be the
@@ -597,7 +617,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
     _slideAnimation =
         Tween<double>(begin: 0.0, end: 1.0).animate(
-          CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
+          _newSlideCurve(Curves.easeOutCubic),
         )..addListener(() {
           // The slide moves one transform; pushing it through the notifier keeps
           // ~330 lines of lock screen from rebuilding per animation frame.
@@ -927,6 +947,18 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                   debugPrint('Fingerprint stream error: $error');
                 },
               );
+
+      // A panel that stands for the keyguard never holds the reader. While
+      // the keyguard is locked it owns the sensor and the native side refuses
+      // every arm; once it has unlocked, this panel is about to reconcile
+      // away. An arm can therefore only succeed in the window between the
+      // platform's unlock and that reconcile — and on ColorOS 16 the
+      // "silent" FingerprintManager session is drawn as a system
+      // BiometricPrompt, so that arm was a second fingerprint dialog over a
+      // device the user had just unlocked (measured on the CPH2765: keyguard
+      // match, then our prompt ~50-260 ms later). The power key still
+      // unlocks through the keyguard, so the hint above stays honest.
+      if (!_ownsReader) return;
 
       // Only the native side knows whether the panel is really on, and whether
       // this activity is the one in front. It refuses to arm in either case
@@ -1459,7 +1491,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
 
     _slideAnimation = Tween<double>(begin: _panelOffset.value, end: 900.0)
         .animate(
-          CurvedAnimation(parent: _slideController, curve: Curves.easeInCubic),
+          _newSlideCurve(Curves.easeInCubic),
         );
     await _slideController.forward(from: 0.0);
     if (!mounted) return;
@@ -1474,7 +1506,7 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
   void _snapBack() {
     _slideAnimation = Tween<double>(begin: _panelOffset.value, end: 0.0)
         .animate(
-          CurvedAnimation(parent: _slideController, curve: Curves.easeOutBack),
+          _newSlideCurve(Curves.easeOutBack),
         );
     _slideController.forward(from: 0.0).then((_) {
       _panelOffset.value = 0.0;
@@ -1589,9 +1621,18 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
     _authResolveTimer?.cancel();
     _fingerprintSubscription?.cancel();
     _mediaSubscription?.cancel();
-    LauncherBridge.setScreenOnListener(null);
-    LauncherBridge.setUserPresentListener(null);
+    // Owner-checked: a newer panel may already have installed its own.
+    LauncherBridge.clearScreenOnListener(_onScreenOn);
+    LauncherBridge.clearUserPresentListener(_onUserPresent);
     LauncherBridge.stopFingerprintScan();
+    // A pending prompt must not leave its awaiter hanging forever. Completed
+    // directly rather than through [_resolveAuth], which would setState.
+    final pendingAuth = _authCompleter;
+    _authCompleter = null;
+    if (pendingAuth != null && !pendingAuth.isCompleted) {
+      pendingAuth.complete(AuthOutcome.denied);
+    }
+    _slideCurve?.dispose();
     _physicsTicker.dispose();
     _slideController.dispose();
     super.dispose();
@@ -1799,8 +1840,10 @@ class _CosmicLockScreenState extends State<CosmicLockScreen>
                                 fontSize: isTabletop
                                     ? 52
                                     : (isUnfolded ? 76 : 64),
-                                fontWeight: FontWeight.w200,
-                                letterSpacing: -2.0,
+                                // Regular weight, like the ColorOS clock;
+                                // the old hairline cut read as foreign.
+                                fontWeight: FontWeight.w400,
+                                letterSpacing: -1.5,
                                 height: 1.0,
                                 fontFeatures: const [
                                   FontFeature.tabularFigures(),

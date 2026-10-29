@@ -51,6 +51,7 @@ class _CometSearchSurfaceState extends State<CometSearchSurface> {
     _probeHandoff();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _focusNode.requestFocus();
       if ((widget.initialQuery ?? '').trim().isNotEmpty) {
         widget.coordinator.search(widget.initialQuery!);

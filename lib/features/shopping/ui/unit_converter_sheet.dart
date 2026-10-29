@@ -474,7 +474,7 @@ class _ValueField extends StatelessWidget {
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(LuminousHomeTheme.controlRadius),
-          borderSide: const BorderSide(color: LuminousHomeTheme.hairline),
+          borderSide: BorderSide(color: LuminousHomeTheme.hairline),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(LuminousHomeTheme.controlRadius),

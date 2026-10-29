@@ -96,7 +96,9 @@ void main() {
       expect(Unit.cup.displayName(1), 'cup');
       expect(Unit.cup.displayName(2), 'cups');
       expect(Unit.gram.displayName(1), 'gram');
-      expect(Unit.gram.displayName(0.5), 'grams');
+      // One or less reads singular ("1/2 cup"); zero stays plural.
+      expect(Unit.gram.displayName(0.5), 'gram');
+      expect(Unit.cup.displayName(0), 'cups');
       expect(Unit.box.displayName(3), 'boxes');
     });
   });

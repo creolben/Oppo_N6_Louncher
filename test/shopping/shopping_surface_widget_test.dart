@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' show CheckedState;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -146,7 +147,8 @@ void main() {
           findsOneWidget);
       expect(find.byType(ListPane), findsOneWidget);
       expect(find.byType(QuickAddCapsule), findsOneWidget);
-      expect(find.byType(RecipePane), findsOneWidget);
+      // A saved recipe only takes the lower half once the user picks it.
+      expect(find.byType(RecipePane), findsNothing);
 
       // No crease is reported in the test host, so the split is the midpoint.
       final Rect tabletop =
@@ -210,21 +212,36 @@ void main() {
       await tester.pump();
 
       expect(find.text('+ 1 checked item'), findsNothing);
+      // The checked state is a semantics flag, not part of the label.
+      expect(find.bySemanticsLabel('2 kg chicken'), findsOneWidget);
       expect(
-        find.bySemanticsLabel('2 kg chicken, unchecked'),
-        findsOneWidget,
+        tester
+            .getSemantics(find.bySemanticsLabel('2 kg chicken'))
+            .getSemanticsData()
+            .flagsCollection
+            .isChecked,
+        CheckedState.isFalse,
       );
 
       await tester.tap(find.text('chicken'));
       await tester.pump();
-      expect(controller.activeList!.items.single.checked, isTrue);
-
-      await tester.pump(const Duration(milliseconds: 240));
-      expect(find.text('+ 1 checked item'), findsOneWidget);
+      // The row strikes through in place before it moves into Done.
+      expect(controller.activeList!.items.single.checked, isFalse);
+      expect(find.text('+ 1 checked item'), findsNothing);
       expect(
-        find.bySemanticsLabel('2 kg chicken, checked'),
-        findsOneWidget,
+        tester
+            .getSemantics(find.bySemanticsLabel('2 kg chicken'))
+            .getSemanticsData()
+            .flagsCollection
+            .isChecked,
+        CheckedState.isTrue,
       );
+
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.pump(const Duration(milliseconds: 240));
+      expect(controller.activeList!.items.single.checked, isTrue);
+      expect(find.text('+ 1 checked item'), findsOneWidget);
+      expect(find.bySemanticsLabel('2 kg chicken'), findsOneWidget);
       semantics.dispose();
       await flushController(tester);
       expect(tester.takeException(), isNull);
@@ -252,17 +269,17 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey<String>('recipe_tile_r1')));
       await tester.pump();
-      expect(find.text('3 pieces'), findsOneWidget);
+      expect(find.text('3'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Increase servings'));
       await tester.pump();
       expect(controller.recipeById('r1')!.targetServings, 5);
-      expect(find.text('4 pieces'), findsOneWidget);
+      expect(find.text('4'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Decrease servings'));
       await tester.pump();
       expect(controller.recipeById('r1')!.targetServings, 4);
-      expect(find.text('3 pieces'), findsOneWidget);
+      expect(find.text('3'), findsOneWidget);
 
       await flushController(tester);
       expect(tester.takeException(), isNull);
@@ -415,7 +432,7 @@ void main() {
 
       await tester.enterText(find.byType(TextField).first, '2 chicken');
       await tester.pump();
-      expect(find.text('2 pieces chicken · Meat & Fish'), findsOneWidget);
+      expect(find.text('2 chicken · Meat & Fish'), findsOneWidget);
 
       // A count amount shows the count chips; kg is behind "More".
       final Finder more = find.byKey(const ValueKey<String>('unit_chip_more'));
@@ -489,14 +506,14 @@ void main() {
 
       await tester.enterText(find.byType(TextField).first, '2 chicken');
       await tester.pump();
-      expect(find.text('2 pieces chicken · Meat & Fish'), findsOneWidget);
+      expect(find.text('2 chicken · Meat & Fish'), findsOneWidget);
 
       final Finder frozen =
           find.byKey(const ValueKey<String>('frozen_toggle'));
       expect(frozen, findsOneWidget);
       await tester.tap(frozen);
       await tester.pump();
-      expect(find.text('2 pieces chicken · Frozen'), findsOneWidget);
+      expect(find.text('2 chicken · Frozen'), findsOneWidget);
 
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
@@ -550,12 +567,12 @@ void main() {
       expect(find.text('16 ounces'), findsOneWidget);
       expect(find.text('≈ 450 g'), findsOneWidget);
       expect(
-        find.bySemanticsLabel('16 ounces ≈ 450 g butter, unchecked'),
+        find.bySemanticsLabel('16 ounces ≈ 450 g butter'),
         findsOneWidget,
       );
 
       await tester.tap(find.text('16 ounces').first);
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
 
       expect(controller.activeList!.items.single.checked, isTrue);
       expect(find.byType(UnitConverterSheet), findsNothing);
@@ -650,11 +667,15 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(indent);
       await tester.pump();
-      expect(controller.activeList!.itemById('c')!.parentId, 'p');
+      // Indent is staged with the other fields until Save.
+      expect(controller.activeList!.itemById('c')!.parentId, isNull);
 
-      // Close the sheet and confirm the row is now indented on the list.
-      await tester.tap(find.byTooltip('Close edit item'));
+      final Finder save = find.text('Save item');
+      await tester.ensureVisible(save);
       await tester.pumpAndSettle();
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(controller.activeList!.itemById('c')!.parentId, 'p');
 
       final double parentX = tester.getTopLeft(find.text('apple')).dx;
       final double childX = tester.getTopLeft(find.text('banana')).dx;
@@ -730,7 +751,7 @@ void main() {
       await tester.pump();
 
       final SemanticsNode node = tester.getSemantics(
-        find.bySemanticsLabel('apple, unchecked'),
+        find.bySemanticsLabel('apple'),
       );
       final SemanticsData data = node.getSemanticsData();
       final int actionId = data.customSemanticsActionIds!.firstWhere(
@@ -965,9 +986,284 @@ void main() {
 
       expect(find.text('Store mode'), findsNothing);
       expect(controller.storeMode, isFalse);
+      // The dismissal is persisted, so the hint stays gone on the next open.
+      expect(controller.storeModeHintDismissed, isTrue);
 
       await flushController(tester);
       expect(tester.takeException(), isNull);
     });
   });
+
+  group('Review fixes', () {
+    testWidgets('importing a recipe opens it instead of adding to the list',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      controller.createList('Groceries');
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+
+      final ParsedDocument document = const DocumentParser().parseDocument(
+        'Pancakes\nServes 2\nIngredients\n1 cup flour\n2 eggs\nMethod\nMix.',
+      );
+      controller.importParsedDocument(document, const <int>[0, 1]);
+      await tester.pump();
+
+      expect(controller.activeList!.items, isEmpty);
+      expect(find.byType(RecipePane), findsOneWidget);
+      // Shown as entered, with the metric approximation muted beside it.
+      expect(find.text('1 cup'), findsOneWidget);
+      expect(find.text('≈ 240 ml'), findsOneWidget);
+
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the edit sheet parses mixed numbers and blocks bad amounts',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      final ShoppingList list = controller.createList('Groceries');
+      controller.addItem(
+        list.id,
+        const ShoppingItem(
+          id: 'f',
+          name: 'flour',
+          aisle: 'Pantry',
+          quantity: Quantity(1, Unit.cup),
+        ),
+      );
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+      await tester.longPress(find.text('flour'));
+      await tester.pumpAndSettle();
+
+      final Finder amount =
+          find.byKey(const ValueKey<String>('edit_item_amount'));
+      await tester.enterText(
+        find.descendant(of: amount, matching: find.byType(TextField)),
+        'abc',
+      );
+      await tester.pump();
+      expect(find.text('Not a number'), findsOneWidget);
+      final Finder save = find.text('Save item');
+      await tester.ensureVisible(save);
+      await tester.pumpAndSettle();
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      // Save is blocked: the sheet is still open and nothing changed.
+      expect(find.text('Edit item'), findsOneWidget);
+      expect(
+        controller.activeList!.itemById('f')!.quantity,
+        const Quantity(1, Unit.cup),
+      );
+
+      await tester.enterText(
+        find.descendant(of: amount, matching: find.byType(TextField)),
+        '1 1/2',
+      );
+      await tester.pump();
+      expect(find.text('Not a number'), findsNothing);
+      await tester.ensureVisible(save);
+      await tester.pumpAndSettle();
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(
+        controller.activeList!.itemById('f')!.quantity,
+        const Quantity(1.5, Unit.cup),
+      );
+
+      // Clearing the amount removes the quantity even with a unit selected.
+      await tester.longPress(find.text('flour'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.descendant(of: amount, matching: find.byType(TextField)),
+        '',
+      );
+      await tester.pump();
+      await tester.ensureVisible(save);
+      await tester.pumpAndSettle();
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(controller.activeList!.itemById('f')!.quantity, isNull);
+
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the edit sheet deletes with undo', (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      final ShoppingList list = controller.createList('Groceries');
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'm', name: 'milk', aisle: 'Dairy & Eggs'),
+      );
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+      await tester.longPress(find.text('milk'));
+      await tester.pumpAndSettle();
+
+      final Finder delete = find.byKey(const ValueKey<String>('item_delete'));
+      await tester.ensureVisible(delete);
+      await tester.pumpAndSettle();
+      await tester.tap(delete);
+      await tester.pumpAndSettle();
+      expect(controller.activeList!.items, isEmpty);
+
+      // The undo floats above the quick-add capsule.
+      final SnackBar bar = tester.widget<SnackBar>(find.byType(SnackBar));
+      expect(bar.behavior, SnackBarBehavior.floating);
+      expect(
+        tester.getRect(find.text('Removed milk')).bottom,
+        lessThanOrEqualTo(tester.getRect(find.byType(QuickAddCapsule)).top),
+      );
+
+      await tester.tap(find.text('Undo'));
+      await tester.pump();
+      expect(controller.activeList!.items.single.id, 'm');
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('rows offer a Delete semantics action and swipe both ways',
+        (WidgetTester tester) async {
+      size(tester, const Size(360, 800));
+      final ShoppingList list = controller.createList('Groceries');
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'a', name: 'apple', aisle: 'Produce'),
+      );
+      controller.addItem(
+        list.id,
+        const ShoppingItem(id: 'b', name: 'banana', aisle: 'Produce'),
+      );
+      await flushController(tester);
+
+      final SemanticsHandle semantics = tester.ensureSemantics();
+      await tester.pumpWidget(host(posture(DevicePosture.folded)));
+      await tester.pump();
+
+      final SemanticsNode node =
+          tester.getSemantics(find.bySemanticsLabel('apple'));
+      final int actionId =
+          node.getSemanticsData().customSemanticsActionIds!.firstWhere(
+                (int id) =>
+                    CustomSemanticsAction.getAction(id)?.label == 'Delete',
+              );
+      tester.binding.pipelineOwner.semanticsOwner!.performAction(
+        node.id,
+        SemanticsAction.customAction,
+        actionId,
+      );
+      await tester.pump();
+      expect(controller.activeList!.itemById('a'), isNull);
+
+      // Swiping start-to-end deletes too.
+      await tester.drag(find.text('banana'), const Offset(400, 0));
+      await tester.pumpAndSettle();
+      expect(controller.activeList!.itemById('b'), isNull);
+
+      semantics.dispose();
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('New list switches to the created list',
+        (WidgetTester tester) async {
+      size(tester, const Size(900, 1000));
+      controller.createList('Groceries');
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.flat)));
+      await tester.pump();
+
+      await tester.tap(find.text('New list'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'Hardware');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+
+      expect(controller.lists, hasLength(2));
+      expect(controller.activeList!.name, 'Hardware');
+
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a recipe can be deleted from its tile and restored',
+        (WidgetTester tester) async {
+      size(tester, const Size(900, 1000));
+      controller.createList('Groceries');
+      controller.addRecipe(
+        const Recipe(
+          id: 'r1',
+          title: 'Pancakes',
+          baseServings: 2,
+          targetServings: 2,
+        ),
+      );
+      await flushController(tester);
+
+      await tester.pumpWidget(host(posture(DevicePosture.flat)));
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('Recipe options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      expect(controller.recipes, isEmpty);
+
+      await tester.tap(find.text('Undo'));
+      await tester.pump();
+      expect(controller.recipeById('r1'), isNotNull);
+
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the tabletop split follows the hinge in window coordinates',
+        (WidgetTester tester) async {
+      size(tester, const Size(700, 1000));
+      controller.createList('Groceries');
+      controller.quickAdd('2 kg chicken');
+      await flushController(tester);
+
+      final _CreaseFoldable foldable =
+          _CreaseFoldable(const Rect.fromLTWH(0, 500, 700, 0));
+      addTearDown(foldable.dispose);
+      foldable.setPosture(DevicePosture.tabletop);
+
+      await tester.pumpWidget(host(foldable));
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        tester.getRect(find.byType(ListPane)).bottom,
+        closeTo(500, 1),
+      );
+      await flushController(tester);
+      expect(tester.takeException(), isNull);
+    });
+  });
+}
+
+/// A foldable that reports a fixed hinge, in window coordinates.
+class _CreaseFoldable extends FoldableController {
+  _CreaseFoldable(this._crease);
+
+  final Rect _crease;
+
+  @override
+  Rect? get creaseBounds => _crease;
 }

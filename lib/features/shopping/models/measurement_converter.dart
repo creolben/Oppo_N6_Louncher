@@ -1,3 +1,4 @@
+import '../parsing/ingredient_parser.dart';
 import 'quantity.dart';
 import 'temperature.dart' as temp;
 import 'unit.dart';
@@ -94,11 +95,14 @@ abstract final class MeasurementConverter {
   ) => temp.convertTemperature(value, from, to);
 
   /// Parses a typed amount, accepting either a dot or a comma as the decimal
-  /// separator. Returns null for an empty or non-numeric string.
+  /// separator, plus the recipe forms the ingredient parser understands:
+  /// fractions (`1/2`), mixed numbers (`1 1/2`) and unicode fractions (`½`,
+  /// `1½`). Returns null for an empty or non-numeric string.
   static double? parseAmount(String text) {
     final String trimmed = text.trim();
     if (trimmed.isEmpty) return null;
-    return double.tryParse(trimmed.replaceAll(',', '.'));
+    return double.tryParse(trimmed.replaceAll(',', '.')) ??
+        IngredientParser.parseAmount(trimmed);
   }
 
   /// Formats [value] with at most three decimals, trimming trailing zeros.

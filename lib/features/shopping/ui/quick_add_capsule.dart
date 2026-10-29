@@ -164,7 +164,6 @@ class _QuickAddCapsuleState extends State<QuickAddCapsule> {
       _frozen = false;
       _unitsExpanded = false;
     });
-    _focus.requestFocus();
   }
 
   @override
@@ -253,7 +252,10 @@ class _QuickAddCapsuleState extends State<QuickAddCapsule> {
                       focusNode: _focus,
                       textInputAction: TextInputAction.done,
                       onChanged: (_) => setState(() {}),
-                      onSubmitted: (_) => _submit(),
+                      // onEditingComplete replaces the default "done"
+                      // handling, which unfocuses; keeping focus stops the
+                      // keyboard dropping and reopening on every add.
+                      onEditingComplete: _submit,
                       style: LuminousHomeTheme.body.copyWith(
                         color: LuminousHomeTheme.textPrimary,
                       ),

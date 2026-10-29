@@ -173,8 +173,11 @@ class _IngredientRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String quantity =
-        ingredient.quantity?.format(preferImperial: preferImperial) ?? '';
+    // As entered, like a list row, with the other system as a muted aside;
+    // converting outright produced amounts like `236.59 ml`.
+    final String quantity = ingredient.quantity?.formatAsEntered() ?? '';
+    final String? approx =
+        ingredient.quantity?.approxIn(preferImperial: preferImperial);
     return Container(
       constraints: const BoxConstraints(
         minHeight: LuminousHomeTheme.minimumTouchTarget,
@@ -213,11 +216,27 @@ class _IngredientRow extends StatelessWidget {
           ),
           if (quantity.isNotEmpty) ...<Widget>[
             const SizedBox(width: LuminousHomeTheme.space12),
-            Text(
-              quantity,
-              style: LuminousHomeTheme.body.copyWith(
-                color: LuminousHomeTheme.groceryAccent,
-              ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  quantity,
+                  style: LuminousHomeTheme.body.copyWith(
+                    color: LuminousHomeTheme.groceryAccent,
+                  ),
+                ),
+                if (approx != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      approx,
+                      style: LuminousHomeTheme.caption.copyWith(
+                        color: LuminousHomeTheme.textMuted,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ],
         ],

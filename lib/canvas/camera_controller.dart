@@ -11,6 +11,9 @@ class CameraController extends ChangeNotifier {
   static const double minZoom = 0.45;
   static const double maxZoom = 2.4;
 
+  /// How far the camera may pan from centre, in world units at zoom 1.
+  static const double maxPanWorld = 750.0;
+
   // Kinetic Physics
   Ticker? _ticker;
   FrictionSimulation? _panSimulationX;
@@ -24,16 +27,35 @@ class CameraController extends ChangeNotifier {
 
   // Fly-To animation
   AnimationController? _flyController;
+  CurvedAnimation? _flyCurve;
   Animation<Offset>? _flyOffsetAnim;
   Animation<double>? _flyZoomAnim;
+
+  /// The ticker provider the ticker and fly controller were created from.
+  ///
+  /// During a posture transition two canvases can be mounted at once, and the
+  /// incoming one re-binds the camera before the outgoing one is disposed. The
+  /// outgoing canvas must only tear down a binding that is still its own.
+  TickerProvider? _vsync;
 
   Offset get translation => _translation;
   double get zoom => _zoom;
   Size get viewportSize => _viewportSize;
 
+  /// Whether the camera is moving on its own: kinetic inertia, the zoom
+  /// snap-back spring or a [flyTo] in flight.
+  ///
+  /// The canvas keeps its render loop awake while this is true, so motion the
+  /// camera started is never cut short by the canvas going idle.
+  bool get isAnimating =>
+      (_ticker?.isActive ?? false) || (_flyController?.isAnimating ?? false);
+
+  /// Whether the camera's ticker and fly controller were created from [vsync].
+  bool isBoundTo(TickerProvider vsync) => identical(_vsync, vsync);
+
   void init(TickerProvider vsync) {
-    _ticker?.dispose();
-    _flyController?.dispose();
+    _releaseTickers();
+    _vsync = vsync;
     _ticker = vsync.createTicker(_onTick);
     _flyController = AnimationController(
       vsync: vsync,
@@ -63,10 +85,24 @@ class CameraController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// How far the camera is panned from centre on each axis, as a fraction of
+  /// its pan limit: each component is -1..1 and zero at rest.
+  ///
+  /// The launcher reports this to the system wallpaper so it parallaxes with
+  /// the galaxy the way it does with a paged home screen.
+  Offset get panFraction {
+    if (_viewportSize == Size.zero || _zoom <= 0) return Offset.zero;
+    final double maxPan = maxPanWorld * _zoom;
+    return Offset(
+      ((_translation.dx - _viewportSize.width / 2) / maxPan).clamp(-1.0, 1.0),
+      ((_translation.dy - _viewportSize.height / 2) / maxPan).clamp(-1.0, 1.0),
+    );
+  }
+
   Offset _clampTranslation(Offset t) {
     if (_viewportSize == Size.zero) return t;
-    // Allow panning up to 750px from center in world space
-    final double maxPan = 750.0 * _zoom;
+    // Allow panning up to maxPanWorld from center in world space
+    final double maxPan = maxPanWorld * _zoom;
     final double cx = _viewportSize.width / 2;
     final double cy = _viewportSize.height / 2;
     return Offset(
@@ -206,8 +242,19 @@ class CameraController extends ChangeNotifier {
       _viewportSize.height / 2 - (worldTarget.dy * targetZoom),
     ));
 
-    final curve = CurvedAnimation(
-      parent: _flyController!,
+    final flyController = _flyController;
+    if (flyController == null) {
+      // No canvas is bound (folded cover, or between postures): there is no
+      // vsync to animate on, so the camera settles on the target directly.
+      _translation = targetTranslation;
+      _zoom = targetZoom;
+      notifyListeners();
+      return;
+    }
+
+    _flyCurve?.dispose();
+    final curve = _flyCurve = CurvedAnimation(
+      parent: flyController,
       curve: Curves.easeOutCubic,
     );
 
@@ -221,17 +268,40 @@ class CameraController extends ChangeNotifier {
       end: targetZoom,
     ).animate(curve);
 
-    _flyController?.forward(from: 0.0);
+    flyController.forward(from: 0.0);
   }
 
   void resetView() {
     flyTo(Offset.zero, targetZoom: 1.0);
   }
 
+  /// Releases the ticker and fly controller created from [vsync], if the camera
+  /// is still bound to it.
+  ///
+  /// Called by the owning canvas on dispose so a later [flyTo] cannot drive a
+  /// controller whose ticker provider is gone. A no-op when another canvas has
+  /// already re-bound the camera. The next [init] re-creates both.
+  void detach(TickerProvider vsync) {
+    if (!isBoundTo(vsync)) return;
+    _stopPhysics();
+    _releaseTickers();
+  }
+
+  void _releaseTickers() {
+    _ticker?.dispose();
+    _ticker = null;
+    _flyCurve?.dispose();
+    _flyCurve = null;
+    _flyOffsetAnim = null;
+    _flyZoomAnim = null;
+    _flyController?.dispose();
+    _flyController = null;
+    _vsync = null;
+  }
+
   @override
   void dispose() {
-    _ticker?.dispose();
-    _flyController?.dispose();
+    _releaseTickers();
     super.dispose();
   }
 }

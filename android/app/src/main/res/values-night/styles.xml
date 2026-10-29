@@ -16,4 +16,14 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+    <!-- Wallpaper-backed HOME window; identical in both modes because the
+         wallpaper, not a theme colour, is the backdrop. See values/styles.xml. -->
+    <style name="HomeLaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">@color/cosmic_black</item>
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+    <style name="HomeTheme" parent="HomeLaunchTheme" />
 </resources>

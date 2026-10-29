@@ -12,7 +12,7 @@ import '../parsing/document_parser.dart';
 import '../parsing/pdf_text_import.dart';
 import '../shopping_controller.dart';
 import 'grocery_chrome.dart';
-import 'import_review_sheet.dart';
+import 'menu_kit_sheet.dart';
 import 'list_pane.dart';
 import 'lists_pane.dart';
 import 'quick_add_capsule.dart';
@@ -54,14 +54,22 @@ class ShoppingSurface extends StatefulWidget {
   State<ShoppingSurface> createState() => _ShoppingSurfaceState();
 }
 
+/// Height the top capsule takes above the body: 12 + 50 + 8.
+const double _capsuleExtent = 70;
+
 class _ShoppingSurfaceState extends State<ShoppingSurface> {
   String? _selectedRecipeId;
 
-  /// Whether the folded-posture store-mode suggestion has been dismissed.
-  bool _storeModeHintDismissed = false;
-
   /// Whether this surface currently holds the platform keep-screen-on flag.
   bool _keepScreenOnActive = false;
+
+  /// Wraps the tabletop body so its window offset can be measured; the hinge
+  /// is reported in window coordinates.
+  final GlobalKey _tabletopBodyKey = GlobalKey();
+
+  /// The tabletop body's measured top in window coordinates, or null before
+  /// the first measurement.
+  double? _tabletopBodyTop;
 
   Recipe? get _selectedRecipe {
     final String? id = _selectedRecipeId;
@@ -74,9 +82,23 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
     super.initState();
     widget.controller.addListener(_onControllerChanged);
     _syncKeepScreenOn();
+    _selectedRecipeId =
+        widget.controller.takePendingRecipe() ?? _selectedRecipeId;
   }
 
-  void _onControllerChanged() => _syncKeepScreenOn();
+  void _onControllerChanged() {
+    _syncKeepScreenOn();
+    _openPendingRecipe();
+  }
+
+  /// Opens a recipe an import just saved, so the user scales it before adding
+  /// it to a list. Works for every import path, including the shared-PDF one
+  /// that runs outside this surface.
+  void _openPendingRecipe() {
+    if (widget.controller.pendingRecipeId == null || !mounted) return;
+    final String? id = widget.controller.takePendingRecipe();
+    setState(() => _selectedRecipeId = id);
+  }
 
   /// Requests or releases the keep-screen-on flag so it tracks store mode.
   void _syncKeepScreenOn() {
@@ -100,7 +122,7 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
   /// Whether the cover-display store-mode hint should be offered right now.
   bool get _showStoreHint =>
       !widget.controller.storeMode &&
-      !_storeModeHintDismissed &&
+      !widget.controller.storeModeHintDismissed &&
       (widget.foldable.isFolded || widget.foldable.isOnCoverDisplay);
 
   /// Wraps a list view with the optional store-mode hint and (when asked) the
@@ -112,7 +134,7 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
         if (_showStoreHint)
           _StoreModeHint(
             onEnable: () => widget.controller.setStoreMode(true),
-            onDismiss: () => setState(() => _storeModeHintDismissed = true),
+            onDismiss: widget.controller.dismissStoreModeHint,
           ),
         Expanded(child: listView),
         if (showQuickAdd)
@@ -175,11 +197,10 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
       showGrocerySnackBar(context, 'No list items found in the clipboard');
       return;
     }
-    await showImportReviewSheet(
+    await reviewImportedDocument(
       context,
+      controller: widget.controller,
       document: document,
-      onConfirm: (List<int> indices) =>
-          widget.controller.importParsedDocument(document, indices),
     );
   }
 
@@ -204,11 +225,10 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
       showGrocerySnackBar(context, 'No list items found in this PDF');
       return;
     }
-    await showImportReviewSheet(
+    await reviewImportedDocument(
       context,
+      controller: widget.controller,
       document: document,
-      onConfirm: (List<int> indices) =>
-          widget.controller.importParsedDocument(document, indices),
     );
   }
 
@@ -302,7 +322,7 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
             onSelectList: (_) => setState(() => _selectedRecipeId = null),
           ),
         ),
-        const VerticalDivider(
+        VerticalDivider(
           width: 1,
           thickness: 1,
           color: LuminousHomeTheme.hairline,
@@ -325,58 +345,81 @@ class _ShoppingSurfaceState extends State<ShoppingSurface> {
     );
   }
 
+  /// Records where the tabletop body sits in the window, rebuilding only when
+  /// it moved, so the split can follow the hinge.
+  void _measureTabletopBody() {
+    if (!mounted) return;
+    final RenderObject? box =
+        _tabletopBodyKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || !box.attached) return;
+    final double top = box.localToGlobal(Offset.zero).dy;
+    final double? previous = _tabletopBodyTop;
+    if (previous != null && (top - previous).abs() < 0.5) return;
+    setState(() => _tabletopBodyTop = top);
+  }
+
   Widget _buildTabletop() {
     final ShoppingList? list = widget.controller.activeList;
-    final Recipe? recipe = _selectedRecipe ??
-        (widget.controller.recipes.isEmpty
-            ? null
-            : widget.controller.recipes.first);
+    // Only a recipe the user picked takes the lower half; otherwise the list
+    // gets it.
+    final Recipe? recipe = _selectedRecipe;
 
     // Split the *body* (below the capsule), not the whole safe area, so the
     // two halves really meet at the middle when the platform reports no hinge
-    // geometry.
+    // geometry. The hinge comes in window coordinates, so it is converted to
+    // the body's own by subtracting the body's window offset: measured after
+    // layout, estimated from the safe area and capsule until then.
+    final double bodyTop = _tabletopBodyTop ??
+        MediaQuery.paddingOf(context).top + _capsuleExtent;
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _measureTabletopBody(),
+    );
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final double total = constraints.maxHeight;
         final double half = total / 2;
         double topHeight = half;
         final Rect? crease = widget.foldable.creaseBounds;
-        if (crease != null && crease.top >= 120 && crease.top <= total - 120) {
-          topHeight = crease.top;
+        const double minPane = 120;
+        if (crease != null && total >= minPane * 2) {
+          topHeight = (crease.top - bodyTop).clamp(minPane, total - minPane);
         }
 
-        return Column(
-          key: const ValueKey<String>('shopping_tabletop'),
-          children: <Widget>[
-            SizedBox(
-              height: topHeight,
-              child: list == null
-                  ? const _NoListState()
-                  : _buildListArea(
-                      ListPane(controller: widget.controller, list: list),
-                      showQuickAdd: false,
-                    ),
-            ),
-            Container(height: 1, color: LuminousHomeTheme.groceryGlow),
-            Expanded(
-              child: Column(
-                children: <Widget>[
-                  if (recipe != null)
-                    Expanded(
-                      child: RecipePane(
-                        controller: widget.controller,
-                        recipe: recipe,
-                        compact: true,
+        return KeyedSubtree(
+          key: _tabletopBodyKey,
+          child: Column(
+            key: const ValueKey<String>('shopping_tabletop'),
+            children: <Widget>[
+              SizedBox(
+                height: topHeight,
+                child: list == null
+                    ? const _NoListState()
+                    : _buildListArea(
+                        ListPane(controller: widget.controller, list: list),
+                        showQuickAdd: false,
                       ),
-                    ),
-                  _StoreQuickAdd(
-                    controller: widget.controller,
-                    storeMode: widget.controller.storeMode,
-                  ),
-                ],
               ),
-            ),
-          ],
+              Container(height: 1, color: LuminousHomeTheme.groceryGlow),
+              Expanded(
+                child: Column(
+                  children: <Widget>[
+                    if (recipe != null)
+                      Expanded(
+                        child: RecipePane(
+                          controller: widget.controller,
+                          recipe: recipe,
+                          compact: true,
+                        ),
+                      ),
+                    _StoreQuickAdd(
+                      controller: widget.controller,
+                      storeMode: widget.controller.storeMode,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -539,7 +582,7 @@ class _NoListState extends StatelessWidget {
         ),
         const SizedBox(height: LuminousHomeTheme.space8),
         Text(
-          'Type an item below and a Groceries list is created for you.',
+          'Type an item below and a list is created for you.',
           textAlign: TextAlign.center,
           style: LuminousHomeTheme.body.copyWith(
             color: LuminousHomeTheme.textMuted,
@@ -566,7 +609,8 @@ class _ShoppingCapsule extends StatelessWidget {
   });
 
   /// The active list's name, falling back to the surface's own title.
-  String get _listName => controller.activeList?.name ?? 'Shopping list';
+  String get _listName =>
+      controller.activeList?.name ?? ShoppingController.defaultListName;
 
   /// The screen-reader label for the list switcher.
   String get _switchListLabel {

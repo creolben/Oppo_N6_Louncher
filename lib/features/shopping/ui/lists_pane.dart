@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/launcher_haptics.dart';
 import '../../../ui/theme/luminous_home_theme.dart';
 import '../models/recipe.dart';
 import '../models/shopping_list.dart';
@@ -59,7 +60,8 @@ class ListsPane extends StatelessWidget {
               controller.setActiveList(list.id);
               onSelectList(list.id);
             },
-            menu: _ListMenu(
+            menu: _TileMenu(
+              tooltip: 'List options',
               onRename: () => _renameList(context, list),
               onDelete: () => _confirmDeleteList(context, list),
             ),
@@ -104,6 +106,11 @@ class ListsPane extends StatelessWidget {
               subtitle: _recipeSubtitle(recipe),
               selected: recipe.id == selectedRecipeId,
               onTap: () => onSelectRecipe(recipe.id),
+              menu: _TileMenu(
+                tooltip: 'Recipe options',
+                onRename: () => _renameRecipe(context, recipe),
+                onDelete: () => _deleteRecipe(context, recipe),
+              ),
             ),
       ],
     );
@@ -122,17 +129,21 @@ class ListsPane extends StatelessWidget {
     return count == 0 ? servings : '$servings · $count ingredients';
   }
 
+  /// Creates a list and switches to it, closing the navigator like any other
+  /// list pick.
   Future<void> _createList(BuildContext context) async {
     final String? name = await showDialog<String>(
       context: context,
       builder: (BuildContext dialogContext) => const _NameDialog(
         title: 'New list',
         confirmLabel: 'Create',
-        hint: 'Groceries',
+        hint: ShoppingController.defaultListName,
       ),
     );
     if (name == null) return;
-    controller.createList(name);
+    final ShoppingList list = controller.createList(name);
+    controller.setActiveList(list.id);
+    onSelectList(list.id);
   }
 
   Future<void> _renameList(BuildContext context, ShoppingList list) async {
@@ -175,18 +186,51 @@ class ListsPane extends StatelessWidget {
     if (confirmed != true) return;
     controller.deleteList(list.id);
   }
+
+  Future<void> _renameRecipe(BuildContext context, Recipe recipe) async {
+    final String? title = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => _NameDialog(
+        title: 'Rename recipe',
+        confirmLabel: 'Rename',
+        hint: 'Recipe name',
+        initialValue: recipe.title,
+      ),
+    );
+    if (title == null) return;
+    controller.renameRecipe(recipe.id, title);
+  }
+
+  /// Deletes [recipe] at once and offers an undo, like a list row.
+  void _deleteRecipe(BuildContext context, Recipe recipe) {
+    final RemovedRecipe? removed = controller.removeRecipe(recipe.id);
+    if (removed == null) return;
+    LauncherHaptics.heavyClick();
+    showGrocerySnackBar(
+      context,
+      'Deleted ${recipe.title}',
+      actionLabel: 'Undo',
+      onAction: () => controller.restoreRecipe(removed),
+    );
+  }
 }
 
-class _ListMenu extends StatelessWidget {
+/// The rename/delete overflow on a list or recipe tile.
+class _TileMenu extends StatelessWidget {
+  final String tooltip;
   final VoidCallback onRename;
   final VoidCallback onDelete;
 
-  const _ListMenu({required this.onRename, required this.onDelete});
+  const _TileMenu({
+    required this.tooltip,
+    required this.onRename,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
     return PopupMenuButton<String>(
-      tooltip: 'List options',
+      tooltip: tooltip,
       icon: const Icon(
         Icons.more_horiz_rounded,
         color: LuminousHomeTheme.textSecondary,
@@ -348,9 +392,10 @@ class _NameDialogState extends State<_NameDialog> {
     super.dispose();
   }
 
+  /// Returns the trimmed text, possibly empty: the controller decides what an
+  /// empty name means (the default for a new list, no change for a rename).
   void _submit() {
-    final String value = _controller.text.trim();
-    Navigator.of(context).pop(value.isEmpty ? 'Shopping List' : value);
+    Navigator.of(context).pop(_controller.text.trim());
   }
 
   @override

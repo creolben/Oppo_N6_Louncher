@@ -69,16 +69,33 @@ class SupernovaAnimation {
   }
 }
 
+/// The per-frame values the painter reads at paint time.
+///
+/// The canvas repaints through a listenable without rebuilding, so the same
+/// painter instance paints many frames. Values copied into the painter's
+/// constructor would therefore be frozen at the last rebuild — which is what
+/// left twinkle, nebula drift, core breathing, filament pulses, the focus halo
+/// and the launch supernova still between rebuilds. The canvas owns one of
+/// these, updates it before every repaint, and the painter reads it live.
+class GalaxyFrameState {
+  double animationTime = 0.0;
+  SupernovaAnimation? activeSupernova;
+  Offset? activeTouchScreenPoint;
+  AppEntry? focusedApp;
+}
+
 class GalaxyCustomPainter extends CustomPainter {
   final CameraController camera;
   final List<Constellation> constellations;
   final FoldableController foldable;
-  final double animationTime;
+  final GalaxyFrameState frame;
   final List<CosmicParticle> starfield;
   final List<ShootingStar> shootingStars;
-  final SupernovaAnimation? activeSupernova;
-  final Offset? activeTouchScreenPoint;
-  final AppEntry? focusedApp;
+
+  double get animationTime => frame.animationTime;
+  SupernovaAnimation? get activeSupernova => frame.activeSupernova;
+  Offset? get activeTouchScreenPoint => frame.activeTouchScreenPoint;
+  AppEntry? get focusedApp => frame.focusedApp;
 
   /// Bumps when the badge counts behind the app nodes changed.
   ///
@@ -93,7 +110,6 @@ class GalaxyCustomPainter extends CustomPainter {
   final TextScaler textScaler;
 
   // Statically allocated Paint objects
-  static final Paint _bgPaint = Paint();
   static final Paint _nebulaPaint = Paint();
   static final Paint _gridPaint = Paint()..style = PaintingStyle.stroke;
   static final Paint _starPaint = Paint()..style = PaintingStyle.fill;
@@ -118,6 +134,19 @@ class GalaxyCustomPainter extends CustomPainter {
   static final Paint _burstPaint = Paint();
   static final Paint _streakPaint = Paint();
 
+  /// Alpha carrier for the faded text layers (app labels, core title). Only
+  /// its colour is read by saveLayer, so one instance replaces a fresh Paint
+  /// per label per frame.
+  static final Paint _textLayerPaint = Paint();
+
+  /// The core pulse field, built once per painter and viewport size.
+  ///
+  /// It depends only on the size and [animationTime], and [animationTime] is
+  /// fixed for a painter's lifetime — repaint-notifier frames reuse the same
+  /// painter — so rebuilding it every frame produced an identical gradient.
+  Size? _deepSpaceSize;
+  Shader? _corePulseShader;
+
   static final Path _path = Path();
   static final Path _starPath = Path();
 
@@ -126,12 +155,9 @@ class GalaxyCustomPainter extends CustomPainter {
     required this.camera,
     required this.constellations,
     required this.foldable,
-    required this.animationTime,
+    required this.frame,
     required this.starfield,
     this.shootingStars = const [],
-    this.activeSupernova,
-    this.activeTouchScreenPoint,
-    this.focusedApp,
     this.badgeRevision = 0,
     this.textScaler = TextScaler.noScaling,
   }) : super(repaint: repaint);
@@ -156,70 +182,23 @@ class GalaxyCustomPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// The galaxy no longer paints a field of its own: the window shows the
+  /// system wallpaper and everything here — stars, filaments, nodes — sits on
+  /// it, so the recents close animation, the keyguard and the stock launcher's
+  /// HOME flash all land on the same picture. Only the core's breathing pulse
+  /// remains, because it belongs to the core rather than to a backdrop.
   void _paintDeepSpace(Canvas canvas, Size size) {
-    final bgRect = Offset.zero & size;
+    if (_corePulseShader == null || _deepSpaceSize != size) {
+      _corePulseShader = _buildCorePulseShader(size);
+      _deepSpaceSize = size;
+    }
+    _nebulaPaint.shader = _corePulseShader;
+    canvas.drawRect(Offset.zero & size, _nebulaPaint);
+  }
 
-    // An ink-blue cyclorama keeps the OLED depth without reading as empty
-    // space. The brighter ceiling makes the clock legible without a glow.
-    _bgPaint.shader = ui.Gradient.radial(
-      Offset(size.width * 0.5, size.height * 0.5),
-      size.longestSide * 0.90,
-      const [
-        LuminousHomeTheme.backgroundTop,
-        LuminousHomeTheme.background,
-        LuminousHomeTheme.backgroundDeep,
-      ],
-      const [0.0, 0.55, 1.0],
-    );
-    canvas.drawRect(bgRect, _bgPaint);
-
-    final double driftX1 = math.sin(animationTime * 0.12) * 25.0;
-    final double driftY1 = math.cos(animationTime * 0.10) * 20.0;
-    final double driftX2 = math.cos(animationTime * 0.09) * 30.0;
-    final double driftY2 = math.sin(animationTime * 0.11) * 25.0;
-
-    // Slow orchid and aqua fields keep the original drift inputs while
-    // behaving more like light through fluid than deep-space nebulae.
-    _nebulaPaint.shader = ui.Gradient.radial(
-      Offset(size.width * 0.30 + driftX1, size.height * 0.35 + driftY1),
-      size.longestSide * 0.58,
-      [
-        LuminousHomeTheme.orchid.withValues(alpha: 0.20),
-        LuminousHomeTheme.cobalt.withValues(alpha: 0.07),
-        Colors.transparent,
-      ],
-      const [0.0, 0.45, 1.0],
-    );
-    canvas.drawRect(bgRect, _nebulaPaint);
-
-    _nebulaPaint.shader = ui.Gradient.radial(
-      Offset(size.width * 0.70 + driftX2, size.height * 0.65 + driftY2),
-      size.longestSide * 0.52,
-      [
-        LuminousHomeTheme.aqua.withValues(alpha: 0.17),
-        LuminousHomeTheme.mint.withValues(alpha: 0.05),
-        Colors.transparent,
-      ],
-      const [0.0, 0.42, 1.0],
-    );
-    canvas.drawRect(bgRect, _nebulaPaint);
-
-    // A low cobalt horizon grounds the field like a seamless cyclorama.
-    _nebulaPaint.shader = ui.Gradient.linear(
-      Offset(0, size.height * 0.34),
-      Offset(0, size.height * 0.94),
-      [
-        Colors.transparent,
-        LuminousHomeTheme.cobalt.withValues(alpha: 0.09),
-        LuminousHomeTheme.aqua.withValues(alpha: 0.055),
-        Colors.transparent,
-      ],
-      const [0.0, 0.42, 0.72, 1.0],
-    );
-    canvas.drawRect(bgRect, _nebulaPaint);
-
+  Shader _buildCorePulseShader(Size size) {
     final double corePulse = 0.05 + 0.02 * math.sin(animationTime * 1.5);
-    _nebulaPaint.shader = ui.Gradient.radial(
+    return ui.Gradient.radial(
       Offset(size.width * 0.5, size.height * 0.5),
       size.longestSide * 0.36,
       [
@@ -229,7 +208,6 @@ class GalaxyCustomPainter extends CustomPainter {
       ],
       const [0.0, 0.48, 1.0],
     );
-    canvas.drawRect(bgRect, _nebulaPaint);
   }
 
   void _paintWorldStarfield(Canvas canvas) {
@@ -643,7 +621,7 @@ class GalaxyCustomPainter extends CustomPainter {
             tp.width,
             tp.height,
           ),
-          Paint()
+          _textLayerPaint
             ..color = LuminousHomeTheme.textPrimary.withValues(
               alpha: closedAlpha * 0.90,
             ),
@@ -1185,7 +1163,8 @@ class GalaxyCustomPainter extends CustomPainter {
                 lp.width,
                 lp.height,
               ),
-              Paint()..color = LuminousHomeTheme.white.withValues(alpha: labelAlpha),
+              _textLayerPaint
+                ..color = LuminousHomeTheme.white.withValues(alpha: labelAlpha),
             );
             lp.paint(
               canvas,

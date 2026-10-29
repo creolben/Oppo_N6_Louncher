@@ -127,7 +127,8 @@ class _LockSurfaceAppState extends State<LockSurfaceApp>
     final apps = loadApps != null
         ? await loadApps()
         : await LauncherBridge.getInstalledApps();
-    if (!mounted) return;
+    // A failed scan keeps whatever inventory the panel already has.
+    if (!mounted || apps == null) return;
     setState(() => _apps = apps);
   }
 

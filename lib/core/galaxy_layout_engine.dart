@@ -223,6 +223,9 @@ class GalaxyLayoutEngine {
     final c = constellations.where((item) => item.id == constellationId).firstOrNull;
     if (c != null) {
       final capped = packageNames.take(maxConstellationApps).toList();
+      // The edited group takes these apps; a copy left in another group's
+      // list would paint there as well, or come back later as a stale entry.
+      _releaseFromOtherGroups(constellationId, capped);
       if (c.isCustom) {
         c.customPackageNames.clear();
         c.customPackageNames.addAll(capped);
@@ -244,6 +247,7 @@ class GalaxyLayoutEngine {
     if (c == null) return false;
     if (c.apps.length >= maxConstellationApps) return false;
 
+    _releaseFromOtherGroups(constellationId, [app.packageName]);
     if (c.isCustom) {
       if (!c.customPackageNames.contains(app.packageName)) {
         c.customPackageNames.add(app.packageName);
@@ -391,6 +395,8 @@ class GalaxyLayoutEngine {
   }) {
     final String constellationId = id ?? 'custom_${DateTime.now().millisecondsSinceEpoch}';
     final cappedPackages = packageNames.take(maxConstellationApps).toList();
+    // A group defined with these apps owns them from here on.
+    _releaseFromOtherGroups(constellationId, cappedPackages);
 
     final existingIndex = constellations.indexWhere(
       (c) => c.id == constellationId && c.isCustom,
@@ -452,6 +458,16 @@ class GalaxyLayoutEngine {
     }
   }
 
+  /// Resolves every visible app into exactly one constellation.
+  ///
+  /// Priority is Essentials, then custom groups and overridden standard groups
+  /// in constellation order, then category auto-fill for standard groups with
+  /// no override. Each list used to check only itself, so a package held by two
+  /// stored lists was painted in both groups; the per-frame morph then pulled
+  /// that one node toward two ring slots and it settled off the ring, between
+  /// them, while its slot in the open ring stayed empty. A single claim set
+  /// makes double membership impossible, and [_scrubShadowedGroupMemberships]
+  /// repairs the stored lists so the resolution is stable across saves.
   void assignApps(List<AppEntry> apps) {
     allApps.clear();
     allApps.addAll(apps);
@@ -463,85 +479,71 @@ class GalaxyLayoutEngine {
     }
 
     final coreConstellation = constellations.firstWhere((c) => c.id == 'core');
+    final Set<AppEntry> claimed = <AppEntry>{};
 
-    // 1. Assign Center Constellation apps (strictly max 8 apps)
+    // Which constellation a stored list entry resolved into, by package. Only
+    // list-driven claims (steps 1-3) are recorded: a package can also own a
+    // second launcher activity that lands by category in step 4, and that must
+    // not read as the list's entry being shadowed.
+    final Map<String, Constellation> listOwner = <String, Constellation>{};
+
+    // The visible entry for [pkg], unless some constellation already holds it.
+    AppEntry? unclaimed(String pkg) {
+      if (hiddenPackageNames.contains(pkg)) return null;
+      final match = visibleApps.where((a) => a.packageName == pkg).firstOrNull;
+      if (match == null || claimed.contains(match)) return null;
+      return match;
+    }
+
+    void claim(Constellation c, AppEntry app, {bool fromList = true}) {
+      c.apps.add(app);
+      claimed.add(app);
+      if (fromList) listOwner.putIfAbsent(app.packageName, () => c);
+    }
+
+    // 1. Essentials (strictly max 8 apps).
     if (corePackageNames.isNotEmpty) {
       for (final pkg in corePackageNames) {
-        if (hiddenPackageNames.contains(pkg)) continue;
         if (coreConstellation.apps.length >= maxCoreApps) break;
-        final match = visibleApps.where((a) => a.packageName == pkg).firstOrNull;
-        if (match != null && !coreConstellation.apps.contains(match)) {
-          coreConstellation.apps.add(match);
-        }
+        final match = unclaimed(pkg);
+        if (match != null) claim(coreConstellation, match);
       }
     } else {
-      // Default: Top 4 daily essentials
+      // Default: top 4 daily essentials.
       for (final app in visibleApps) {
         if (coreConstellation.apps.length >= 4) break;
-        if (app.category == AppCategory.core && !coreConstellation.apps.contains(app)) {
-          coreConstellation.apps.add(app);
+        if (app.category == AppCategory.core && !claimed.contains(app)) {
+          claim(coreConstellation, app, fromList: false);
         }
       }
     }
 
-    // 2. Assign apps to custom constellations (strictly max 8 apps each)
+    // 2. Custom groups (strictly max 8 apps each).
     final customConstellations = constellations.where((c) => c.isCustom).toList();
     for (final customC in customConstellations) {
       for (final pkg in customC.customPackageNames) {
-        if (hiddenPackageNames.contains(pkg)) continue;
         if (customC.apps.length >= maxConstellationApps) break;
-        final match = visibleApps.where((a) => a.packageName == pkg).firstOrNull;
-        if (match != null && !coreConstellation.apps.contains(match) && !customC.apps.contains(match)) {
-          customC.apps.add(match);
-        }
+        final match = unclaimed(pkg);
+        if (match != null) claim(customC, match);
       }
     }
 
-    // 3. Assign apps to standard constellations that have overrides (strictly max 8 apps each)
+    // 3. Standard groups with an override list (strictly max 8 apps each).
     final standardConstellations = constellations.where((c) => !c.isCustom && c.id != 'core').toList();
     for (final stdC in standardConstellations) {
-      if (constellationAppOverrides.containsKey(stdC.id)) {
-        final pkgs = constellationAppOverrides[stdC.id]!;
-        for (final pkg in pkgs) {
-          if (hiddenPackageNames.contains(pkg)) continue;
-          if (stdC.apps.length >= maxConstellationApps) break;
-          final match = visibleApps.where((a) => a.packageName == pkg).firstOrNull;
-          if (match != null &&
-              !coreConstellation.apps.contains(match) &&
-              !stdC.apps.contains(match) &&
-              !customConstellations.any((c) => c.apps.contains(match))) {
-            stdC.apps.add(match);
-          }
-        }
+      final pkgs = constellationAppOverrides[stdC.id];
+      if (pkgs == null) continue;
+      for (final pkg in pkgs) {
+        if (stdC.apps.length >= maxConstellationApps) break;
+        final match = unclaimed(pkg);
+        if (match != null) claim(stdC, match);
       }
     }
 
-    // 4. Assign remaining apps into category constellations (strictly max 8 apps per constellation)
+    // 4. Everything else by category, into standard groups without an override.
     for (final app in visibleApps) {
-      if (coreConstellation.apps.contains(app)) {
-        continue;
-      }
+      if (claimed.contains(app)) continue;
 
-      // Check if already assigned to any custom constellation
-      bool assigned = false;
-      for (final c in customConstellations) {
-        if (c.apps.contains(app)) {
-          assigned = true;
-          break;
-        }
-      }
-      if (assigned) continue;
-
-      // Check if already assigned to any overridden standard constellation
-      for (final c in standardConstellations) {
-        if (c.apps.contains(app)) {
-          assigned = true;
-          break;
-        }
-      }
-      if (assigned) continue;
-
-      // For standard constellations without overrides, assign based on app.category if space permits
       Constellation? target = constellations.where(
         (c) =>
             !c.isCustom &&
@@ -559,12 +561,50 @@ class GalaxyLayoutEngine {
             c.apps.length < maxConstellationApps,
       ).firstOrNull;
 
-      if (target != null) {
-        target.apps.add(app);
-      }
+      if (target != null) claim(target, app, fromList: false);
     }
 
+    _scrubShadowedGroupMemberships(listOwner);
     _layoutAppsInitial();
+  }
+
+  /// Drops a package from a group's stored list when a different group's list
+  /// won it, so the next save writes lists that agree with the screen.
+  ///
+  /// [listOwner] is the resolution [assignApps] just made. Essentials is a
+  /// pinned shelf, not a group: a package it shows stays in its group's list
+  /// so that unpinning returns it there. Only group-versus-group overlap is
+  /// repaired, and an entry whose package is hidden or not installed resolved
+  /// nowhere, so it is left alone and comes back when the app does.
+  void _scrubShadowedGroupMemberships(Map<String, Constellation> listOwner) {
+    for (final c in constellations) {
+      if (c.id == 'core') continue;
+      final List<String>? stored =
+          c.isCustom ? c.customPackageNames : constellationAppOverrides[c.id];
+      if (stored == null) continue;
+      stored.removeWhere((pkg) {
+        final owner = listOwner[pkg];
+        return owner != null && owner.id != 'core' && !identical(owner, c);
+      });
+    }
+  }
+
+  /// Removes [packageNames] from every group's stored list except [keepId].
+  ///
+  /// An app shows in one group, so the group being edited takes it. Essentials
+  /// is left alone: it pins, it does not own (see
+  /// [_scrubShadowedGroupMemberships]).
+  void _releaseFromOtherGroups(String keepId, Iterable<String> packageNames) {
+    final Set<String> taken = packageNames.toSet();
+    if (taken.isEmpty) return;
+    for (final c in constellations) {
+      if (c.id == 'core' || c.id == keepId) continue;
+      if (c.isCustom) {
+        c.customPackageNames.removeWhere(taken.contains);
+      } else {
+        constellationAppOverrides[c.id]?.removeWhere(taken.contains);
+      }
+    }
   }
 
   void _layoutAppsInitial() {
@@ -601,12 +641,33 @@ class GalaxyLayoutEngine {
     }
   }
 
+  /// Snaps every hub, group and node to its resting target in one step.
+  ///
+  /// For reduce-motion, where no render loop runs to ease the morph: without
+  /// this a tapped hub's expansion never advanced, so groups could not open.
+  /// Orbits are not advanced, so nothing appears to spin on each change.
+  void settleGalaxyMorph({
+    required DevicePosture posture,
+    required double hingeAngle,
+  }) {
+    updateGalaxyMorph(
+      posture: posture,
+      hingeAngle: hingeAngle,
+      dt: 1.0,
+      advanceOrbits: false,
+    );
+  }
+
   void updateGalaxyMorph({
     required DevicePosture posture,
     required double hingeAngle,
     required double dt,
     Offset? magneticTouchPoint,
+    bool advanceOrbits = true,
   }) {
+    // Orbital drift and ring rotation advance with real time only; a settle
+    // (dt = 1, every lerp factor clamped to 1) must not spin the rings.
+    final double orbitDt = advanceOrbits ? dt : 0.0;
     // Collect outer constellations (excluding center core)
     final outerConstellations = constellations.where((c) => c.id != 'core').toList();
     final int outerCount = outerConstellations.length;
@@ -648,12 +709,12 @@ class GalaxyLayoutEngine {
       }
 
       c.center = Offset.lerp(c.center, targetCenter, (dt * 6.0).clamp(0.0, 1.0))!;
-      c.rotation += dt * 0.02;
+      c.rotation += orbitDt * 0.02;
 
       final double effectiveExpansion = c.expansionProgress;
 
       for (final app in c.apps) {
-        app.orbitalAngle += app.orbitalSpeed * dt * 60;
+        app.orbitalAngle += app.orbitalSpeed * orbitDt * 60;
         final double cosA = math.cos(app.orbitalAngle + c.rotation * 0.1);
         final double sinA = math.sin(app.orbitalAngle + c.rotation * 0.1);
 
@@ -700,7 +761,7 @@ class GalaxyLayoutEngine {
     for (final app in core.apps) {
       // Smoothly adjust orbitalRadius when posture changes
       app.orbitalRadius = ui.lerpDouble(app.orbitalRadius, targetCoreRadius, (dt * 6.0).clamp(0.0, 1.0)) ?? targetCoreRadius;
-      app.orbitalAngle += app.orbitalSpeed * dt * 60;
+      app.orbitalAngle += app.orbitalSpeed * orbitDt * 60;
       final double cosA = math.cos(app.orbitalAngle + core.rotation * 0.1 + spiralAngle);
       final double sinA = math.sin(app.orbitalAngle + core.rotation * 0.1 + spiralAngle);
 

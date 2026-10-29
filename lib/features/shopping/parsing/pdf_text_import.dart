@@ -1,3 +1,6 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+
 import '../../../core/launcher_bridge.dart';
 import 'document_parser.dart';
 
@@ -61,10 +64,24 @@ class PdfImportService {
 
   static const String unreadableMessage = 'This PDF could not be read.';
 
+  static const String tooLargeMessage =
+      'This PDF is larger than 25 MB and cannot be imported.';
+
   /// Picks a PDF and imports it. A dismissed picker resolves to a
   /// [PdfImportErrorKind.cancelled] failure so the caller can stay silent.
   Future<PdfImportResult> importFromPicker() async {
-    final String? path = await pick();
+    final String? path;
+    try {
+      path = await pick();
+    } on PlatformException catch (e) {
+      if (e.code == 'PDF_TOO_LARGE') {
+        return const PdfImportResult.failure(
+          PdfImportErrorKind.unreadable,
+          tooLargeMessage,
+        );
+      }
+      rethrow;
+    }
     if (path == null) {
       return const PdfImportResult.failure(
         PdfImportErrorKind.cancelled,
@@ -79,7 +96,8 @@ class PdfImportService {
     final PdfTextResult extracted;
     try {
       extracted = await extract(path);
-    } catch (_) {
+    } catch (error) {
+      debugPrint('CF_PDF: text extraction failed: $error');
       return const PdfImportResult.failure(
         PdfImportErrorKind.unreadable,
         unreadableMessage,
@@ -108,6 +126,14 @@ class PdfImportService {
       );
     }
 
-    return PdfImportResult.success(parser.parseDocument(extracted.text));
+    try {
+      return PdfImportResult.success(parser.parseDocument(extracted.text));
+    } catch (error, stack) {
+      debugPrint('CF_PDF: parsing the extracted text failed: $error\n$stack');
+      return const PdfImportResult.failure(
+        PdfImportErrorKind.unreadable,
+        unreadableMessage,
+      );
+    }
   }
 }

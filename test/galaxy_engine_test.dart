@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mylauncher/core/galaxy_layout_engine.dart';
@@ -449,6 +451,120 @@ void main() {
         isNot(contains(photo.packageName)),
       );
       expect(custom.customPackageNames, isNot(contains(photo.packageName)));
+    });
+
+    test('a package stored by two groups paints in one and leaves the other list', () {
+      final engine = GalaxyLayoutEngine();
+      final stray = AppEntry(packageName: 'com.test.stray', label: 'Stray', category: AppCategory.social);
+      final docs = AppEntry(packageName: 'com.test.docs', label: 'Docs', category: AppCategory.productivity);
+      // The shape an older picker left behind: the same package in two
+      // overrides, which used to put it in both groups' app lists.
+      engine.constellationAppOverrides['social'] = [stray.packageName];
+      engine.constellationAppOverrides['productivity'] = [stray.packageName, docs.packageName];
+      engine.assignApps([stray, docs]);
+
+      final social = engine.constellations.firstWhere((c) => c.id == 'social');
+      final work = engine.constellations.firstWhere((c) => c.id == 'productivity');
+      expect(social.apps.map((a) => a.packageName), [stray.packageName]);
+      expect(work.apps.map((a) => a.packageName), [docs.packageName]);
+      expect(engine.ownerOf(stray.packageName)?.id, 'social');
+      // The losing list is repaired so the next save agrees with the screen.
+      expect(engine.constellationAppOverrides['productivity'], [docs.packageName]);
+      expect(engine.constellationAppOverrides['social'], [stray.packageName]);
+
+      // Every resolved app is held by exactly one constellation.
+      final seen = <AppEntry>{};
+      for (final c in engine.constellations) {
+        for (final app in c.apps) {
+          expect(seen.add(app), isTrue, reason: '${app.packageName} painted twice');
+        }
+      }
+    });
+
+    test('an Essentials pin does not scrub the package from its group', () {
+      final engine = GalaxyLayoutEngine();
+      final docs = AppEntry(packageName: 'com.test.docs', label: 'Docs', category: AppCategory.productivity);
+      engine.constellationAppOverrides['productivity'] = [docs.packageName];
+      engine.assignApps([docs]);
+      engine.addAppToCore(docs);
+
+      expect(engine.ownerOf(docs.packageName)?.id, 'core');
+      expect(engine.constellationAppOverrides['productivity'], [docs.packageName]);
+
+      // Unpinning returns it to its group.
+      engine.removeAppFromCore(docs.packageName);
+      expect(engine.ownerOf(docs.packageName)?.id, 'productivity');
+    });
+
+    test('setConstellationAppPackages takes a package away from the group that held it', () {
+      final engine = GalaxyLayoutEngine();
+      final stray = AppEntry(packageName: 'com.test.stray', label: 'Stray', category: AppCategory.social);
+      final chat = AppEntry(packageName: 'com.test.chat', label: 'Chat', category: AppCategory.social);
+      engine.assignApps([stray, chat]);
+      engine.setConstellationAppPackages('social', [stray.packageName, chat.packageName]);
+      expect(engine.ownerOf(stray.packageName)?.id, 'social');
+
+      engine.setConstellationAppPackages('productivity', [stray.packageName]);
+
+      expect(engine.ownerOf(stray.packageName)?.id, 'productivity');
+      expect(engine.constellationAppOverrides['social'], [chat.packageName]);
+      final social = engine.constellations.firstWhere((c) => c.id == 'social');
+      expect(social.apps.map((a) => a.packageName), [chat.packageName]);
+    });
+
+    test('a second launcher activity of a listed package lands by category without scrubbing the list', () {
+      final engine = GalaxyLayoutEngine();
+      // One package, two launcher activities: two entries sharing a name.
+      final main = AppEntry(packageName: 'com.test.suite', activityName: '.Main', label: 'Suite', category: AppCategory.social);
+      final second = AppEntry(packageName: 'com.test.suite', activityName: '.Notes', label: 'Suite Notes', category: AppCategory.social);
+      engine.constellationAppOverrides['productivity'] = [main.packageName];
+      engine.assignApps([main, second]);
+
+      final work = engine.constellations.firstWhere((c) => c.id == 'productivity');
+      final social = engine.constellations.firstWhere((c) => c.id == 'social');
+      expect(work.apps, [main]);
+      expect(social.apps, [second]);
+      // The list that placed the first entry is intact.
+      expect(engine.constellationAppOverrides['productivity'], [main.packageName]);
+    });
+
+    test('an open ring stays equidistant when a package was listed twice', () {
+      final engine = GalaxyLayoutEngine();
+      final ring = List.generate(
+        7,
+        (i) => AppEntry(packageName: 'com.work.app$i', label: 'App $i', category: AppCategory.productivity),
+      );
+      final stray = AppEntry(packageName: 'com.social.stray', label: 'Stray', category: AppCategory.social);
+      engine.constellationAppOverrides['social'] = [stray.packageName];
+      engine.constellationAppOverrides['productivity'] = [
+        stray.packageName,
+        ...ring.map((a) => a.packageName),
+      ];
+      engine.assignApps([...ring, stray]);
+      engine.expandOnly('productivity');
+
+      for (int i = 0; i < 400; i++) {
+        engine.updateGalaxyMorph(posture: DevicePosture.flat, hingeAngle: 180.0, dt: 1 / 60);
+      }
+
+      final work = engine.constellations.firstWhere((c) => c.id == 'productivity');
+      expect(work.apps.length, 7);
+      final angles = <double>[];
+      for (final app in work.apps) {
+        final offset = app.worldPosition - work.center;
+        expect(offset.distance, closeTo(105.0, 0.5), reason: '${app.label} left the ring');
+        angles.add(offset.direction);
+      }
+      angles.sort();
+      for (int i = 0; i < angles.length; i++) {
+        final double next = i + 1 < angles.length ? angles[i + 1] : angles.first + 2 * math.pi;
+        expect(next - angles[i], closeTo(2 * math.pi / 7, 1e-3), reason: 'uneven gap after slot $i');
+      }
+
+      // The stray belongs to the collapsed Connect hub and sits on it.
+      final social = engine.constellations.firstWhere((c) => c.id == 'social');
+      expect(social.apps.single, same(stray));
+      expect((stray.worldPosition - social.center).distance, lessThan(0.5));
     });
   });
 

@@ -25,6 +25,8 @@ import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.os.UserHandle
 import android.os.VibrationAttributes
@@ -38,6 +40,7 @@ import android.content.IntentFilter
 import android.os.Bundle
 import android.view.WindowManager
 import android.app.KeyguardManager
+import android.app.WallpaperManager
 import android.app.role.RoleManager
 import android.hardware.biometrics.BiometricPrompt
 import android.hardware.fingerprint.FingerprintManager
@@ -50,6 +53,8 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterActivityLaunchConfigs.BackgroundMode
+import io.flutter.embedding.android.RenderMode
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -77,6 +82,9 @@ class MainActivity : FlutterActivity() {
 
         /** Longest edge a shortcut icon is sent at, in dp. */
         private const val MAX_SHORTCUT_ICON_DP = 64
+
+        /** Wallpaper blur behind full-screen surfaces, in dp. */
+        private const val WINDOW_BLUR_DP = 24
     }
 
     /**
@@ -103,6 +111,28 @@ class MainActivity : FlutterActivity() {
     /** The Flutter result waiting on the one in-flight `pickPdf` dialog. */
     private var pendingPdfPickResult: MethodChannel.Result? = null
 
+    /** Main-looper handler for platform callbacks that must reach Dart. */
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * Off-main-thread executor for wallpaper offset reports. The call is a
+     * binder round trip to WindowManager and arrives once per camera frame
+     * while the galaxy pans, so it is coalesced to the newest pair and kept
+     * off the UI thread the way Launcher3 keeps its own offset interpolator.
+     */
+    private val wallpaperExecutor = Executors.newSingleThreadExecutor()
+
+    @Volatile private var pendingWallpaperX = Float.NaN
+    @Volatile private var pendingWallpaperY = Float.NaN
+    @Volatile private var wallpaperReportQueued = false
+
+    /**
+     * The wallpaper-colour listener, so a wallpaper change re-tints the status
+     * bar and the scrims while the launcher is running. Registered in
+     * [onCreate] and removed in [onDestroy].
+     */
+    private var wallpaperColorsListener: WallpaperManager.OnColorsChangedListener? = null
+
     /** Whether PDFBoxResourceLoader has been initialized for this process. */
     private var pdfBoxInitialized = false
 
@@ -122,16 +152,6 @@ class MainActivity : FlutterActivity() {
      * engine attaches.
      */
     private var lockSurface: LockSurfaceChannels? = null
-
-    /**
-     * An opaque native cover surface held above Flutter while a foreign task is
-     * foregrounded. Keeping this in the launcher task prevents ColorOS from
-     * exposing its own task/background frame on the way back.
-     */
-    private var returnBridge: android.view.View? = null
-    private var returnBridgeAwaitingReturn = false
-    private var returnBridgeLeftForTarget = false
-    private var returnBridgeGeneration = 0
 
     /**
      * Whether MainActivity is the resumed activity.
@@ -199,15 +219,35 @@ class MainActivity : FlutterActivity() {
         }
 
         override fun startTarget(intent: Intent, options: Bundle?, onStarted: (Boolean) -> Unit) {
-            startTargetWithReturnBridge(intent, options, onStarted)
+            // A plain start. The window behind the departing app is the
+            // system wallpaper (HomeTheme shows it through the transparent
+            // Flutter surface), which is exactly what ColorOS's own close
+            // animation lands on, so no native cover surface is needed.
+            onStarted(lockSurface?.startActivityQuietly(intent, options) ?: false)
         }
 
         override fun onUnhandledMethod(call: MethodCall, result: MethodChannel.Result): Boolean =
             handleMainOnlyMethod(call, result)
     }
+    /**
+     * The Flutter surface is transparent so the system wallpaper (shown by
+     * HomeTheme's `windowShowWallpaper`) is the launcher's backdrop. Flutter
+     * clears the window background itself in this mode, so nothing here
+     * paints a colour behind the engine.
+     */
+    override fun getBackgroundMode(): BackgroundMode = BackgroundMode.transparent
+
+    /**
+     * Keep the SurfaceView renderer. FlutterActivity's default for a
+     * transparent background is a TextureView, which costs an extra GPU copy
+     * every frame of a 120Hz galaxy; a SurfaceView with a transparent pixel
+     * format composes directly over the wallpaper layer instead.
+     */
+    override fun getRenderMode(): RenderMode = RenderMode.surface
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#050A16")))
+        registerWallpaperColorsListener()
         // ColorOS owns the lock screen. The launcher starts as an ordinary home
         // app that does NOT draw over the keyguard, which is the only
         // arrangement where the platform's own lock screen is the thing
@@ -335,11 +375,6 @@ class MainActivity : FlutterActivity() {
     }
     override fun onPause() {
         launcherResumed = false
-        // This is set only after the target activity has been accepted for
-        // launch, so transient keyguard UI cannot be mistaken for a return.
-        if (returnBridgeAwaitingReturn) {
-            returnBridgeLeftForTarget = true
-        }
         if (foreignTaskForeground) {
             pausedForForeignTask = true
         }
@@ -364,21 +399,15 @@ class MainActivity : FlutterActivity() {
             foreignTaskForeground = false
             pausedForForeignTask = false
         }
-        if (!returnBridgeAwaitingReturn || !returnBridgeLeftForTarget) return
+    }
 
-        // Keep the native bridge visible until Flutter has painted a fresh
-        // launcher frame. The timeout is a fail-safe for an engine failure,
-        // never the normal return path.
-        val bridge = returnBridge ?: return
-        bridge.bringToFront()
-        val generation = returnBridgeGeneration
-        bridge.postDelayed({
-            if (generation == returnBridgeGeneration &&
-                returnBridgeAwaitingReturn &&
-                returnBridgeLeftForTarget) {
-                hideReturnBridge()
-            }
-        }, 900L)
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // The window token exists from here on. Centre the wallpaper at once:
+        // the previous wallpaper target (the stock launcher, paged) may have
+        // left it scrolled to one side, and the galaxy reports its own pan
+        // only once the camera moves.
+        reportWallpaperOffsets(0.5f, 0.5f)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -396,8 +425,14 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         // Everything the shared surface acquired (sensors, the media session
         // callback, the apps channel handler) is released here.
+        mainHandler.removeCallbacksAndMessages(null)
+        unregisterWallpaperColorsListener()
+        wallpaperExecutor.shutdown()
         lockSurface?.dispose()
         lockSurface = null
+        // An open picker dies with the activity: answer as a cancel so the
+        // Dart future resolves (it maps null to "no import").
+        pendingPdfPickResult?.success(null)
         pendingPdfPickResult = null
         pdfExecutor.shutdown()
         shortcutExecutor.shutdown()
@@ -508,6 +543,9 @@ class MainActivity : FlutterActivity() {
                 }
                 result.success(opened)
             }
+            "isCosmicWallpaperActive" -> {
+                result.success(isCosmicWallpaperActive())
+            }
             "openCosmicLiveWallpaperPreview" -> {
                 result.success(openCosmicLiveWallpaperPreview())
             }
@@ -529,16 +567,17 @@ class MainActivity : FlutterActivity() {
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 result.success(lockSurface?.startActivityQuietly(intent) ?: false)
             }
-            "launcherFrameReady" -> {
-                runOnUiThread {
-                    // An initial Flutter frame (or one sent before MainActivity
-                    // actually paused) must not dismiss the bridge while a
-                    // target is still opening.
-                    if (returnBridgeAwaitingReturn && returnBridgeLeftForTarget) {
-                        hideReturnBridge()
-                    }
-                    result.success(true)
-                }
+            "getWallpaperTone" -> {
+                result.success(readWallpaperTone())
+            }
+            "setWallpaperOffsets" -> {
+                val x = (call.argument<Number>("x") ?: 0.5f).toFloat()
+                val y = (call.argument<Number>("y") ?: 0.5f).toFloat()
+                reportWallpaperOffsets(x, y)
+                result.success(true)
+            }
+            "setWindowBlur" -> {
+                result.success(setWindowBackgroundBlur(call.argument<Boolean>("enabled") ?: false))
             }
             "hasOverlayAccess" -> {
                 result.success(hasOverlayAccess())
@@ -732,6 +771,8 @@ class MainActivity : FlutterActivity() {
             true
         } catch (error: Exception) {
             android.util.Log.d(TAG, "CF_SHORTCUTS: start refused", error)
+            // Nothing was handed anywhere, so the launcher still owns the screen.
+            lockSurfaceHost.onForeignHandoffFailed()
             false
         }
     }
@@ -873,8 +914,44 @@ class MainActivity : FlutterActivity() {
         val path = source?.getStringExtra(ShareReceiverActivity.EXTRA_SHARED_PDF_PATH)
             ?: return
         source.removeExtra(ShareReceiverActivity.EXTRA_SHARED_PDF_PATH)
+        // This activity is exported, so the extra can come from any app. Only
+        // a file inside our own imports cache (where ShareReceiverActivity
+        // copies to) is ever handed to Dart.
+        if (!isInsideImportsDir(path)) {
+            android.util.Log.w(TAG, "CF_PDF: ignoring a shared PDF path outside the imports cache")
+            return
+        }
         pendingSharedPdfPath = path
-        lockSurface?.invokeAppsMethod("onSharedPdf", mapOf("path" to path))
+        lockSurface?.invokeAppsMethod(
+            "onSharedPdf",
+            mapOf("path" to path),
+            object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    // Dart's handler delivered it, so the startup pull must not
+                    // import the same file a second time.
+                    if (pendingSharedPdfPath == path) pendingSharedPdfPath = null
+                }
+
+                override fun error(code: String, message: String?, details: Any?) {
+                    // Kept for the pull.
+                }
+
+                override fun notImplemented() {
+                    // No Dart handler yet; kept for the pull.
+                }
+            },
+        )
+    }
+
+    /** Whether [path] canonically resolves inside the private imports cache. */
+    private fun isInsideImportsDir(path: String): Boolean {
+        return try {
+            val root = ShareReceiverActivity.importsDir(applicationContext).canonicalPath
+            val candidate = File(path).canonicalPath
+            candidate.startsWith(root + File.separator)
+        } catch (error: Exception) {
+            false
+        }
     }
 
     /**
@@ -910,21 +987,33 @@ class MainActivity : FlutterActivity() {
                         result.error("PDF_ENCRYPTED", "The PDF is password protected", null)
                     }
                     return@execute
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
                     runOnUiThread {
                         result.error("PDF_UNREADABLE", e.message, null)
                     }
                     return@execute
                 }
-                document.use { doc ->
-                    val totalPages = doc.numberOfPages
+                try {
+                    val totalPages = document.numberOfPages
                     val lastPage = minOf(totalPages, MAX_EXTRACT_PAGES)
-                    val stripper = PDFTextStripper().apply {
+                    fun PDFTextStripper.configured() = apply {
                         sortByPosition = true
                         startPage = 1
                         endPage = lastPage
                     }
-                    val text = stripper.getText(doc)
+                    // Columns first; if the column pass fails on this device
+                    // (an exception, or a class the release build broke), the
+                    // stock stripper still gets the list out, minus the tabs
+                    // recipe import needs.
+                    val text = try {
+                        ColumnTextStripper().configured().getText(document)
+                    } catch (e: Exception) {
+                        android.util.Log.w(TAG, "CF_PDF: column extraction failed, retrying plain", e)
+                        PDFTextStripper().configured().getText(document)
+                    } catch (e: LinkageError) {
+                        android.util.Log.w(TAG, "CF_PDF: column extraction failed, retrying plain", e)
+                        PDFTextStripper().configured().getText(document)
+                    }
                     val payload = mapOf(
                         "text" to text,
                         "pageCount" to totalPages,
@@ -933,8 +1022,18 @@ class MainActivity : FlutterActivity() {
                     runOnUiThread {
                         result.success(payload)
                     }
+                } finally {
+                    try {
+                        document.close()
+                    } catch (closeError: Throwable) {
+                        android.util.Log.d(TAG, "CF_PDF: closing the document failed", closeError)
+                    }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable, not Exception: a hostile or huge PDF can make
+                // PDFBox throw OutOfMemoryError, which would otherwise kill the
+                // HOME process and leave the Dart future unanswered.
+                android.util.Log.w(TAG, "CF_PDF: text extraction failed", e)
                 runOnUiThread {
                     result.error("PDF_UNREADABLE", e.message, null)
                 }
@@ -988,9 +1087,17 @@ class MainActivity : FlutterActivity() {
             // Reading a potentially large stream must not block the main thread.
             pdfExecutor.execute {
                 ShareReceiverActivity.cleanupOldImports(applicationContext)
-                val path = ShareReceiverActivity.copyToImports(applicationContext, uri)
+                var tooLarge = false
+                val path = ShareReceiverActivity.copyToImports(applicationContext, uri) {
+                    tooLarge = true
+                }
                 runOnUiThread {
-                    pending?.success(path)
+                    if (path == null && tooLarge) {
+                        // Distinct from a cancel, so Dart can say why.
+                        pending?.error("PDF_TOO_LARGE", "The PDF is larger than 25 MB", null)
+                    } else {
+                        pending?.success(path)
+                    }
                 }
             }
             return
@@ -1110,6 +1217,19 @@ class MainActivity : FlutterActivity() {
     private fun postLockSurfaceNotification(intent: Intent) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             ?: return
+        // From API 34 the full-screen-intent grant is user-revocable. Without
+        // it the platform silently downgrades the prompt to a heads-up
+        // notification, which is noise rather than a lock surface; the direct
+        // start already attempted by the caller is the only path left.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            !manager.canUseFullScreenIntent()
+        ) {
+            android.util.Log.w(
+                "ChronoFold",
+                "CF_LOCK: full-screen intent not permitted; not posting lock prompt",
+            )
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 LockSurfaceChannels.LOCK_SURFACE_CHANNEL_ID,
@@ -1161,6 +1281,24 @@ class MainActivity : FlutterActivity() {
      * keeps the OEM step explicit: the user selects "ChronoFold Ambient
      * Galaxy" there, then confirms its normal system preview/apply flow.
      */
+    /**
+     * Whether ChronoFold's galaxy is the system live wallpaper.
+     *
+     * With gesture navigation, ColorOS's own recents runs the close-app
+     * animation and starts HOME only when it ends, so until then the system
+     * wallpaper is the only thing behind the shrinking app. The launcher
+     * cannot draw there; being that wallpaper is the only way the transition
+     * shows the galaxy rather than the ColorOS background. Public API, no
+     * permission: `getWallpaperInfo` describes a live wallpaper or is null.
+     */
+    private fun isCosmicWallpaperActive(): Boolean = try {
+        android.app.WallpaperManager.getInstance(this).wallpaperInfo?.component ==
+            android.content.ComponentName(this, CosmicLiveWallpaperService::class.java)
+    } catch (exception: Exception) {
+        android.util.Log.w("ChronoFold", "Unable to read the live wallpaper", exception)
+        false
+    }
+
     private fun openCosmicLiveWallpaperPreview(): Boolean {
         val chooserIntent = Intent(android.app.WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER)
 
@@ -1178,82 +1316,141 @@ class MainActivity : FlutterActivity() {
                 "Unable to open the cosmic live wallpaper chooser",
                 exception,
             )
+            lockSurfaceHost.onForeignHandoffFailed()
             false
         }
     }
+    // --- Wallpaper -------------------------------------------------------------------
+
     /**
-     * Makes the last launcher buffer a native cover-like surface before a
-     * foreign task begins. It stays above Flutter during the round trip and is
-     * removed only after Dart confirms its replacement frame is painted.
+     * The system wallpaper's colour hints, or null when the platform cannot
+     * say.
+     *
+     * `supportsDarkText` is the platform's own verdict that the wallpaper is
+     * light enough for dark foreground content; it is what the status and
+     * navigation bar icons and the home scrims follow. On API 31+ it comes
+     * straight from [android.app.WallpaperColors.getColorHints]; below that
+     * the hints are not public, so the primary colour's luminance stands in.
      */
-    private fun showReturnBridge() {
-        val bridge = returnBridge ?: android.view.View(this).apply {
-            setBackgroundResource(R.drawable.return_cover_bridge)
-            importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            // Do not allow an unseen Flutter surface to receive a tap while
-            // this noninteractive transition surface is visible.
-            isClickable = true
-            isFocusable = true
-        }.also { view ->
-            addContentView(
-                view,
-                android.view.ViewGroup.LayoutParams(
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                ),
-            )
-            returnBridge = view
-        }
-
-        returnBridgeGeneration += 1
-        returnBridgeAwaitingReturn = true
-        returnBridgeLeftForTarget = false
-        bridge.animate().cancel()
-        bridge.alpha = 1f
-        bridge.visibility = android.view.View.VISIBLE
-        bridge.bringToFront()
-        bridge.invalidate()
-    }
-
-    private fun hideReturnBridge() {
-        val bridge = returnBridge ?: return
-        returnBridgeAwaitingReturn = false
-        returnBridgeLeftForTarget = false
-        returnBridgeGeneration += 1
-        bridge.animate().cancel()
-        bridge.animate()
-            .alpha(0f)
-            .setDuration(120L)
-            .withEndAction {
-                if (!returnBridgeAwaitingReturn) {
-                    bridge.visibility = android.view.View.GONE
-                }
+    private fun readWallpaperTone(): Map<String, Any?>? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) return null
+        return try {
+            val colors = WallpaperManager.getInstance(this)
+                .getWallpaperColors(WallpaperManager.FLAG_SYSTEM) ?: return null
+            val primary = colors.primaryColor.toArgb()
+            val supportsDarkText: Boolean
+            val supportsDarkTheme: Boolean
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val hints = colors.colorHints
+                supportsDarkText =
+                    (hints and android.app.WallpaperColors.HINT_SUPPORTS_DARK_TEXT) != 0
+                supportsDarkTheme =
+                    (hints and android.app.WallpaperColors.HINT_SUPPORTS_DARK_THEME) != 0
+            } else {
+                val luminance = colors.primaryColor.luminance()
+                supportsDarkText = luminance > 0.5f
+                supportsDarkTheme = luminance < 0.25f
             }
-            .start()
+            mapOf(
+                "primary" to primary,
+                "secondary" to colors.secondaryColor?.toArgb(),
+                "tertiary" to colors.tertiaryColor?.toArgb(),
+                "supportsDarkText" to supportsDarkText,
+                "supportsDarkTheme" to supportsDarkTheme,
+            )
+        } catch (error: Exception) {
+            android.util.Log.w(TAG, "CF_WALLPAPER: colours unavailable", error)
+            null
+        }
     }
 
-    private fun startTargetWithReturnBridge(
-        intent: Intent,
-        options: Bundle?,
-        onStarted: (Boolean) -> Unit,
-    ) {
-        showReturnBridge()
-        val bridge = returnBridge
-        if (bridge == null) {
-            onStarted(lockSurface?.startActivityQuietly(intent, options) ?: false)
+    private fun registerWallpaperColorsListener() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) return
+        if (wallpaperColorsListener != null) return
+        val listener = WallpaperManager.OnColorsChangedListener { _, which ->
+            if (which and WallpaperManager.FLAG_SYSTEM == 0) return@OnColorsChangedListener
+            lockSurface?.invokeAppsMethod("onWallpaperToneChanged", readWallpaperTone())
+        }
+        try {
+            WallpaperManager.getInstance(this).addOnColorsChangedListener(listener, mainHandler)
+            wallpaperColorsListener = listener
+        } catch (error: Exception) {
+            android.util.Log.w(TAG, "CF_WALLPAPER: colour listener refused", error)
+        }
+    }
+
+    private fun unregisterWallpaperColorsListener() {
+        val listener = wallpaperColorsListener ?: return
+        wallpaperColorsListener = null
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) return
+        try {
+            WallpaperManager.getInstance(this).removeOnColorsChangedListener(listener)
+        } catch (error: Exception) {
+            android.util.Log.w(TAG, "CF_WALLPAPER: colour listener removal failed", error)
+        }
+    }
+
+    /**
+     * Tells WindowManager where the launcher is scrolled to, in wallpaper
+     * fractions (0..1 each axis), so the system wallpaper pans with the galaxy
+     * the way it pans with the stock launcher's pages. Coalesced: a burst of
+     * reports during a fling collapses to the newest pair.
+     */
+    private fun reportWallpaperOffsets(x: Float, y: Float) {
+        pendingWallpaperX = x.coerceIn(0f, 1f)
+        pendingWallpaperY = y.coerceIn(0f, 1f)
+        if (wallpaperReportQueued) return
+        wallpaperReportQueued = true
+        val token = window?.decorView?.windowToken
+        if (token == null) {
+            wallpaperReportQueued = false
             return
         }
-
-        // Allow one compositor beat for the native bridge to become the
-        // launcher task's visible buffer before the target task takes over.
-        bridge.postDelayed({
-            val started = lockSurface?.startActivityQuietly(intent, options) ?: false
-            if (!started) {
-                hideReturnBridge()
+        try {
+            wallpaperExecutor.execute {
+                wallpaperReportQueued = false
+                val px = pendingWallpaperX
+                val py = pendingWallpaperY
+                if (px.isNaN() || py.isNaN()) return@execute
+                try {
+                    WallpaperManager.getInstance(this).setWallpaperOffsets(token, px, py)
+                } catch (error: Exception) {
+                    android.util.Log.d(TAG, "CF_WALLPAPER: offsets refused", error)
+                }
             }
-            onStarted(started)
-        }, 16L)
+        } catch (error: java.util.concurrent.RejectedExecutionException) {
+            // The activity is being destroyed; there is nothing to scroll.
+            wallpaperReportQueued = false
+        }
     }
+
+    /**
+     * Blurs the wallpaper behind the launcher window while a full-screen
+     * surface (search, the comet, shopping) is up, the way ColorOS blurs it
+     * behind its own drawer. Window background blur exists from API 31 and is
+     * a device capability, so this reports whether it actually took effect.
+     */
+    private fun setWindowBackgroundBlur(enabled: Boolean): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
+        val manager = getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return false
+        return try {
+            if (enabled && !manager.isCrossWindowBlurEnabled) {
+                false
+            } else {
+                val radiusPx = if (enabled) {
+                    (WINDOW_BLUR_DP * resources.displayMetrics.density).toInt()
+                } else {
+                    0
+                }
+                window.setBackgroundBlurRadius(radiusPx)
+                enabled
+            }
+        } catch (error: Exception) {
+            android.util.Log.d(TAG, "CF_WALLPAPER: window blur refused", error)
+            false
+        }
+    }
+
     private fun openAppInfo(packageName: String) {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.fromParts("package", packageName, null)
@@ -1349,6 +1546,7 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             // An unhandled URL throws ActivityNotFoundException. Returning false
             // lets the surface report it rather than crashing the launcher.
+            lockSurfaceHost.onForeignHandoffFailed()
             false
         }
     }
@@ -1371,6 +1569,7 @@ class MainActivity : FlutterActivity() {
             startActivity(intent)
             true
         } catch (e: Exception) {
+            lockSurfaceHost.onForeignHandoffFailed()
             false
         }
     }

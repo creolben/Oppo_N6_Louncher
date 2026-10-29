@@ -20,6 +20,14 @@ class ShoppingStoreData {
   /// Stores written before this field existed load as `false`.
   final bool storeMode;
 
+  /// Whether the user dismissed the cover-display store-mode suggestion.
+  /// Stores written before this field existed load as `false`.
+  final bool storeModeHintDismissed;
+
+  /// How many malformed lists, recipes or items were skipped while parsing.
+  /// Never persisted; [ShoppingStore.load] uses it to keep a backup.
+  final int skippedEntries;
+
   const ShoppingStoreData({
     this.lists = const [],
     this.recipes = const [],
@@ -27,6 +35,8 @@ class ShoppingStoreData {
     this.preferImperial = false,
     this.aisleMemory = const <String, String>{},
     this.storeMode = false,
+    this.storeModeHintDismissed = false,
+    this.skippedEntries = 0,
   });
 
   Map<String, dynamic> toJson() => {
@@ -36,30 +46,56 @@ class ShoppingStoreData {
         'preferImperial': preferImperial,
         'aisleMemory': aisleMemory,
         'storeMode': storeMode,
+        'storeModeHintDismissed': storeModeHintDismissed,
       };
 
+  /// Parses the store leniently: each list, item and recipe is parsed on its
+  /// own, so one malformed entry is dropped (and counted in [skippedEntries])
+  /// instead of discarding the whole file.
   factory ShoppingStoreData.fromJson(Map<String, dynamic> json) {
+    var skipped = 0;
+    void skip(Object error) {
+      skipped += 1;
+      debugPrint('Shopping store entry skipped: $error');
+    }
+
+    final lists = <ShoppingList>[];
+    for (final raw in json['lists'] as List? ?? const []) {
+      try {
+        lists.add(
+          ShoppingList.fromJson(
+            Map<String, dynamic>.from(raw as Map),
+            onSkippedItem: skip,
+          ),
+        );
+      } catch (error) {
+        skip(error);
+      }
+    }
+    final recipes = <Recipe>[];
+    for (final raw in json['recipes'] as List? ?? const []) {
+      try {
+        recipes.add(Recipe.fromJson(Map<String, dynamic>.from(raw as Map)));
+      } catch (error) {
+        skip(error);
+      }
+    }
     final Object? rawMemory = json['aisleMemory'];
+    final Object? activeListId = json['activeListId'];
     return ShoppingStoreData(
-      lists: (json['lists'] as List? ?? const [])
-          .map((list) => ShoppingList.fromJson(
-                Map<String, dynamic>.from(list as Map),
-              ))
-          .toList(),
-      recipes: (json['recipes'] as List? ?? const [])
-          .map((recipe) => Recipe.fromJson(
-                Map<String, dynamic>.from(recipe as Map),
-              ))
-          .toList(),
-      activeListId: json['activeListId'] as String?,
-      preferImperial: json['preferImperial'] as bool? ?? false,
+      lists: lists,
+      recipes: recipes,
+      activeListId: activeListId is String ? activeListId : null,
+      preferImperial: json['preferImperial'] == true,
       aisleMemory: rawMemory is Map
           ? <String, String>{
               for (final entry in rawMemory.entries)
                 entry.key.toString(): entry.value.toString(),
             }
           : const <String, String>{},
-      storeMode: json['storeMode'] as bool? ?? false,
+      storeMode: json['storeMode'] == true,
+      storeModeHintDismissed: json['storeModeHintDismissed'] == true,
+      skippedEntries: skipped,
     );
   }
 }
@@ -67,9 +103,13 @@ class ShoppingStoreData {
 /// Persists shopping lists and recipes as JSON.
 ///
 /// The production directory comes from [LauncherBridge.getFilesDirPath]; tests
-/// inject [directoryPath]. Writes go through a `.tmp` file and an atomic
-/// rename. A corrupt store is renamed to `shopping_lists.json.corrupt` and
-/// reported as empty so a bad write can never take the launcher down.
+/// inject [directoryPath]. Each write goes through its own `.tmp` file and an
+/// atomic rename, and a write that finishes after a newer one has already
+/// landed is discarded, so overlapping saves never clobber each other or the
+/// newest state. A corrupt store is renamed to
+/// `shopping_lists.json.corrupt.<epochMs>` and reported as empty so a bad write
+/// can never take the launcher down; a store with only some malformed entries
+/// loads the rest and keeps a copy under the same name.
 class ShoppingStore {
   ShoppingStore({this.directoryPath});
 
@@ -77,6 +117,13 @@ class ShoppingStore {
   final String? directoryPath;
 
   static const String fileName = 'shopping_lists.json';
+
+  /// Sequence of the last save started and the last one renamed into place.
+  int _startedWrites = 0;
+  int _committedWrite = 0;
+
+  /// Saves currently between their first await and their rename.
+  int _writesInFlight = 0;
 
   Future<Directory?> _directory() async {
     var path = directoryPath;
@@ -103,13 +150,19 @@ class ShoppingStore {
 
   Future<ShoppingStoreData> load() async {
     final file = await _file();
-    if (file == null || !file.existsSync()) return const ShoppingStoreData();
+    if (file == null) return const ShoppingStoreData();
+    if (_writesInFlight == 0) _deleteStaleTemporaries(file);
+    if (!file.existsSync()) return const ShoppingStoreData();
     try {
       final decoded = jsonDecode(await file.readAsString());
       if (decoded is! Map<String, dynamic>) {
         throw const FormatException('shopping store root is not a JSON object');
       }
-      return ShoppingStoreData.fromJson(decoded);
+      final data = ShoppingStoreData.fromJson(decoded);
+      if (data.skippedEntries > 0) {
+        await _backupCorrupt(file, keepOriginal: true);
+      }
+      return data;
     } catch (error) {
       debugPrint('Shopping store unreadable, backing up: $error');
       await _backupCorrupt(file);
@@ -117,21 +170,72 @@ class ShoppingStore {
     }
   }
 
+  /// Writes [data]. The JSON is encoded before the first await, so the file
+  /// always reflects the state at the moment of the call.
   Future<void> save(ShoppingStoreData data) async {
-    final file = await _file();
-    if (file == null) return;
-    final temporary = File('${file.path}.tmp');
-    await temporary.writeAsString(jsonEncode(data.toJson()), flush: true);
-    await temporary.rename(file.path);
+    final int sequence = ++_startedWrites;
+    final String encoded = jsonEncode(data.toJson());
+    _writesInFlight += 1;
+    try {
+      await _writeSequenced(sequence, encoded);
+    } finally {
+      _writesInFlight -= 1;
+    }
   }
 
-  Future<void> _backupCorrupt(File file) async {
+  Future<void> _writeSequenced(int sequence, String encoded) async {
+    final file = await _file();
+    if (file == null) return;
+    final temporary = File('${file.path}.$sequence.tmp');
     try {
-      final backup = File('${file.path}.corrupt');
-      if (backup.existsSync()) {
-        await backup.delete();
+      await temporary.writeAsString(encoded, flush: true);
+      if (sequence < _committedWrite) {
+        // A newer save already landed; this snapshot is stale.
+        temporary.deleteSync();
+        return;
       }
-      await file.rename(backup.path);
+      // Synchronous so the newer-wins check and the rename cannot interleave
+      // with another save's.
+      temporary.renameSync(file.path);
+      _committedWrite = sequence;
+    } catch (error) {
+      try {
+        if (temporary.existsSync()) temporary.deleteSync();
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  /// Removes `.tmp` files left behind by a write that never finished.
+  void _deleteStaleTemporaries(File file) {
+    try {
+      final String prefix = '${file.uri.pathSegments.last}.';
+      for (final entity in file.parent.listSync()) {
+        final String name = entity.uri.pathSegments.last;
+        if (entity is File && name.startsWith(prefix) && name.endsWith('.tmp')) {
+          entity.deleteSync();
+        }
+      }
+    } catch (error) {
+      debugPrint('Could not clean shopping store temporaries: $error');
+    }
+  }
+
+  /// Moves (or, with [keepOriginal], copies) [file] to a timestamped
+  /// `.corrupt.<epochMs>` backup so repeated failures never overwrite an
+  /// earlier backup.
+  Future<void> _backupCorrupt(File file, {bool keepOriginal = false}) async {
+    try {
+      final int stamp = DateTime.now().millisecondsSinceEpoch;
+      var backupPath = '${file.path}.corrupt.$stamp';
+      for (var n = 1; File(backupPath).existsSync(); n++) {
+        backupPath = '${file.path}.corrupt.$stamp-$n';
+      }
+      if (keepOriginal) {
+        await file.copy(backupPath);
+      } else {
+        await file.rename(backupPath);
+      }
     } catch (error) {
       debugPrint('Could not back up corrupt shopping store: $error');
     }
