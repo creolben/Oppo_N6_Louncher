@@ -108,6 +108,20 @@ void main() {
       expect(parsed.aisle, 'Produce');
     });
 
+    test('reads hyphenated amounts and ranges of fractions', () {
+      final cases = <(String, double, Unit, String)>[
+        ('1-1/2 pounds fresh sardines', 1.5, Unit.pound, 'fresh sardines'),
+        ('¾-1 cup vegetable broth', 1, Unit.cup, 'vegetable broth'),
+        ('1½ to 2 cans white beans', 2, Unit.can, 'white beans'),
+        ('1-ounce walnuts', 1, Unit.ounce, 'walnuts'),
+      ];
+      for (final (line, amount, unit, name) in cases) {
+        final parsed = parser.parseLine(line);
+        expect(parsed.quantity, Quantity(amount, unit), reason: line);
+        expect(parsed.name, name, reason: line);
+      }
+    });
+
     test('parseAmount accepts whole recipe amounts only', () {
       expect(IngredientParser.parseAmount('1 1/2'), 1.5);
       expect(IngredientParser.parseAmount('½'), 0.5);

@@ -245,7 +245,7 @@ class Unit {
     dimension: Dimension.volume,
     toBase: 14.7868,
     isMetric: false,
-    aliases: ['tbsp', 'tbsps', 'tbs', 'tablespoon', 'tablespoons'],
+    aliases: ['tbsp', 'tbsps', 'tbs', 'tb', 'tablespoon', 'tablespoons'],
   );
 
   static const Unit cup = Unit(

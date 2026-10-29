@@ -65,6 +65,16 @@ class IngredientParser {
     var text = _stripLeadingMarkers(original);
     final notes = <String>[];
 
+    // "Juice of 1 lemon", "Zest and juice of 2 oranges": the fruit is bought.
+    final part = RegExp(
+      r'^((?:zest|juice)(?:\s+(?:and|&)\s+(?:zest|juice))?)\s+of\s+',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (part != null) {
+      notes.add(part.group(1)!.toLowerCase());
+      text = text.substring(part.end);
+    }
+
     // Parenthetical and bracketed asides become notes.
     text = text.replaceAllMapped(RegExp(r'[\(\[]([^\)\]]*)[\)\]]'), (match) {
       final content = match.group(1)!.trim();
@@ -82,6 +92,9 @@ class IngredientParser {
       text =
           text.replaceRange(multiplierMatch.start, multiplierMatch.end, ' ').trim();
     }
+
+    // Removed asides leave gaps before commas ("juiced  , 1 zested").
+    text = text.replaceAll(RegExp(r'\s+,'), ',');
 
     // A trailing comma introduces a note. A comma followed by a digit is a
     // decimal separator ("1,5 kg") and must survive.
@@ -142,9 +155,9 @@ class IngredientParser {
   }
 
   /// Parses [text] as a whole amount: an integer or decimal (dot or comma), a
-  /// fraction (`1/2`), a mixed number (`1 1/2`), a unicode fraction (`½`,
-  /// `1½`), a range (upper bound wins) or a count word. Returns null when
-  /// anything but the amount is left over, or when nothing matched.
+  /// fraction (`1/2`), a mixed number (`1 1/2`, `1-1/2`), a unicode fraction
+  /// (`½`, `1½`), a range (upper bound wins) or a count word. Returns null
+  /// when anything but the amount is left over, or when nothing matched.
   static double? parseAmount(String text) {
     final match = _matchNumber(text.trim());
     if (match == null || match.$2.trim().isNotEmpty) return null;
@@ -199,22 +212,35 @@ class IngredientParser {
   }
 
   /// Returns `(amount, rest)` for a leading number, or null when there is none.
+  ///
+  /// A range takes its upper bound (`2-3`, `¾-1`, `1½ to 2`), and a hyphen
+  /// joining the amount to its unit (`1-ounce walnuts`) is dropped.
   static (double, String)? _matchNumber(String text) {
-    final value = text.trimLeft();
-
-    // Ranges take the upper bound.
-    final range = RegExp(
-      r'^(\d+(?:[.,]\d+)?)\s*(?:-|–|—|to)\s*(\d+(?:[.,]\d+)?)(?=\s|$)',
+    final first = _matchSingleNumber(text.trimLeft());
+    if (first == null) return null;
+    final dash = RegExp(
+      r'^\s*(?:-|–|—|to\b)\s*',
       caseSensitive: false,
-    ).firstMatch(value);
-    if (range != null) {
-      final lower = _toDouble(range.group(1)!);
-      final upper = _toDouble(range.group(2)!);
-      return (lower > upper ? lower : upper, value.substring(range.end).trimLeft());
+    ).firstMatch(first.$2);
+    if (dash != null) {
+      final second = _matchSingleNumber(first.$2.substring(dash.end));
+      if (second != null) {
+        return (first.$1 > second.$1 ? first.$1 : second.$1, second.$2);
+      }
     }
+    final unit = RegExp(r'^-([A-Za-z]+)').firstMatch(first.$2);
+    if (unit != null && Unit.tryParse(unit.group(1)!) != null) {
+      return (first.$1, first.$2.substring(1));
+    }
+    return first;
+  }
 
-    // Mixed number, e.g. "1 1/2".
-    final mixed = RegExp(r'^(\d+)\s+(\d+)\s*/\s*(\d+)').firstMatch(value);
+  /// One number at the start of [value]: see [_matchNumber].
+  static (double, String)? _matchSingleNumber(String value) {
+    // Mixed number, e.g. "1 1/2" or "1-1/2".
+    final mixed = RegExp(
+      r'^(\d+)(?:\s+|\s*-\s*)(\d+)\s*/\s*(\d+)',
+    ).firstMatch(value);
     if (mixed != null) {
       final whole = int.parse(mixed.group(1)!);
       final numerator = int.parse(mixed.group(2)!);
